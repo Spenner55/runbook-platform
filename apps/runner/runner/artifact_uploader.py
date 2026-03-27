@@ -1,0 +1,2 @@
+class ArtifactUploader:
+    pass

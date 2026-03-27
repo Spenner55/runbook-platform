@@ -1,0 +1,2 @@
+class LogStreamer:
+    pass
