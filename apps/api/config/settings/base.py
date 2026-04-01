@@ -3,12 +3,13 @@ import os
 import environ
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 env = environ.Env(
     DEBUG=(bool, False),
 )
 
-environ.Env.read_env(os.path.join(BASE_DIR.parent, '.env'))
+environ.Env.read_env(os.path.join(REPO_ROOT, '.env'))
 
 SECRET_KEY = env('DJANGO_SECRET_KEY', default='django-insecure-change-me')
 DEBUG = env('DJANGO_DEBUG', default=False)
