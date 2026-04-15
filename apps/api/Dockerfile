@@ -5,8 +5,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY apps/api/requirements/base.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY apps/api/requirements/ /tmp/requirements/
+RUN pip install --no-cache-dir -r /tmp/requirements/dev.txt
 
 COPY apps/api /app
 
