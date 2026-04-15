@@ -84,3 +84,10 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
 }
+
+# AI service settings
+AI_BASE_URL = env('AI_BASE_URL', default='http://ai:8001')
+AI_CONNECT_TIMEOUT_SECONDS = env.float('AI_CONNECT_TIMEOUT_SECONDS', default=1.0)
+AI_READ_TIMEOUT_SECONDS = env.float('AI_READ_TIMEOUT_SECONDS', default=20.0)
+AI_WRITE_TIMEOUT_SECONDS = env.float('AI_WRITE_TIMEOUT_SECONDS', default=5.0)
+AI_POOL_TIMEOUT_SECONDS = env.float('AI_POOL_TIMEOUT_SECONDS', default=1.0)
