@@ -32,6 +32,12 @@ class Execution(BaseModel):
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
 
+    # Runner ownership fields — set when a runner claims this execution
+    claimed_by_runner_id = models.CharField(max_length=255, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
 

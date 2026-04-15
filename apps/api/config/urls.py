@@ -14,4 +14,5 @@ urlpatterns = [
     path("api/v1/", include("apps.runbooks.urls")),
     path("api/v1/", include("apps.workflows.urls")),
     path("api/v1/", include("apps.executions.urls")),
+    path("api/v1/internal/", include("apps.executions.internal_urls")),
 ]
