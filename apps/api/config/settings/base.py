@@ -3,7 +3,7 @@ import os
 import environ
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = BASE_DIR
 
 env = environ.Env(
     DEBUG=(bool, False),
@@ -24,6 +24,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    # Domain apps
+    'apps.common.apps.CommonConfig',
+    'apps.organizations.apps.OrganizationsConfig',
+    'apps.runbooks.apps.RunbooksConfig',
+    'apps.workflows.apps.WorkflowsConfig',
+    'apps.executions.apps.ExecutionsConfig',
 ]
 
 MIDDLEWARE = [
