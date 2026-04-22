@@ -2,6 +2,12 @@ from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.runbooks.ai_client import (
+    AiServiceBadResponseError,
+    AiServiceContractError,
+    AiServiceTimeoutError,
+    AiServiceUnavailableError,
+)
 from apps.runbooks.models import Runbook
 from apps.workflows import services
 from apps.workflows.models import Workflow
@@ -33,7 +39,15 @@ class WorkflowViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        workflow = services.create_workflow_from_runbook(runbook=runbook)
+        try:
+            workflow = services.create_workflow_from_runbook(runbook=runbook)
+        except AiServiceUnavailableError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except AiServiceTimeoutError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except (AiServiceBadResponseError, AiServiceContractError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
         return Response(WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED)
 
     def retrieve(self, request, pk=None):

@@ -23,15 +23,21 @@ class Workflow(BaseModel):
     name = models.CharField(max_length=255)
     version = models.PositiveIntegerField()
     status = models.CharField(
-        max_length=20,
+        max_length=24,
         choices=Status.choices,
         default=Status.DRAFT,
     )
-    definition_schema_version = models.CharField(max_length=20, default="1.0")
+    definition_schema_version = models.CharField(max_length=32, default="workflow.schema.v1")
     definition = models.JSONField(default=dict)
 
     class Meta:
         ordering = ["name", "-version"]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "created_at"],
+                name="wf_org_status_created_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["runbook", "version"],

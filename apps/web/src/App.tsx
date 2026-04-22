@@ -1,10 +1,14 @@
+import { RouterProvider } from 'react-router-dom'
+
+import { AppProviders } from './app/providers/AppProviders'
+import { router } from './app/router'
+
 function App() {
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>Runbook Platform</h1>
-      <p>Frontend is running.</p>
-    </div>
-  );
+    <AppProviders>
+      <RouterProvider router={router} />
+    </AppProviders>
+  )
 }
 
-export default App;
+export default App

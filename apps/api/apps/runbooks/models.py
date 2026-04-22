@@ -15,16 +15,22 @@ class Runbook(BaseModel):
         related_name="runbooks",
     )
     title = models.CharField(max_length=255)
-    slug = models.SlugField(max_length=255)
-    raw_content = models.TextField(blank=True)
+    slug = models.SlugField(max_length=96)
+    raw_content = models.TextField()
     status = models.CharField(
-        max_length=20,
+        max_length=24,
         choices=Status.choices,
         default=Status.DRAFT,
     )
 
     class Meta:
         ordering = ["title"]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "created_at"],
+                name="rb_org_status_created_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["organization", "slug"],
