@@ -2,8 +2,8 @@ import pytest
 from unittest.mock import patch
 
 from apps.runbooks import services as runbook_services
-from apps.runbooks.ai_client import WorkflowCandidate, WorkflowCandidateStep
 from apps.workflows import services
+from apps.workflows.internal_clients import WorkflowCandidate, WorkflowCandidateStep
 from apps.workflows.models import Workflow
 
 
@@ -90,7 +90,7 @@ def test_publish_workflow_rejects_non_draft(runbook):
 @pytest.mark.django_db
 def test_ai_failure_does_not_create_partial_workflow(runbook):
     """If the AI client raises, no Workflow row should be persisted."""
-    from apps.runbooks.ai_client import AiServiceUnavailableError
+    from apps.workflows.internal_clients import AiServiceUnavailableError
 
     with patch(
         "apps.workflows.services.parse_runbook_to_workflow_candidate",

@@ -2,14 +2,42 @@ import pytest
 from django.test import Client
 from unittest.mock import patch
 
-from apps.runbooks.ai_client import (
+from apps.runbooks import services as runbook_services
+from apps.workflows import services as workflow_services
+from apps.workflows.internal_clients import (
     AiServiceBadResponseError,
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
+    WorkflowCandidate,
+    WorkflowCandidateStep,
 )
-from apps.runbooks import services as runbook_services
-from apps.workflows import services as workflow_services
+
+
+def _make_candidate() -> WorkflowCandidate:
+    return WorkflowCandidate(
+        request_id="test-req-id",
+        workflow_title="Deploy",
+        steps=[
+            WorkflowCandidateStep(
+                step_key="step-1",
+                name="Deploy step",
+                step_type="manual",
+                risk_level="low",
+                requires_approval=False,
+            ),
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_ai_client():
+    """Prevent all tests in this module from making real AI service calls."""
+    with patch(
+        "apps.workflows.services.parse_runbook_to_workflow_candidate",
+        return_value=_make_candidate(),
+    ):
+        yield
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from django.db import transaction
 
 from apps.runbooks.models import Runbook
 from apps.workflows.models import Workflow
-from apps.runbooks.ai_client import (
+from apps.workflows.internal_clients import (
     WorkflowCandidate,
     parse_runbook_to_workflow_candidate,
 )
@@ -46,8 +46,12 @@ def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
     # Step 2: map candidate to canonical definition
     definition = _map_candidate_to_definition(candidate)
 
-    # Step 3: version assignment and persistence inside a transaction
+    # Step 3: version assignment and persistence inside a transaction.
+    # Lock the runbook row so concurrent calls for the same runbook are
+    # serialized here rather than colliding on the unique_workflow_version
+    # constraint at INSERT time.
     with transaction.atomic():
+        Runbook.objects.select_for_update().filter(pk=runbook.pk).get()
         existing_max = (
             Workflow.objects.filter(runbook=runbook)
             .order_by("-version")
