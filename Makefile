@@ -40,3 +40,33 @@ makemigrations:
 bootstrap:
 	docker compose up --build -d
 	docker compose exec api python manage.py migrate
+
+start-db:
+	docker compose start postgres
+
+stop-db:
+	docker compose stop postgres
+
+start-api:
+	docker compose start api
+
+stop-api:
+	docker compose stop api
+
+start-web:
+	docker compose start web
+
+stop-web:
+	docker compose stop web
+
+start-runner:
+	docker compose start runner
+
+stop-runner:
+	docker compose stop runner
+
+start-ai:
+	docker compose start ai
+
+stop-ai:
+	docker compose stop ai

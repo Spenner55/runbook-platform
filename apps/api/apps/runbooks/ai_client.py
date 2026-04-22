@@ -1,0 +1,180 @@
+"""
+Django-side HTTP client for the internal AI service.
+
+Responsibilities:
+- Build URLs and timeouts from Django settings.
+- POST to FastAPI /parse/runbook.
+- Validate the response shape at the service boundary.
+- Translate transport/HTTP errors into narrow internal exceptions.
+
+Nothing here persists data. FastAPI is a dependency, not a source of truth.
+"""
+from __future__ import annotations
+
+import httpx
+from dataclasses import dataclass, field
+from django.conf import settings
+
+
+# ---------------------------------------------------------------------------
+# Internal exceptions
+# ---------------------------------------------------------------------------
+
+class AiServiceUnavailableError(Exception):
+    """AI service could not be reached (connection refused, DNS failure, etc.)."""
+
+
+class AiServiceTimeoutError(Exception):
+    """AI service did not respond within the configured timeout."""
+
+
+class AiServiceBadResponseError(Exception):
+    """AI service returned a non-200 status or non-JSON body."""
+
+
+class AiServiceContractError(Exception):
+    """AI service returned JSON that does not match the expected shape."""
+
+
+# ---------------------------------------------------------------------------
+# Local result types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class WorkflowCandidateStep:
+    step_key: str
+    name: str
+    step_type: str
+    risk_level: str
+    requires_approval: bool
+
+
+@dataclass
+class WorkflowCandidate:
+    request_id: str
+    workflow_title: str
+    steps: list[WorkflowCandidateStep]
+    warnings: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
+
+def _build_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=settings.AI_CONNECT_TIMEOUT_SECONDS,
+        read=settings.AI_READ_TIMEOUT_SECONDS,
+        write=settings.AI_WRITE_TIMEOUT_SECONDS,
+        pool=settings.AI_POOL_TIMEOUT_SECONDS,
+    )
+
+
+def parse_runbook_to_workflow_candidate(
+    *,
+    request_id: str,
+    runbook_id: str,
+    runbook_title: str,
+    raw_content: str,
+) -> WorkflowCandidate:
+    """
+    Call the AI service to convert a runbook into a workflow candidate.
+
+    Called from the workflow service *outside* any DB transaction so the
+    connection is not held open while waiting on the network.
+    """
+    url = f"{settings.AI_BASE_URL}/parse/runbook"
+    payload = {
+        "request_id": request_id,
+        "runbook": {
+            "id": runbook_id,
+            "title": runbook_title,
+            "raw_content": raw_content,
+        },
+    }
+
+    try:
+        response = httpx.post(url, json=payload, timeout=_build_timeout())
+    except httpx.ConnectError as exc:
+        raise AiServiceUnavailableError(
+            f"AI service unreachable at {url}: {exc}"
+        ) from exc
+    except httpx.TimeoutException as exc:
+        raise AiServiceTimeoutError(
+            f"AI service timed out at {url}: {exc}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise AiServiceUnavailableError(
+            f"AI service request failed: {exc}"
+        ) from exc
+
+    if response.status_code != 200:
+        raise AiServiceBadResponseError(
+            f"AI service returned HTTP {response.status_code} for {url}"
+        )
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise AiServiceBadResponseError(
+            "AI service returned a non-JSON body"
+        ) from exc
+
+    return _validate_and_map_candidate(data)
+
+
+def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
+    """Validate raw response dict and return a typed WorkflowCandidate."""
+    if not isinstance(data, dict):
+        raise AiServiceContractError("AI response is not a JSON object")
+
+    workflow_title = data.get("workflow_title", "")
+    if not workflow_title:
+        raise AiServiceContractError("AI response missing 'workflow_title'")
+
+    raw_steps = data.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise AiServiceContractError(
+            "AI response 'steps' must be a non-empty list"
+        )
+
+    steps: list[WorkflowCandidateStep] = []
+    seen_keys: set[str] = set()
+
+    for i, raw_step in enumerate(raw_steps):
+        if not isinstance(raw_step, dict):
+            raise AiServiceContractError(f"Step {i} is not a JSON object")
+
+        step_key = raw_step.get("step_key")
+        name = raw_step.get("name")
+        step_type = raw_step.get("step_type")
+        risk_level = raw_step.get("risk_level")
+        requires_approval = raw_step.get("requires_approval", False)
+
+        if not step_key:
+            raise AiServiceContractError(f"Step {i} missing 'step_key'")
+        if not name:
+            raise AiServiceContractError(f"Step {i} missing 'name'")
+        if not step_type:
+            raise AiServiceContractError(f"Step {i} missing 'step_type'")
+        if not risk_level:
+            raise AiServiceContractError(f"Step {i} missing 'risk_level'")
+        if step_key in seen_keys:
+            raise AiServiceContractError(f"Duplicate step_key: '{step_key}'")
+
+        seen_keys.add(step_key)
+        steps.append(WorkflowCandidateStep(
+            step_key=step_key,
+            name=name,
+            step_type=step_type,
+            risk_level=risk_level,
+            requires_approval=bool(requires_approval),
+        ))
+
+    warnings = data.get("warnings", [])
+    return WorkflowCandidate(
+        request_id=data.get("request_id", ""),
+        workflow_title=workflow_title,
+        steps=steps,
+        warnings=warnings if isinstance(warnings, list) else [],
+    )

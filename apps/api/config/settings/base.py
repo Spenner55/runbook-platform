@@ -3,7 +3,7 @@ import os
 import environ
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-REPO_ROOT = Path(__file__).resolve().parents[4]
+REPO_ROOT = BASE_DIR
 
 env = environ.Env(
     DEBUG=(bool, False),
@@ -24,6 +24,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    # Domain apps
+    'apps.common.apps.CommonConfig',
+    'apps.organizations.apps.OrganizationsConfig',
+    'apps.runbooks.apps.RunbooksConfig',
+    'apps.workflows.apps.WorkflowsConfig',
+    'apps.executions.apps.ExecutionsConfig',
 ]
 
 MIDDLEWARE = [
@@ -78,3 +84,10 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.AllowAny',
     ],
 }
+
+# AI service settings
+AI_BASE_URL = env('AI_BASE_URL', default='http://ai:8001')
+AI_CONNECT_TIMEOUT_SECONDS = env.float('AI_CONNECT_TIMEOUT_SECONDS', default=1.0)
+AI_READ_TIMEOUT_SECONDS = env.float('AI_READ_TIMEOUT_SECONDS', default=20.0)
+AI_WRITE_TIMEOUT_SECONDS = env.float('AI_WRITE_TIMEOUT_SECONDS', default=5.0)
+AI_POOL_TIMEOUT_SECONDS = env.float('AI_POOL_TIMEOUT_SECONDS', default=1.0)
