@@ -36,18 +36,8 @@ class ExecutionViewSet(
         serializer = ExecutionCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        try:
-            workflow = Workflow.objects.get(pk=serializer.validated_data["workflow_id"])
-        except Workflow.DoesNotExist:
-            return Response(
-                {"workflow_id": "Workflow not found."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            execution = services.create_execution_from_workflow(workflow=workflow)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        workflow = get_object_or_404(Workflow, pk=serializer.validated_data["workflow_id"])
+        execution = services.create_execution(workflow=workflow)
 
         return Response(
             ExecutionDetailSerializer(execution).data,

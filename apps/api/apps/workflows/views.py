@@ -1,5 +1,6 @@
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
 from apps.workflows.internal_clients import (
@@ -7,6 +8,7 @@ from apps.workflows.internal_clients import (
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
+    StubWorkflowTransformClient,
 )
 from apps.runbooks.models import Runbook
 from apps.workflows import services
@@ -31,16 +33,13 @@ class WorkflowViewSet(
         serializer = WorkflowCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        try:
-            runbook = Runbook.objects.get(pk=serializer.validated_data["runbook_id"])
-        except Runbook.DoesNotExist:
-            return Response(
-                {"runbook_id": "Runbook not found."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        runbook = get_object_or_404(Runbook, pk=serializer.validated_data["runbook_id"])
 
         try:
-            workflow = services.create_workflow_from_runbook(runbook=runbook)
+            workflow = services.create_workflow(
+                runbook=runbook,
+                transform_client=StubWorkflowTransformClient(),
+            )
         except AiServiceUnavailableError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except AiServiceTimeoutError as exc:

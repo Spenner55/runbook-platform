@@ -1,13 +1,65 @@
-import uuid
+from django.db import IntegrityError, transaction
+from django.db.models import Max
 
-from django.db import transaction
-
+from apps.common.exceptions import ConcurrencyConflictError, InvalidWorkflowDefinitionError
 from apps.runbooks.models import Runbook
+from apps.workflows.internal_clients import WorkflowCandidate
 from apps.workflows.models import Workflow
-from apps.workflows.internal_clients import (
-    WorkflowCandidate,
-    parse_runbook_to_workflow_candidate,
-)
+
+
+# ---------------------------------------------------------------------------
+# Public service functions
+# ---------------------------------------------------------------------------
+
+def create_workflow(*, runbook: Runbook, transform_client) -> Workflow:
+    """
+    Create a draft Workflow from a Runbook via the transform client boundary.
+
+    The transform call runs OUTSIDE the DB transaction so no connection is
+    held open while waiting on an external dependency.
+    """
+    candidate = transform_client.transform_runbook(
+        runbook_title=runbook.title,
+        runbook_slug=runbook.slug,
+        raw_content=runbook.raw_content,
+    )
+    _validate_candidate(candidate)
+    definition = _map_candidate_to_definition(candidate)
+
+    try:
+        with transaction.atomic():
+            locked_runbook = (
+                Runbook.objects
+                .select_for_update()
+                .select_related("organization")
+                .get(pk=runbook.pk)
+            )
+            existing_max = (
+                Workflow.objects
+                .filter(runbook=locked_runbook)
+                .aggregate(max_version=Max("version"))["max_version"]
+                or 0
+            )
+            return Workflow.objects.create(
+                organization=locked_runbook.organization,
+                runbook=locked_runbook,
+                name=candidate.workflow_title,
+                version=existing_max + 1,
+                status=Workflow.Status.DRAFT,
+                definition_schema_version="workflow.schema.v1",
+                definition=definition,
+            )
+    except IntegrityError as exc:
+        raise ConcurrencyConflictError(
+            code="workflow_version_conflict",
+            detail="Workflow version allocation conflicted with another request.",
+        ) from exc
+
+
+def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
+    """Convenience wrapper using the deterministic stub client."""
+    from apps.workflows.internal_clients import StubWorkflowTransformClient
+    return create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
 
 
 def publish_workflow(*, workflow: Workflow) -> Workflow:
@@ -21,58 +73,39 @@ def publish_workflow(*, workflow: Workflow) -> Workflow:
     return workflow
 
 
-def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
-    """
-    Create a new draft workflow version for the given runbook.
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-    Orchestration:
-    1. Call the AI service *outside* the DB transaction (avoids holding the
-       connection open while waiting on the network).
-    2. Validate and map the candidate into the canonical definition shape.
-    3. Open a transaction, assign the next version, and persist the Workflow.
-
-    If the AI service fails, no partial Workflow row is created.
-    """
-    request_id = str(uuid.uuid4())
-
-    # Step 1: call AI service (no DB transaction open here)
-    candidate = parse_runbook_to_workflow_candidate(
-        request_id=request_id,
-        runbook_id=str(runbook.id),
-        runbook_title=runbook.title,
-        raw_content=runbook.raw_content,
-    )
-
-    # Step 2: map candidate to canonical definition
-    definition = _map_candidate_to_definition(candidate)
-
-    # Step 3: version assignment and persistence inside a transaction.
-    # Lock the runbook row so concurrent calls for the same runbook are
-    # serialized here rather than colliding on the unique_workflow_version
-    # constraint at INSERT time.
-    with transaction.atomic():
-        Runbook.objects.select_for_update().filter(pk=runbook.pk).get()
-        existing_max = (
-            Workflow.objects.filter(runbook=runbook)
-            .order_by("-version")
-            .values_list("version", flat=True)
-            .first()
+def _validate_candidate(candidate: WorkflowCandidate) -> None:
+    """Validate transform client output at the service boundary before persisting."""
+    if not candidate.steps:
+        raise InvalidWorkflowDefinitionError(
+            code="invalid_workflow_definition",
+            detail="Workflow transform produced no steps.",
         )
-        version = (existing_max + 1) if existing_max is not None else 1
-
-        return Workflow.objects.create(
-            organization=runbook.organization,
-            runbook=runbook,
-            name=candidate.workflow_title,
-            version=version,
-            status=Workflow.Status.DRAFT,
-            definition_schema_version="workflow.schema.v1",
-            definition=definition,
-        )
+    seen_keys: set[str] = set()
+    for step in candidate.steps:
+        if not step.step_key:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail="A workflow step is missing step_key.",
+            )
+        if step.step_key in seen_keys:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Duplicate step_key in transform output: '{step.step_key}'.",
+            )
+        seen_keys.add(step.step_key)
+        if not step.name:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step '{step.step_key}' is missing a name.",
+            )
 
 
 def _map_candidate_to_definition(candidate: WorkflowCandidate) -> dict:
-    """Map an AI WorkflowCandidate to the canonical workflow definition shape."""
+    """Map a WorkflowCandidate to the canonical workflow definition shape."""
     return {
         "name": candidate.workflow_title,
         "steps": [

@@ -9,41 +9,14 @@ from apps.workflows.internal_clients import (
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
-    WorkflowCandidate,
-    WorkflowCandidateStep,
 )
-
-
-def _make_candidate() -> WorkflowCandidate:
-    return WorkflowCandidate(
-        request_id="test-req-id",
-        workflow_title="Deploy",
-        steps=[
-            WorkflowCandidateStep(
-                step_key="step-1",
-                name="Deploy step",
-                step_type="manual",
-                risk_level="low",
-                requires_approval=False,
-            ),
-        ],
-    )
-
-
-@pytest.fixture(autouse=True)
-def mock_ai_client():
-    """Prevent all tests in this module from making real AI service calls."""
-    with patch(
-        "apps.workflows.services.parse_runbook_to_workflow_candidate",
-        return_value=_make_candidate(),
-    ):
-        yield
+from apps.common.exceptions import ConcurrencyConflictError
 
 
 @pytest.fixture
 def runbook(org):
     return runbook_services.create_runbook(
-        organization=org, title="Deploy", slug="deploy", raw_content=""
+        organization=org, title="Deploy", slug="deploy", raw_content="Do the thing"
     )
 
 
@@ -51,6 +24,10 @@ def runbook(org):
 def draft_workflow(runbook):
     return workflow_services.create_workflow_from_runbook(runbook=runbook)
 
+
+# ---------------------------------------------------------------------------
+# Create endpoint
+# ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 def test_create_workflow_returns_201(runbook):
@@ -68,19 +45,56 @@ def test_create_workflow_returns_201(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_invalid_runbook_returns_400():
+def test_create_workflow_invalid_runbook_returns_404():
     client = Client()
     response = client.post(
         "/api/v1/workflows/",
         data={"runbook_id": "00000000-0000-0000-0000-000000000000"},
         content_type="application/json",
     )
-    assert response.status_code == 400
+    assert response.status_code == 404
 
 
 @pytest.mark.django_db
+def test_create_workflow_missing_runbook_id_returns_400():
+    client = Client()
+    response = client.post(
+        "/api/v1/workflows/",
+        data={},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "errors" in response.json()
+
+
+@pytest.mark.django_db
+def test_create_workflow_version_conflict_returns_409(runbook):
+    with patch(
+        "apps.workflows.views.services.create_workflow",
+        side_effect=ConcurrencyConflictError(
+            code="workflow_version_conflict",
+            detail="Workflow version allocation conflicted with another request.",
+        ),
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+    assert response.status_code == 409
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "workflow_version_conflict"
+
+
+# ---------------------------------------------------------------------------
+# AI error propagation (view-level catches, kept for future HTTP client)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
 @patch(
-    "apps.workflows.views.services.create_workflow_from_runbook",
+    "apps.workflows.views.services.create_workflow",
     side_effect=AiServiceUnavailableError("ai unavailable"),
 )
 def test_create_workflow_ai_unavailable_returns_503(_mock_create, runbook):
@@ -96,7 +110,7 @@ def test_create_workflow_ai_unavailable_returns_503(_mock_create, runbook):
 
 @pytest.mark.django_db
 @patch(
-    "apps.workflows.views.services.create_workflow_from_runbook",
+    "apps.workflows.views.services.create_workflow",
     side_effect=AiServiceTimeoutError("ai timeout"),
 )
 def test_create_workflow_ai_timeout_returns_504(_mock_create, runbook):
@@ -112,7 +126,7 @@ def test_create_workflow_ai_timeout_returns_504(_mock_create, runbook):
 
 @pytest.mark.django_db
 @patch(
-    "apps.workflows.views.services.create_workflow_from_runbook",
+    "apps.workflows.views.services.create_workflow",
     side_effect=AiServiceBadResponseError("ai bad response"),
 )
 def test_create_workflow_ai_bad_response_returns_502(_mock_create, runbook):
@@ -128,7 +142,7 @@ def test_create_workflow_ai_bad_response_returns_502(_mock_create, runbook):
 
 @pytest.mark.django_db
 @patch(
-    "apps.workflows.views.services.create_workflow_from_runbook",
+    "apps.workflows.views.services.create_workflow",
     side_effect=AiServiceContractError("ai contract error"),
 )
 def test_create_workflow_ai_contract_error_returns_502(_mock_create, runbook):
@@ -141,6 +155,10 @@ def test_create_workflow_ai_contract_error_returns_502(_mock_create, runbook):
     assert response.status_code == 502
     assert response.json()["detail"] == "ai contract error"
 
+
+# ---------------------------------------------------------------------------
+# Publish action
+# ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 def test_publish_workflow_transitions_to_published(draft_workflow):
