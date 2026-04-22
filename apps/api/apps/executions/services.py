@@ -1,8 +1,9 @@
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.common.exceptions import DomainValidationError, InvalidWorkflowDefinitionError
 from apps.executions.models import Execution, ExecutionStep
 from apps.workflows.models import Workflow
 
@@ -10,6 +11,66 @@ from apps.workflows.models import Workflow
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
+
+def create_execution(*, workflow: Workflow) -> Execution:
+    """
+    Create an immutable execution snapshot from a published workflow,
+    expanding workflow steps into ExecutionStep rows atomically.
+
+    The definition is validated outside the transaction so no partial state
+    can be committed on a structurally invalid workflow.
+    """
+    if workflow.status != Workflow.Status.PUBLISHED:
+        raise DomainValidationError(
+            code="workflow_not_published",
+            detail=(
+                f"Cannot create execution: workflow has status '{workflow.status}', "
+                f"expected 'published'."
+            ),
+        )
+
+    definition = workflow.definition
+    _validate_workflow_definition(definition)
+
+    try:
+        with transaction.atomic():
+            execution = Execution.objects.create(
+                organization=workflow.organization,
+                workflow=workflow,
+                workflow_version=workflow.version,
+                workflow_snapshot=definition,
+                status=Execution.Status.QUEUED,
+            )
+
+            step_rows = [
+                ExecutionStep(
+                    execution=execution,
+                    position=position,
+                    step_key=step["id"],
+                    name=step["name"],
+                    step_type=step.get("type", ""),
+                    risk_level=step.get("risk", ""),
+                    command=step.get("command", ""),
+                    requires_approval=step.get("requiresApproval", False),
+                    step_snapshot=step,
+                    status=ExecutionStep.Status.PENDING,
+                )
+                for position, step in enumerate(definition["steps"], start=1)
+            ]
+            ExecutionStep.objects.bulk_create(step_rows)
+
+            return execution
+    except IntegrityError as exc:
+        raise InvalidWorkflowDefinitionError(
+            code="execution_step_materialization_failed",
+            detail="Execution steps could not be materialized from the workflow definition.",
+        ) from exc
+
+
+def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
+    """Convenience wrapper — prefer create_execution for new call sites."""
+    return create_execution(workflow=workflow)
+
 
 def cancel_execution(*, execution: Execution) -> Execution:
     """Cancel a queued execution. Only queued executions may be cancelled."""
@@ -22,39 +83,42 @@ def cancel_execution(*, execution: Execution) -> Execution:
     return execution
 
 
-def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
-    """Create a queued execution from a published workflow, materializing all steps."""
-    if workflow.status != Workflow.Status.PUBLISHED:
-        raise ValueError(
-            f"Cannot create execution: workflow {workflow.id} has status "
-            f"'{workflow.status}', expected 'published'."
-        )
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-    with transaction.atomic():
-        execution = Execution.objects.create(
-            organization=workflow.organization,
-            workflow=workflow,
-            workflow_version=workflow.version,
-            workflow_snapshot=workflow.definition,
-            status=Execution.Status.QUEUED,
+def _validate_workflow_definition(definition: dict) -> None:
+    """Validate that a workflow definition can be expanded into execution steps."""
+    if not isinstance(definition, dict):
+        raise InvalidWorkflowDefinitionError(
+            code="invalid_workflow_definition",
+            detail="Workflow definition is not a valid object.",
         )
-
-        steps = workflow.definition.get("steps", [])
-        for position, step in enumerate(steps, start=1):
-            ExecutionStep.objects.create(
-                execution=execution,
-                position=position,
-                step_key=step["id"],
-                name=step["name"],
-                step_type=step.get("type", ""),
-                risk_level=step.get("risk", ""),
-                command=step.get("command", ""),
-                requires_approval=step.get("requiresApproval", False),
-                step_snapshot=step,
-                status=ExecutionStep.Status.PENDING,
+    steps = definition.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise InvalidWorkflowDefinitionError(
+            code="workflow_has_no_steps",
+            detail="Workflow definition must contain at least one step.",
+        )
+    seen_ids: set[str] = set()
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step at position {i + 1} is not a valid object.",
             )
-
-        return execution
+        step_id = step.get("id")
+        if not step_id:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step at position {i + 1} is missing 'id'.",
+            )
+        if step_id in seen_ids:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Duplicate step id '{step_id}' in workflow definition.",
+            )
+        seen_ids.add(step_id)
 
 
 # ---------------------------------------------------------------------------

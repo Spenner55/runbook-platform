@@ -1,4 +1,5 @@
 from rest_framework import mixins, status, viewsets
+from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
 from apps.organizations.models import Organization
@@ -25,13 +26,7 @@ class RunbookViewSet(
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        try:
-            organization = Organization.objects.get(pk=data["organization_id"])
-        except Organization.DoesNotExist:
-            return Response(
-                {"organization_id": "Organization not found."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        organization = get_object_or_404(Organization, pk=data["organization_id"])
 
         runbook = services.create_runbook(
             organization=organization,
