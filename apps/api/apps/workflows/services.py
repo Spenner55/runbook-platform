@@ -1,7 +1,7 @@
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
-from apps.common.exceptions import ConcurrencyConflictError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import ConcurrencyConflictError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
 from apps.runbooks.models import Runbook
 from apps.workflows.internal_clients import WorkflowCandidate
 from apps.workflows.models import Workflow
@@ -63,12 +63,31 @@ def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
 
 
 def publish_workflow(*, workflow: Workflow) -> Workflow:
-    """Transition a draft workflow to published status."""
+    """Transition a draft workflow to published status, superseding any currently published sibling."""
     if workflow.status != Workflow.Status.DRAFT:
-        raise ValueError(
-            f"Cannot publish workflow with status '{workflow.status}', expected 'draft'."
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot publish workflow with status '{workflow.status}', expected 'draft'.",
         )
-    workflow.status = Workflow.Status.PUBLISHED
+    with transaction.atomic():
+        Workflow.objects.filter(
+            runbook=workflow.runbook,
+            status=Workflow.Status.PUBLISHED,
+        ).exclude(pk=workflow.pk).update(status=Workflow.Status.SUPERSEDED)
+        workflow.status = Workflow.Status.PUBLISHED
+        workflow.save(update_fields=["status", "updated_at"])
+    return workflow
+
+
+def archive_workflow(*, workflow: Workflow) -> Workflow:
+    """Transition a draft or superseded workflow to archived status."""
+    allowed = {Workflow.Status.DRAFT, Workflow.Status.SUPERSEDED}
+    if workflow.status not in allowed:
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot archive workflow with status '{workflow.status}'.",
+        )
+    workflow.status = Workflow.Status.ARCHIVED
     workflow.save(update_fields=["status", "updated_at"])
     return workflow
 

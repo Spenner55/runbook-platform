@@ -10,9 +10,5 @@ def health(_request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("health/", health),
-    path("api/v1/", include("apps.organizations.urls")),
-    path("api/v1/", include("apps.runbooks.urls")),
-    path("api/v1/", include("apps.workflows.urls")),
-    path("api/v1/", include("apps.executions.urls")),
-    path("api/v1/internal/", include("apps.executions.internal_urls")),
+    path("api/v1/", include(("config.api_v1_urls", "api_v1"), namespace="v1")),
 ]

@@ -10,13 +10,24 @@ class WorkflowCreateSerializer(serializers.Serializer):
 class WorkflowListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workflow
-        fields = ["id", "name", "version", "status", "runbook_id", "organization_id", "created_at"]
+        fields = [
+            "id", "name", "version", "status", "definition_schema_version",
+            "runbook_id", "organization_id", "created_at", "updated_at",
+        ]
 
 
 class WorkflowDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workflow
         fields = [
-            "id", "name", "version", "status", "definition", "definition_schema_version",
-            "runbook_id", "organization_id", "created_at", "updated_at",
+            "id", "name", "version", "status", "definition_schema_version",
+            "definition", "runbook_id", "organization_id", "created_at", "updated_at",
         ]
+
+
+class WorkflowPublishSerializer(serializers.Serializer):
+    pass
+
+
+class WorkflowArchiveSerializer(serializers.Serializer):
+    pass

@@ -2,7 +2,7 @@ import pytest
 from django.db import IntegrityError
 from unittest.mock import MagicMock, patch
 
-from apps.common.exceptions import ConcurrencyConflictError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import ConcurrencyConflictError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
 from apps.runbooks import services as runbook_services
 from apps.workflows import services
 from apps.workflows.internal_clients import (
@@ -214,8 +214,9 @@ def test_publish_workflow_transitions_status(runbook):
 def test_publish_workflow_rejects_non_draft(runbook):
     workflow = services.create_workflow(runbook=runbook, transform_client=_stub())
     services.publish_workflow(workflow=workflow)
-    with pytest.raises(ValueError, match="draft"):
+    with pytest.raises(InvalidStateTransitionError) as exc_info:
         services.publish_workflow(workflow=workflow)
+    assert exc_info.value.code == "invalid_state_transition"
 
 
 # ---------------------------------------------------------------------------

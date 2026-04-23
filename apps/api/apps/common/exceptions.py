@@ -29,3 +29,8 @@ class InvalidWorkflowDefinitionError(_BaseDomainError):
 class ExternalDependencyError(_BaseDomainError):
     """An internal dependency (e.g. AI service) could not be reached or returned an unusable response."""
     http_status = 503
+
+
+class InvalidStateTransitionError(_BaseDomainError):
+    """An operation was rejected because the resource is in an incompatible lifecycle state."""
+    http_status = 409
