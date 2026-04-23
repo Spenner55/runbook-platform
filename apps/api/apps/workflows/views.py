@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
+from apps.common.exceptions import ExternalDependencyError
 from apps.workflows.internal_clients import (
     AiServiceBadResponseError,
     AiServiceContractError,
@@ -14,19 +15,28 @@ from apps.runbooks.models import Runbook
 from apps.workflows import services
 from apps.workflows.models import Workflow
 from apps.workflows.serializers import (
+    WorkflowArchiveSerializer,
     WorkflowCreateSerializer,
     WorkflowDetailSerializer,
     WorkflowListSerializer,
+    WorkflowPublishSerializer,
 )
 
 
 class WorkflowViewSet(
     mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
     queryset = Workflow.objects.select_related("runbook", "organization").all()
 
     def get_serializer_class(self):
+        if self.action == "retrieve":
+            return WorkflowDetailSerializer
+        if self.action == "publish":
+            return WorkflowPublishSerializer
+        if self.action == "archive":
+            return WorkflowArchiveSerializer
         return WorkflowListSerializer
 
     def create(self, request):
@@ -40,24 +50,27 @@ class WorkflowViewSet(
                 runbook=runbook,
                 transform_client=StubWorkflowTransformClient(),
             )
-        except AiServiceUnavailableError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except AiServiceTimeoutError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except (AiServiceUnavailableError, AiServiceTimeoutError) as exc:
+            raise ExternalDependencyError(
+                code="workflow_transform_unavailable",
+                detail=str(exc),
+            ) from exc
         except (AiServiceBadResponseError, AiServiceContractError) as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            raise ExternalDependencyError(
+                code="workflow_transform_unavailable",
+                detail=str(exc),
+            ) from exc
 
         return Response(WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED)
-
-    def retrieve(self, request, pk=None):
-        workflow = self.get_object()
-        return Response(WorkflowDetailSerializer(workflow).data)
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
         workflow = self.get_object()
-        try:
-            workflow = services.publish_workflow(workflow=workflow)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        workflow = services.publish_workflow(workflow=workflow)
+        return Response(WorkflowDetailSerializer(workflow).data)
+
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        workflow = self.get_object()
+        workflow = services.archive_workflow(workflow=workflow)
         return Response(WorkflowDetailSerializer(workflow).data)

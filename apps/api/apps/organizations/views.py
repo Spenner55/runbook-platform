@@ -3,7 +3,11 @@ from rest_framework.response import Response
 
 from apps.organizations import services
 from apps.organizations.models import Organization
-from apps.organizations.serializers import OrganizationSerializer
+from apps.organizations.serializers import (
+    OrganizationCreateSerializer,
+    OrganizationDetailSerializer,
+    OrganizationListSerializer,
+)
 
 
 class OrganizationViewSet(
@@ -12,13 +16,17 @@ class OrganizationViewSet(
     viewsets.GenericViewSet,
 ):
     queryset = Organization.objects.all()
-    serializer_class = OrganizationSerializer
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return OrganizationDetailSerializer
+        return OrganizationListSerializer
 
     def create(self, request):
-        serializer = OrganizationSerializer(data=request.data)
+        serializer = OrganizationCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         org = services.create_organization(
             name=serializer.validated_data["name"],
             slug=serializer.validated_data["slug"],
         )
-        return Response(OrganizationSerializer(org).data, status=status.HTTP_201_CREATED)
+        return Response(OrganizationDetailSerializer(org).data, status=status.HTTP_201_CREATED)

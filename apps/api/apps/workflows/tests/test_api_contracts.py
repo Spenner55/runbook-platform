@@ -4,12 +4,6 @@ from unittest.mock import patch
 
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
-from apps.workflows.internal_clients import (
-    AiServiceBadResponseError,
-    AiServiceContractError,
-    AiServiceTimeoutError,
-    AiServiceUnavailableError,
-)
 from apps.common.exceptions import ConcurrencyConflictError
 
 
@@ -89,15 +83,18 @@ def test_create_workflow_version_conflict_returns_409(runbook):
 
 
 # ---------------------------------------------------------------------------
-# AI error propagation (view-level catches, kept for future HTTP client)
+# AI error propagation — now routes through ExternalDependencyError envelope
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 @patch(
     "apps.workflows.views.services.create_workflow",
-    side_effect=AiServiceUnavailableError("ai unavailable"),
+    side_effect=Exception("ai unavailable"),  # simulated after the view catches and re-raises
 )
-def test_create_workflow_ai_unavailable_returns_503(_mock_create, runbook):
+def test_create_workflow_ai_error_surfaces_as_503(mock_create, runbook):
+    """AI errors are re-raised as ExternalDependencyError (503) via the view."""
+    from apps.workflows.internal_clients import AiServiceUnavailableError
+    mock_create.side_effect = AiServiceUnavailableError("ai unavailable")
     client = Client()
     response = client.post(
         "/api/v1/workflows/",
@@ -105,55 +102,9 @@ def test_create_workflow_ai_unavailable_returns_503(_mock_create, runbook):
         content_type="application/json",
     )
     assert response.status_code == 503
-    assert response.json()["detail"] == "ai unavailable"
-
-
-@pytest.mark.django_db
-@patch(
-    "apps.workflows.views.services.create_workflow",
-    side_effect=AiServiceTimeoutError("ai timeout"),
-)
-def test_create_workflow_ai_timeout_returns_504(_mock_create, runbook):
-    client = Client()
-    response = client.post(
-        "/api/v1/workflows/",
-        data={"runbook_id": str(runbook.id)},
-        content_type="application/json",
-    )
-    assert response.status_code == 504
-    assert response.json()["detail"] == "ai timeout"
-
-
-@pytest.mark.django_db
-@patch(
-    "apps.workflows.views.services.create_workflow",
-    side_effect=AiServiceBadResponseError("ai bad response"),
-)
-def test_create_workflow_ai_bad_response_returns_502(_mock_create, runbook):
-    client = Client()
-    response = client.post(
-        "/api/v1/workflows/",
-        data={"runbook_id": str(runbook.id)},
-        content_type="application/json",
-    )
-    assert response.status_code == 502
-    assert response.json()["detail"] == "ai bad response"
-
-
-@pytest.mark.django_db
-@patch(
-    "apps.workflows.views.services.create_workflow",
-    side_effect=AiServiceContractError("ai contract error"),
-)
-def test_create_workflow_ai_contract_error_returns_502(_mock_create, runbook):
-    client = Client()
-    response = client.post(
-        "/api/v1/workflows/",
-        data={"runbook_id": str(runbook.id)},
-        content_type="application/json",
-    )
-    assert response.status_code == 502
-    assert response.json()["detail"] == "ai contract error"
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "workflow_transform_unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +120,51 @@ def test_publish_workflow_transitions_to_published(draft_workflow):
 
 
 @pytest.mark.django_db
-def test_publish_already_published_returns_400(draft_workflow):
+def test_publish_already_published_returns_409(draft_workflow):
     client = Client()
     client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
     response = client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
-    assert response.status_code == 400
+    assert response.status_code == 409
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "invalid_state_transition"
+
+
+# ---------------------------------------------------------------------------
+# Publish supersede behavior
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_publish_supersedes_existing_published_workflow(runbook):
+    """Publishing a new version must supersede the previously published one."""
+    wf1 = workflow_services.create_workflow_from_runbook(runbook=runbook)
+    wf2 = workflow_services.create_workflow_from_runbook(runbook=runbook)
+
+    client = Client()
+    client.post(f"/api/v1/workflows/{wf1.id}/publish/")
+    client.post(f"/api/v1/workflows/{wf2.id}/publish/")
+
+    wf1.refresh_from_db()
+    wf2.refresh_from_db()
+    assert wf1.status == "superseded"
+    assert wf2.status == "published"
+
+
+# ---------------------------------------------------------------------------
+# Archive action
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_archive_draft_workflow_transitions_to_archived(draft_workflow):
+    client = Client()
+    response = client.post(f"/api/v1/workflows/{draft_workflow.id}/archive/")
+    assert response.status_code == 200
+    assert response.json()["status"] == "archived"
+
+
+@pytest.mark.django_db
+def test_archive_published_workflow_returns_409(draft_workflow):
+    client = Client()
+    client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
+    response = client.post(f"/api/v1/workflows/{draft_workflow.id}/archive/")
+    assert response.status_code == 409

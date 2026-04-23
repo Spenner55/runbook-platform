@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch
 
-from apps.common.exceptions import DomainValidationError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
 from apps.executions import services
 from apps.executions.models import Execution, ExecutionStep
 from apps.runbooks import services as runbook_services
@@ -153,5 +153,6 @@ def test_cancel_execution_transitions_to_cancelled(published_workflow):
 def test_cancel_non_queued_execution_raises(published_workflow):
     execution = services.create_execution(workflow=published_workflow)
     services.cancel_execution(execution=execution)
-    with pytest.raises(ValueError, match="queued"):
+    with pytest.raises(InvalidStateTransitionError) as exc_info:
         services.cancel_execution(execution=execution)
+    assert exc_info.value.code == "invalid_state_transition"

@@ -3,7 +3,7 @@ import uuid
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.common.exceptions import DomainValidationError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
 from apps.executions.models import Execution, ExecutionStep
 from apps.workflows.models import Workflow
 
@@ -75,8 +75,9 @@ def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
 def cancel_execution(*, execution: Execution) -> Execution:
     """Cancel a queued execution. Only queued executions may be cancelled."""
     if execution.status != Execution.Status.QUEUED:
-        raise ValueError(
-            f"Cannot cancel execution with status '{execution.status}', expected 'queued'."
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot cancel execution with status '{execution.status}', expected 'queued'.",
         )
     execution.status = Execution.Status.CANCELLED
     execution.save(update_fields=["status", "updated_at"])
@@ -163,11 +164,17 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
 
 
 def _validate_runner_ownership(execution: Execution, runner_id: str, claim_token: str) -> None:
-    """Raise ValueError if the given runner_id/claim_token doesn't own this execution."""
+    """Raise InvalidStateTransitionError if the given runner_id/claim_token doesn't own this execution."""
     if execution.claimed_by_runner_id != runner_id:
-        raise ValueError("Runner ID does not match execution owner.")
+        raise InvalidStateTransitionError(
+            code="runner_ownership_mismatch",
+            detail="Runner ID does not match execution owner.",
+        )
     if str(execution.claim_token) != claim_token:
-        raise ValueError("Claim token is invalid.")
+        raise InvalidStateTransitionError(
+            code="claim_token_mismatch",
+            detail="Claim token is invalid.",
+        )
 
 
 def heartbeat_execution(
@@ -178,8 +185,9 @@ def heartbeat_execution(
 ) -> Execution:
     """Update last_heartbeat_at for an active execution owned by the runner."""
     if execution.status not in (Execution.Status.CLAIMED, Execution.Status.RUNNING):
-        raise ValueError(
-            f"Cannot heartbeat execution with status '{execution.status}'."
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot heartbeat execution with status '{execution.status}'.",
         )
     _validate_runner_ownership(execution, runner_id, claim_token)
     execution.last_heartbeat_at = timezone.now()
@@ -223,12 +231,16 @@ def update_execution_step(
     try:
         step = execution.steps.get(pk=step_id)
     except ExecutionStep.DoesNotExist:
-        raise ValueError(f"Step {step_id} not found on execution {execution.id}.")
+        raise InvalidStateTransitionError(
+            code="step_not_found",
+            detail=f"Step {step_id} not found on execution {execution.id}.",
+        )
 
     allowed = _VALID_STEP_TRANSITIONS.get(step.status, set())
     if new_status not in allowed:
-        raise ValueError(
-            f"Invalid step transition: '{step.status}' -> '{new_status}'."
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Invalid step transition: '{step.status}' -> '{new_status}'.",
         )
 
     now = timezone.now()
@@ -279,13 +291,17 @@ def complete_execution(
     _validate_runner_ownership(execution, runner_id, claim_token)
 
     if execution.status not in (Execution.Status.CLAIMED, Execution.Status.RUNNING):
-        raise ValueError(
-            f"Cannot complete execution with status '{execution.status}'."
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot complete execution with status '{execution.status}'.",
         )
 
     valid_outcomes = {Execution.Status.SUCCEEDED, Execution.Status.FAILED}
     if outcome not in valid_outcomes:
-        raise ValueError(f"Invalid completion outcome: '{outcome}'.")
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Invalid completion outcome: '{outcome}'.",
+        )
 
     now = timezone.now()
     execution.status = outcome
