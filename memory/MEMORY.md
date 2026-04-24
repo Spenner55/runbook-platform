@@ -1,4 +1,4 @@
 # Memory Index
 
-- [Project Phase Status](project_phase_status.md) — Phases 1–6 complete; 98 API + 46 runner + 3 frontend tests passing
-- [Architecture Conventions](architecture_conventions.md) — Key decisions: service layer, domain exceptions, route structure
+- [Project state — phases completed](project_phases.md) — Phase 8 testing complete; 119 Django + 46 runner + 23 AI + 18 frontend tests passing
+- [Runner architecture](project_runner_arch.md) — claim_token lives on ClaimNextResponse root, not ClaimedExecution; executor.run() takes (execution, claim_token)
