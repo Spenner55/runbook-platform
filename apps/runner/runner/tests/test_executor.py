@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -37,9 +37,13 @@ def make_execution(steps: list[ClaimedStep]) -> ClaimedExecution:
         organization_id=uuid4(),
         workflow_version=1,
         workflow_snapshot={},
-        claim_token=uuid4(),
         steps=steps,
     )
+
+
+def run_execution(executor: Executor, execution: ClaimedExecution) -> None:
+    """Helper: run executor with a fresh claim_token."""
+    executor.run(execution, uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +56,11 @@ def test_successful_execution_calls_complete_succeeded(mock_sleep):
     executor = Executor(client)
     execution = make_execution([make_step(1), make_step(2)])
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     client.complete_execution.assert_called_once()
-    _, _, outcome = client.complete_execution.call_args.args
-    assert outcome == "succeeded"
+    call_kwargs = client.complete_execution.call_args.kwargs
+    assert call_kwargs["final_status"] == "succeeded"
 
 
 @patch("runner.executor.time.sleep")
@@ -68,7 +72,7 @@ def test_steps_execute_in_position_order(mock_sleep):
     execution = make_execution(steps)
     step_by_id = {s.id: s for s in steps}
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     # Collect step IDs that were marked "running", in call order
     running_step_ids = [
@@ -86,7 +90,7 @@ def test_fail_step_marker_triggers_failure_path(mock_sleep):
     executor = Executor(client)
     execution = make_execution([make_step(1, command="FAIL_STEP")])
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     # Step should have been marked failed
     failed_calls = [
@@ -96,8 +100,8 @@ def test_fail_step_marker_triggers_failure_path(mock_sleep):
     assert len(failed_calls) == 1
 
     # Execution outcome should be failed
-    _, _, outcome = client.complete_execution.call_args.args
-    assert outcome == "failed"
+    call_kwargs = client.complete_execution.call_args.kwargs
+    assert call_kwargs["final_status"] == "failed"
 
 
 @patch("runner.executor.time.sleep")
@@ -110,7 +114,7 @@ def test_failure_stops_subsequent_steps(mock_sleep):
         make_step(3),
     ])
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     # Only step 1 should have been started (marked running)
     running_calls = [
@@ -126,7 +130,7 @@ def test_complete_execution_called_exactly_once(mock_sleep):
     executor = Executor(client)
     execution = make_execution([make_step(1), make_step(2), make_step(3)])
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     client.complete_execution.assert_called_once()
 
@@ -138,7 +142,7 @@ def test_each_step_marked_running_then_succeeded(mock_sleep):
     steps = [make_step(1), make_step(2)]
     execution = make_execution(steps)
 
-    executor.run(execution)
+    run_execution(executor, execution)
 
     for step in steps:
         running = [

@@ -34,7 +34,6 @@ def make_claimed_execution() -> ClaimedExecution:
         organization_id=uuid4(),
         workflow_version=1,
         workflow_snapshot={},
-        claim_token=uuid4(),
         steps=[step],
     )
 
@@ -66,13 +65,14 @@ def test_work_claimed_calls_executor_run(mock_sleep):
     poller = Poller(client, executor)
 
     claimed = make_claimed_execution()
+    token = uuid4()
     client.claim_next.return_value = ClaimNextResponse(
-        execution=claimed, poll_after_seconds=5
+        execution=claimed, claim_token=token, poll_after_seconds=5
     )
 
     poller._poll_once()
 
-    executor.run.assert_called_once_with(claimed)
+    executor.run.assert_called_once_with(claimed, token)
     mock_sleep.assert_not_called()
 
 
@@ -84,7 +84,7 @@ def test_poll_does_not_double_execute(mock_sleep):
 
     claimed = make_claimed_execution()
     client.claim_next.return_value = ClaimNextResponse(
-        execution=claimed, poll_after_seconds=5
+        execution=claimed, claim_token=uuid4(), poll_after_seconds=5
     )
 
     poller._poll_once()
@@ -105,4 +105,21 @@ def test_http_error_sleeps_and_returns(mock_sleep):
     poller._poll_once()
 
     mock_sleep.assert_called_once_with(5)
+    executor.run.assert_not_called()
+
+
+@patch("runner.poller.time.sleep")
+def test_missing_claim_token_skips_execution(mock_sleep):
+    """If claim-next returns an execution but no claim_token, skip it."""
+    client = MagicMock()
+    executor = MagicMock()
+    poller = Poller(client, executor)
+
+    claimed = make_claimed_execution()
+    client.claim_next.return_value = ClaimNextResponse(
+        execution=claimed, claim_token=None, poll_after_seconds=5
+    )
+
+    poller._poll_once()
+
     executor.run.assert_not_called()

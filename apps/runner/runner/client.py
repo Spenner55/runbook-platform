@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
@@ -21,14 +21,26 @@ from runner.schemas import (
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(10.0)
+_DEFAULT_TIMEOUT = httpx.Timeout(10.0)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(tz=timezone.utc)
 
 
 class ApiClient:
-    def __init__(self, base_url: str, runner_id: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        runner_id: str,
+        runner_version: str = "0.1.0",
+        http_client: httpx.Client | None = None,
+    ) -> None:
         self._base = base_url.rstrip("/")
         self._runner_id = runner_id
-        self._http = httpx.Client(timeout=_TIMEOUT)
+        self._runner_version = runner_version
+        self._owns_http_client = http_client is None
+        self._http = http_client if http_client is not None else httpx.Client(timeout=_DEFAULT_TIMEOUT)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -47,16 +59,27 @@ class ApiClient:
     def claim_next(self) -> ClaimNextResponse:
         data = self._post(
             "/api/v1/internal/executions/claim-next/",
-            ClaimNextRequest(runner_id=self._runner_id).model_dump(mode="json"),
+            ClaimNextRequest(
+                runner_id=self._runner_id,
+                runner_version=self._runner_version,
+                requested_at=_utcnow(),
+            ).model_dump(mode="json"),
         )
         return ClaimNextResponse.model_validate(data)
 
-    def heartbeat(self, execution_id: UUID, claim_token: UUID) -> HeartbeatResponse:
+    def heartbeat(
+        self,
+        execution_id: UUID,
+        claim_token: UUID,
+        observed_status: str = "claimed",
+    ) -> HeartbeatResponse:
         data = self._post(
             f"/api/v1/internal/executions/{execution_id}/heartbeat/",
             HeartbeatRequest(
                 runner_id=self._runner_id,
                 claim_token=claim_token,
+                observed_status=observed_status,  # type: ignore[arg-type]
+                sent_at=_utcnow(),
             ).model_dump(mode="json"),
         )
         return HeartbeatResponse.model_validate(data)
@@ -78,7 +101,7 @@ class ApiClient:
             StepUpdateRequest(
                 runner_id=self._runner_id,
                 claim_token=claim_token,
-                status=status,
+                status=status,  # type: ignore[arg-type]
                 started_at=started_at,
                 finished_at=finished_at,
                 exit_code=exit_code,
@@ -91,17 +114,21 @@ class ApiClient:
         self,
         execution_id: UUID,
         claim_token: UUID,
-        outcome: str,
+        final_status: str,
+        error_message: str = "",
     ) -> CompleteExecutionResponse:
         data = self._post(
             f"/api/v1/internal/executions/{execution_id}/complete/",
             CompleteExecutionRequest(
                 runner_id=self._runner_id,
                 claim_token=claim_token,
-                outcome=outcome,
+                final_status=final_status,  # type: ignore[arg-type]
+                finished_at=_utcnow(),
+                error_message=error_message,
             ).model_dump(mode="json"),
         )
         return CompleteExecutionResponse.model_validate(data)
 
     def close(self) -> None:
-        self._http.close()
+        if self._owns_http_client:
+            self._http.close()

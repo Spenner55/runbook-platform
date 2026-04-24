@@ -11,7 +11,7 @@ from uuid import UUID
 import httpx
 
 from runner.client import ApiClient
-from runner.schemas import ClaimedExecution
+from runner.schemas import ClaimedExecution, ClaimedStep
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,20 @@ class _HeartbeatThread(threading.Thread):
         self._claim_token = claim_token
         self._interval = interval
         self._stop_event = threading.Event()
+        self._observed_status = "claimed"
+
+    def set_observed_status(self, status: str) -> None:
+        self._observed_status = status
 
     def run(self) -> None:
         logger.debug("Heartbeat thread started for execution %s", self._execution_id)
         while not self._stop_event.wait(self._interval):
             try:
-                self._client.heartbeat(self._execution_id, self._claim_token)
+                self._client.heartbeat(
+                    self._execution_id,
+                    self._claim_token,
+                    observed_status=self._observed_status,
+                )
                 logger.debug("Heartbeat sent for execution %s", self._execution_id)
             except httpx.HTTPError as exc:
                 logger.warning("Heartbeat failed for execution %s: %s", self._execution_id, exc)
@@ -57,10 +65,9 @@ class Executor:
     def __init__(self, client: ApiClient) -> None:
         self._client = client
 
-    def run(self, execution: ClaimedExecution) -> None:
+    def run(self, execution: ClaimedExecution, claim_token: UUID) -> None:
         """Execute all steps of a claimed execution sequentially."""
         execution_id = execution.id
-        claim_token = execution.claim_token
 
         logger.info(
             "Starting execution %s with %d step(s)",
@@ -74,7 +81,7 @@ class Executor:
         outcome = "succeeded"
         try:
             for step in sorted(execution.steps, key=lambda s: s.position):
-                step_failed = self._run_step(execution_id, claim_token, step)
+                step_failed = self._run_step(execution_id, claim_token, step, heartbeat)
                 if step_failed:
                     outcome = "failed"
                     break
@@ -88,14 +95,20 @@ class Executor:
             heartbeat.join(timeout=5)
 
         try:
-            self._client.complete_execution(execution_id, claim_token, outcome)
+            self._client.complete_execution(execution_id, claim_token, final_status=outcome)
             logger.info("Execution %s completed with outcome: %s", execution_id, outcome)
         except httpx.HTTPError as exc:
             logger.error(
                 "Failed to mark execution %s complete: %s", execution_id, exc
             )
 
-    def _run_step(self, execution_id: UUID, claim_token: UUID, step) -> bool:
+    def _run_step(
+        self,
+        execution_id: UUID,
+        claim_token: UUID,
+        step: ClaimedStep,
+        heartbeat: _HeartbeatThread,
+    ) -> bool:
         """
         Run a single step. Returns True if the step failed, False if it succeeded.
 
@@ -115,6 +128,8 @@ class Executor:
                 status="running",
                 started_at=started_at,
             )
+            # First step starting → execution is now running
+            heartbeat.set_observed_status("running")
         except httpx.HTTPError as exc:
             logger.error("Failed to mark step %s running: %s", step.id, exc)
             return True  # treat as failure
@@ -138,7 +153,7 @@ class Executor:
                     started_at=started_at,
                     finished_at=finished_at,
                     exit_code=1,
-                    error_message="Step failed: FAIL_STEP marker in command.",
+                    error_message="Intentional failure triggered by FAIL_STEP token.",
                 )
             except httpx.HTTPError as exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, exc)
