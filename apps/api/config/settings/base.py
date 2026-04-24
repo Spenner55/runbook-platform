@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'corsheaders',
     # Domain apps
     'apps.common.apps.CommonConfig',
     'apps.organizations.apps.OrganizationsConfig',
@@ -34,6 +35,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -88,6 +90,10 @@ REST_FRAMEWORK = {
     'ALLOWED_VERSIONS': ('v1',),
     'EXCEPTION_HANDLER': 'apps.common.api_errors.custom_exception_handler',
 }
+
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+]
 
 # AI service settings
 AI_BASE_URL = env('AI_BASE_URL', default='http://ai:8001')

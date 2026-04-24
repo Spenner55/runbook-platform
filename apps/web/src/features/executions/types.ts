@@ -21,6 +21,9 @@ export interface ExecutionDetail {
   organization_id: string
   workflow_version: number
   workflow_snapshot: Record<string, unknown>
+  claimed_by_runner_id: string
+  claimed_at: string | null
+  last_heartbeat_at: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string

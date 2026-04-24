@@ -4,25 +4,33 @@ description: Current implementation phase and what was completed when
 type: project
 ---
 
-Phase 4 (Versioned REST APIs) completed on 2026-04-22.
-
-Phase 3 was verified complete with one class of gaps: all service-layer state transition errors used `ValueError` instead of domain exceptions, causing views to return ad-hoc `{"detail": ...}` instead of the standard error envelope. Fixed before Phase 4.
+Phase 6 (React Product Slice) completed on 2026-04-23. All prior phases (1–5) verified clean.
 
 **Why:** Blueprints in docs/blueprints/ define phases 01–08. Each must be completed in order.
 
-**Phase 4 deliverables now in place:**
-- `config/api_v1_urls.py` — central versioned router with namespace "v1"
-- `config/urls.py` — updated to include api_v1_urls with namespace, /health/ stays outside
-- NamespaceVersioning + ALLOWED_VERSIONS in REST_FRAMEWORK settings
-- Organizations: create/list/detail serializer split
-- Runbooks: `mark_ready` + `archive` actions, list excludes raw_content, detail includes it
-- Workflows: `publish` (with sibling supersede), `archive` actions; list excludes definition, detail includes it
-- Executions: list includes runner metadata, detail adds `claim_token_present`
-- `executions/internal_views.py` — clean separation of runner endpoints from public
-- `executions/internal_serializers.py` — runner serializers isolated from public
-- `executions/runner_services.py` — NOT created; runner services stayed in services.py (all related functions together, still clean)
-- claim-next returns `claim_token` at top level of response
-- `InvalidStateTransitionError` (409) added to common/exceptions.py
-- 98 tests pass across all apps
+**Phase 6 deliverables in place:**
+- `apps/web/src/app/` — router (createBrowserRouter), AppLayout (Outlet), AppProviders (QueryClientProvider), queryClient
+- `apps/web/src/shared/api/` — apiRequest client, env (VITE_API_BASE_URL), ApiError
+- `apps/web/src/shared/lib/queryKeys.ts` — centralized query keys
+- `apps/web/src/features/{organizations,runbooks,workflows,executions}/` — feature API functions, hooks, and TypeScript types
+- `apps/web/src/routes/` — all 5 route page components
+- Execution detail polls (refetchInterval: 1500ms while active, false when terminal)
+- Frontend calls Django only — no FastAPI or internal runner endpoints
+- No Redux/Zustand
+- Tests: OrganizationsPage + ExecutionDetailPage with Vitest + RTL (3 tests passing)
 
-**How to apply:** When working in this repo, assume Phases 1-4 are complete. Phase 5 (Runner implementation) is next.
+**Phase 5 deliverables (runner):**
+- `runner/schemas.py` — typed contracts (RunnerSettings, ClaimNextResponse, etc.)
+- `runner/client.py` — ApiClient with centralized httpx calls
+- `runner/poller.py` — claim loop, no-work idle, error backoff
+- `runner/executor.py` — sequential steps, FAIL_STEP, heartbeat thread
+- `runner/log_streamer.py` — structured JSON logging
+- `runner/main.py` — thin bootstrap only
+- 46 runner tests pass (test_schemas, test_client, test_executor, test_poller, test_orchestration)
+
+**Phase 5 fix applied on 2026-04-23:**
+- Deleted dead `apps/api/apps/executions/internal_urls.py` (had broken imports, was unreferenced)
+- Added `claimed_by_runner_id`, `claimed_at`, `last_heartbeat_at` to ExecutionDetail TS type
+- Updated ExecutionDetailPage to render runner ownership fields
+
+**How to apply:** Phases 1–6 are complete. Phase 7 (AI integration) is next. The system is fully runnable with `make up` and the vertical slice can be exercised from browser at http://localhost:5173.
