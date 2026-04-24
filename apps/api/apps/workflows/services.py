@@ -57,9 +57,9 @@ def create_workflow(*, runbook: Runbook, transform_client) -> Workflow:
 
 
 def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
-    """Convenience wrapper using the deterministic stub client."""
-    from apps.workflows.internal_clients import StubWorkflowTransformClient
-    return create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
+    """Create a draft Workflow via the AI service boundary."""
+    from apps.workflows.internal_clients import HttpWorkflowTransformClient
+    return create_workflow(runbook=runbook, transform_client=HttpWorkflowTransformClient.from_settings())
 
 
 def publish_workflow(*, workflow: Workflow) -> Workflow:

@@ -3,19 +3,14 @@ Workflow-owned boundary for the internal AI service.
 
 Contains:
 - WorkflowTransformClient  Protocol that all transform clients must satisfy
-- StubWorkflowTransformClient  deterministic local implementation for Phase 03
-- Re-exports of AI error types and the HTTP client callable for use by views
-  and future HttpWorkflowTransformClient implementations
-
-Swap path:
-    # Phase 03
-    client = StubWorkflowTransformClient()
-    # Phase N+
-    client = HttpWorkflowTransformClient(base_url=settings.AI_BASE_URL)
+- StubWorkflowTransformClient  deterministic local implementation (tests / fallback)
+- HttpWorkflowTransformClient  production implementation backed by RunbookAiClient
+- Re-exports of AI error types for use by views
 """
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Protocol
 
 from apps.runbooks.ai_client import (  # noqa: F401
@@ -23,16 +18,17 @@ from apps.runbooks.ai_client import (  # noqa: F401
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
+    RunbookAiClient,
     WorkflowCandidate,
     WorkflowCandidateStep,
-    parse_runbook_to_workflow_candidate,
 )
 
 __all__ = [
     # Protocol
     "WorkflowTransformClient",
-    # Stub
+    # Implementations
     "StubWorkflowTransformClient",
+    "HttpWorkflowTransformClient",
     # AI error types (used by views)
     "AiServiceBadResponseError",
     "AiServiceContractError",
@@ -41,8 +37,6 @@ __all__ = [
     # Result types
     "WorkflowCandidate",
     "WorkflowCandidateStep",
-    # HTTP callable (kept for HttpWorkflowTransformClient wiring later)
-    "parse_runbook_to_workflow_candidate",
 ]
 
 # ---------------------------------------------------------------------------
@@ -66,12 +60,47 @@ class WorkflowTransformClient(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Deterministic stub implementation
+# HTTP implementation — production path
+# ---------------------------------------------------------------------------
+
+class HttpWorkflowTransformClient:
+    """
+    WorkflowTransformClient backed by the real AI parse service.
+
+    Bridges the transform_runbook protocol (title/slug/content) to the
+    RunbookAiClient interface (request_id/runbook_id/title/content).
+    Uses runbook_slug as the trace runbook_id sent to FastAPI.
+    """
+
+    def __init__(self, *, ai_client: RunbookAiClient) -> None:
+        self._ai_client = ai_client
+
+    @classmethod
+    def from_settings(cls) -> "HttpWorkflowTransformClient":
+        return cls(ai_client=RunbookAiClient.from_settings())
+
+    def transform_runbook(
+        self,
+        *,
+        runbook_title: str,
+        runbook_slug: str,
+        raw_content: str,
+    ) -> WorkflowCandidate:
+        return self._ai_client.parse_runbook_to_workflow_candidate(
+            request_id=str(uuid.uuid4()),
+            runbook_id=runbook_slug,
+            runbook_title=runbook_title,
+            raw_content=raw_content,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic stub implementation — used in tests and as fallback
 # ---------------------------------------------------------------------------
 
 class StubWorkflowTransformClient:
     """
-    Local, deterministic stand-in for the future AI transform boundary.
+    Local, deterministic stand-in for the AI transform boundary.
 
     Algorithm (pure, no I/O, no randomness):
     1. Normalize line endings.
@@ -115,16 +144,8 @@ class StubWorkflowTransformClient:
             steps=steps,
         )
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _extract_candidates(raw_content: str) -> list[tuple[str, str | None]]:
-        """
-        Return a list of (display_text, command_or_None) tuples.
-        Order matches source order; output is fully determined by input.
-        """
         lines = raw_content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
         candidates: list[tuple[str, str | None]] = []
 
@@ -135,12 +156,10 @@ class StubWorkflowTransformClient:
             if stripped.startswith("#"):
                 continue
 
-            # Remove leading list markers.
             stripped = _LIST_MARKER_RE.sub("", stripped).strip()
             if not stripped:
                 continue
 
-            # Detect run: prefix.
             run_match = _RUN_PREFIX_RE.match(stripped)
             if run_match:
                 command = stripped[run_match.end():].strip()
