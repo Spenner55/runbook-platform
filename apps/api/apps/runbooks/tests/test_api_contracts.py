@@ -62,7 +62,9 @@ def test_create_runbook_invalid_org_returns_404():
 
 @pytest.mark.django_db
 def test_create_runbook_slug_conflict_returns_409_with_envelope(org):
-    services.create_runbook(organization=org, title="First", slug="conflict-slug", raw_content="")
+    services.create_runbook(
+        organization=org, title="First", slug="conflict-slug", raw_content=""
+    )
     client = Client()
     payload = {
         "organization_id": str(org.id),
@@ -86,9 +88,12 @@ def test_create_runbook_slug_conflict_returns_409_with_envelope(org):
 # Status transition actions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_mark_ready_transitions_draft_to_ready(org):
-    runbook = services.create_runbook(organization=org, title="T", slug="t", raw_content="x")
+    runbook = services.create_runbook(
+        organization=org, title="T", slug="t", raw_content="x"
+    )
     client = Client()
     response = client.post(f"/api/v1/runbooks/{runbook.id}/mark-ready/")
     assert response.status_code == 200
@@ -97,7 +102,9 @@ def test_mark_ready_transitions_draft_to_ready(org):
 
 @pytest.mark.django_db
 def test_mark_ready_on_archived_returns_409(org):
-    runbook = services.create_runbook(organization=org, title="T", slug="t", raw_content="x")
+    runbook = services.create_runbook(
+        organization=org, title="T", slug="t", raw_content="x"
+    )
     services.archive_runbook(runbook=runbook)
     client = Client()
     response = client.post(f"/api/v1/runbooks/{runbook.id}/mark-ready/")
@@ -109,7 +116,9 @@ def test_mark_ready_on_archived_returns_409(org):
 
 @pytest.mark.django_db
 def test_archive_transitions_draft_to_archived(org):
-    runbook = services.create_runbook(organization=org, title="T2", slug="t2", raw_content="x")
+    runbook = services.create_runbook(
+        organization=org, title="T2", slug="t2", raw_content="x"
+    )
     client = Client()
     response = client.post(f"/api/v1/runbooks/{runbook.id}/archive/")
     assert response.status_code == 200
@@ -118,7 +127,9 @@ def test_archive_transitions_draft_to_archived(org):
 
 @pytest.mark.django_db
 def test_archive_already_archived_returns_409(org):
-    runbook = services.create_runbook(organization=org, title="T3", slug="t3", raw_content="x")
+    runbook = services.create_runbook(
+        organization=org, title="T3", slug="t3", raw_content="x"
+    )
     services.archive_runbook(runbook=runbook)
     client = Client()
     response = client.post(f"/api/v1/runbooks/{runbook.id}/archive/")
@@ -129,9 +140,12 @@ def test_archive_already_archived_returns_409(org):
 # List + detail payload discipline
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_list_runbooks_excludes_raw_content(org):
-    services.create_runbook(organization=org, title="T", slug="t-list", raw_content="secret content")
+    services.create_runbook(
+        organization=org, title="T", slug="t-list", raw_content="secret content"
+    )
     client = Client()
     response = client.get("/api/v1/runbooks/")
     assert response.status_code == 200
@@ -141,7 +155,9 @@ def test_list_runbooks_excludes_raw_content(org):
 
 @pytest.mark.django_db
 def test_retrieve_runbook_includes_raw_content(org):
-    runbook = services.create_runbook(organization=org, title="T", slug="t-detail", raw_content="the content")
+    runbook = services.create_runbook(
+        organization=org, title="T", slug="t-detail", raw_content="the content"
+    )
     client = Client()
     response = client.get(f"/api/v1/runbooks/{runbook.id}/")
     assert response.status_code == 200

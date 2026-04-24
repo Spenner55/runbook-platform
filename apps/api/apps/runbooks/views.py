@@ -46,7 +46,9 @@ class RunbookViewSet(
             slug=data["slug"],
             raw_content=data.get("raw_content", ""),
         )
-        return Response(RunbookDetailSerializer(runbook).data, status=status.HTTP_201_CREATED)
+        return Response(
+            RunbookDetailSerializer(runbook).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=["post"], url_path="mark-ready")
     def mark_ready(self, request, pk=None):

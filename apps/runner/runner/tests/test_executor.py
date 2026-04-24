@@ -5,15 +5,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-import pytest
-
 from runner.executor import Executor
 from runner.schemas import ClaimedExecution, ClaimedStep
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_step(position: int, command: str = "") -> ClaimedStep:
     return ClaimedStep(
@@ -49,6 +47,7 @@ def run_execution(executor: Executor, execution: ClaimedExecution) -> None:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @patch("runner.executor.time.sleep")
 def test_successful_execution_calls_complete_succeeded(mock_sleep):
@@ -94,7 +93,8 @@ def test_fail_step_marker_triggers_failure_path(mock_sleep):
 
     # Step should have been marked failed
     failed_calls = [
-        c for c in client.update_step.call_args_list
+        c
+        for c in client.update_step.call_args_list
         if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
@@ -108,17 +108,20 @@ def test_fail_step_marker_triggers_failure_path(mock_sleep):
 def test_failure_stops_subsequent_steps(mock_sleep):
     client = MagicMock()
     executor = Executor(client)
-    execution = make_execution([
-        make_step(1, command="FAIL_STEP"),
-        make_step(2),
-        make_step(3),
-    ])
+    execution = make_execution(
+        [
+            make_step(1, command="FAIL_STEP"),
+            make_step(2),
+            make_step(3),
+        ]
+    )
 
     run_execution(executor, execution)
 
     # Only step 1 should have been started (marked running)
     running_calls = [
-        c for c in client.update_step.call_args_list
+        c
+        for c in client.update_step.call_args_list
         if c.kwargs.get("status") == "running"
     ]
     assert len(running_calls) == 1
@@ -146,11 +149,13 @@ def test_each_step_marked_running_then_succeeded(mock_sleep):
 
     for step in steps:
         running = [
-            c for c in client.update_step.call_args_list
+            c
+            for c in client.update_step.call_args_list
             if c.args[1] == step.id and c.kwargs.get("status") == "running"
         ]
         succeeded = [
-            c for c in client.update_step.call_args_list
+            c
+            for c in client.update_step.call_args_list
             if c.args[1] == step.id and c.kwargs.get("status") == "succeeded"
         ]
         assert len(running) == 1, f"step {step.position} not marked running"

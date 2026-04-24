@@ -9,16 +9,18 @@ Responsibilities:
 
 Nothing here persists data. FastAPI is a dependency, not a source of truth.
 """
+
 from __future__ import annotations
 
-import httpx
 from dataclasses import dataclass, field
-from django.conf import settings
 
+import httpx
+from django.conf import settings
 
 # ---------------------------------------------------------------------------
 # Internal exceptions
 # ---------------------------------------------------------------------------
+
 
 class AiServiceUnavailableError(Exception):
     """AI service could not be reached (connection refused, DNS failure, etc.)."""
@@ -39,6 +41,7 @@ class AiServiceContractError(Exception):
 # ---------------------------------------------------------------------------
 # Local result types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WorkflowCandidateStep:
@@ -61,6 +64,7 @@ class WorkflowCandidate:
 # Client
 # ---------------------------------------------------------------------------
 
+
 class RunbookAiClient:
     """
     Thin synchronous HTTP client for the internal AI parse service.
@@ -80,7 +84,7 @@ class RunbookAiClient:
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     @classmethod
-    def from_settings(cls) -> "RunbookAiClient":
+    def from_settings(cls) -> RunbookAiClient:
         return cls(
             base_url=settings.AI_BASE_URL,
             timeout=httpx.Timeout(
@@ -152,6 +156,7 @@ class RunbookAiClient:
 # Response validation / mapping
 # ---------------------------------------------------------------------------
 
+
 def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
     """Validate raw response dict and return a typed WorkflowCandidate."""
     if not isinstance(data, dict):
@@ -163,9 +168,7 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
 
     raw_steps = data.get("steps")
     if not isinstance(raw_steps, list) or not raw_steps:
-        raise AiServiceContractError(
-            "AI response 'steps' must be a non-empty list"
-        )
+        raise AiServiceContractError("AI response 'steps' must be a non-empty list")
 
     steps: list[WorkflowCandidateStep] = []
     seen_keys: set[str] = set()
@@ -192,13 +195,15 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
             raise AiServiceContractError(f"Duplicate step_key: '{step_key}'")
 
         seen_keys.add(step_key)
-        steps.append(WorkflowCandidateStep(
-            step_key=step_key,
-            name=name,
-            step_type=step_type,
-            risk_level=risk_level,
-            requires_approval=bool(requires_approval),
-        ))
+        steps.append(
+            WorkflowCandidateStep(
+                step_key=step_key,
+                name=name,
+                step_type=step_type,
+                risk_level=risk_level,
+                requires_approval=bool(requires_approval),
+            )
+        )
 
     warnings = data.get("warnings", [])
     return WorkflowCandidate(

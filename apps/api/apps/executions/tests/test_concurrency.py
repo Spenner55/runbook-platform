@@ -64,7 +64,9 @@ def test_claim_next_does_not_claim_non_queued_rows(published_workflow):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_two_concurrent_claims_on_one_execution_yield_exactly_one_claim(published_workflow):
+def test_two_concurrent_claims_on_one_execution_yield_exactly_one_claim(
+    published_workflow,
+):
     """
     Two threads racing to claim the same single queued execution must produce
     exactly one claimed result and one no-work result.
@@ -96,7 +98,9 @@ def test_two_concurrent_claims_on_one_execution_yield_exactly_one_claim(publishe
 
 
 @pytest.mark.django_db(transaction=True)
-def test_two_concurrent_claims_on_two_executions_return_different_ids(published_workflow):
+def test_two_concurrent_claims_on_two_executions_return_different_ids(
+    published_workflow,
+):
     """Two queued executions can each be independently claimed by different runners."""
     exe1 = services.create_execution_from_workflow(workflow=published_workflow)
     exe2 = services.create_execution_from_workflow(workflow=published_workflow)

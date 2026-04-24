@@ -51,7 +51,7 @@ describe('OrganizationsPage', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       'http://localhost:8000/api/v1/organizations/',
-      expect.any(Object),
+      expect.any(Object)
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
@@ -59,13 +59,11 @@ describe('OrganizationsPage', () => {
       expect.objectContaining({
         body: JSON.stringify({ name: 'Platform Ops', slug: 'platform-ops' }),
         method: 'POST',
-      }),
+      })
     )
-    expect(
-      screen.getByRole('link', { name: 'View runbooks' }),
-    ).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'View runbooks' })).toHaveAttribute(
       'href',
-      `/runbooks?organizationId=${organization.id}`,
+      `/runbooks?organizationId=${organization.id}`
     )
   })
 })

@@ -1,8 +1,6 @@
 import pytest
 from django.test import Client
 
-from apps.organizations.models import Organization
-
 
 @pytest.mark.django_db
 def test_create_organization_returns_201():

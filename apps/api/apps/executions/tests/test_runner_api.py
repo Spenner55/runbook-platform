@@ -3,11 +3,11 @@ Tests for internal runner endpoints via the new internal_views.py.
 
 These tests exercise the full HTTP path through /api/v1/internal/...
 """
+
 import pytest
 from django.test import Client
 
 from apps.executions import services as execution_services
-from apps.executions.models import Execution, ExecutionStep
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 
@@ -100,6 +100,7 @@ def test_claim_next_missing_runner_id_returns_400():
 # heartbeat
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_heartbeat_updates_last_heartbeat_at(queued_execution):
     claim_result = execution_services.claim_next_execution(runner_id="runner-1")
@@ -159,6 +160,7 @@ def test_heartbeat_wrong_token_returns_409(queued_execution):
 # step-update
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_step_update_transitions_pending_to_running(queued_execution):
     claim_result = execution_services.claim_next_execution(runner_id="runner-1")
@@ -206,6 +208,7 @@ def test_step_update_invalid_transition_returns_409(queued_execution):
 # ---------------------------------------------------------------------------
 # complete
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_complete_marks_execution_succeeded(queued_execution):

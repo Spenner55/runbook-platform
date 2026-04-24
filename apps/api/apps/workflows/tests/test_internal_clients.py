@@ -1,7 +1,11 @@
 """Tests for the deterministic StubWorkflowTransformClient."""
+
 import pytest
 
-from apps.workflows.internal_clients import StubWorkflowTransformClient, WorkflowCandidate
+from apps.workflows.internal_clients import (
+    StubWorkflowTransformClient,
+    WorkflowCandidate,
+)
 
 
 @pytest.fixture
@@ -21,6 +25,7 @@ def _transform(stub, raw_content, *, title="My Runbook", slug="my-runbook"):
 # Determinism
 # ---------------------------------------------------------------------------
 
+
 def test_same_input_produces_same_output(stub):
     content = "- Drain traffic\n- Restart service"
     r1 = _transform(stub, content)
@@ -33,6 +38,7 @@ def test_same_input_produces_same_output(stub):
 # ---------------------------------------------------------------------------
 # Output schema
 # ---------------------------------------------------------------------------
+
 
 def test_returns_workflow_candidate(stub):
     result = _transform(stub, "Do something")
@@ -65,6 +71,7 @@ def test_step_keys_are_zero_padded(stub):
 # ---------------------------------------------------------------------------
 # Content parsing
 # ---------------------------------------------------------------------------
+
 
 def test_markdown_headings_are_dropped(stub):
     content = "# Heading\n## Subheading\nDo actual work"
@@ -116,6 +123,7 @@ def test_multiple_steps_preserve_source_order(stub):
 # Fallback behaviour
 # ---------------------------------------------------------------------------
 
+
 def test_blank_content_falls_back_to_title_step(stub):
     result = _transform(stub, "", title="Restart Web")
     assert len(result.steps) == 1
@@ -138,6 +146,7 @@ def test_whitespace_only_content_falls_back_to_title_step(stub):
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_repeated_lines_produce_distinct_ordered_steps(stub):
     content = "Check logs\nCheck logs\nCheck logs"

@@ -7,6 +7,7 @@ Contains:
 - HttpWorkflowTransformClient  production implementation backed by RunbookAiClient
 - Re-exports of AI error types for use by views
 """
+
 from __future__ import annotations
 
 import re
@@ -63,6 +64,7 @@ class WorkflowTransformClient(Protocol):
 # HTTP implementation — production path
 # ---------------------------------------------------------------------------
 
+
 class HttpWorkflowTransformClient:
     """
     WorkflowTransformClient backed by the real AI parse service.
@@ -76,7 +78,7 @@ class HttpWorkflowTransformClient:
         self._ai_client = ai_client
 
     @classmethod
-    def from_settings(cls) -> "HttpWorkflowTransformClient":
+    def from_settings(cls) -> HttpWorkflowTransformClient:
         return cls(ai_client=RunbookAiClient.from_settings())
 
     def transform_runbook(
@@ -97,6 +99,7 @@ class HttpWorkflowTransformClient:
 # ---------------------------------------------------------------------------
 # Deterministic stub implementation — used in tests and as fallback
 # ---------------------------------------------------------------------------
+
 
 class StubWorkflowTransformClient:
     """
@@ -162,7 +165,7 @@ class StubWorkflowTransformClient:
 
             run_match = _RUN_PREFIX_RE.match(stripped)
             if run_match:
-                command = stripped[run_match.end():].strip()
+                command = stripped[run_match.end() :].strip()
                 display = f"run: {command}" if command else stripped
                 candidates.append((display, command or None))
             else:

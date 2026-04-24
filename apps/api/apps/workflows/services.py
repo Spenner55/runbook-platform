@@ -1,15 +1,19 @@
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
-from apps.common.exceptions import ConcurrencyConflictError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import (
+    ConcurrencyConflictError,
+    InvalidStateTransitionError,
+    InvalidWorkflowDefinitionError,
+)
 from apps.runbooks.models import Runbook
 from apps.workflows.internal_clients import WorkflowCandidate
 from apps.workflows.models import Workflow
 
-
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
+
 
 def create_workflow(*, runbook: Runbook, transform_client) -> Workflow:
     """
@@ -29,15 +33,14 @@ def create_workflow(*, runbook: Runbook, transform_client) -> Workflow:
     try:
         with transaction.atomic():
             locked_runbook = (
-                Runbook.objects
-                .select_for_update()
+                Runbook.objects.select_for_update()
                 .select_related("organization")
                 .get(pk=runbook.pk)
             )
             existing_max = (
-                Workflow.objects
-                .filter(runbook=locked_runbook)
-                .aggregate(max_version=Max("version"))["max_version"]
+                Workflow.objects.filter(runbook=locked_runbook).aggregate(
+                    max_version=Max("version")
+                )["max_version"]
                 or 0
             )
             return Workflow.objects.create(
@@ -59,7 +62,10 @@ def create_workflow(*, runbook: Runbook, transform_client) -> Workflow:
 def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
     """Create a draft Workflow via the AI service boundary."""
     from apps.workflows.internal_clients import HttpWorkflowTransformClient
-    return create_workflow(runbook=runbook, transform_client=HttpWorkflowTransformClient.from_settings())
+
+    return create_workflow(
+        runbook=runbook, transform_client=HttpWorkflowTransformClient.from_settings()
+    )
 
 
 def publish_workflow(*, workflow: Workflow) -> Workflow:
@@ -95,6 +101,7 @@ def archive_workflow(*, workflow: Workflow) -> Workflow:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _validate_candidate(candidate: WorkflowCandidate) -> None:
     """Validate transform client output at the service boundary before persisting."""

@@ -100,13 +100,13 @@ describe('WorkflowCreatePage', () => {
         ([url, opts]) =>
           typeof url === 'string' &&
           url.includes('/api/v1/workflows/') &&
-          (opts as RequestInit)?.method === 'POST',
+          (opts as RequestInit)?.method === 'POST'
       )
       expect(postCall).toBeDefined()
 
       // AI service must NOT be called by the frontend
       const aiCall = fetchMock.mock.calls.find(
-        ([url]) => typeof url === 'string' && url.includes(':8001'),
+        ([url]) => typeof url === 'string' && url.includes(':8001')
       )
       expect(aiCall).toBeUndefined()
     })
@@ -127,7 +127,7 @@ describe('WorkflowCreatePage', () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(runbook))
       .mockResolvedValueOnce(
-        createJsonResponse({ detail: 'AI service unavailable' }, { status: 503 }),
+        createJsonResponse({ detail: 'AI service unavailable' }, { status: 503 })
       )
 
     renderRoute(<WorkflowCreatePage />, {

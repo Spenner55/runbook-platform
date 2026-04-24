@@ -22,9 +22,7 @@ export function ExecutionDetailPage() {
       <div className="panel__header">
         <p className="eyebrow">Step 5</p>
         <h2>Execution detail</h2>
-        <p className="muted">
-          This page polls Django while the execution is active.
-        </p>
+        <p className="muted">This page polls Django while the execution is active.</p>
       </div>
 
       {executionQuery.isLoading ? <p className="muted">Loading execution…</p> : null}
@@ -66,9 +64,7 @@ export function ExecutionDetailPage() {
           </div>
 
           {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) ? (
-            <p className="banner banner--info">
-              Polling for runner updates…
-            </p>
+            <p className="banner banner--info">Polling for runner updates…</p>
           ) : null}
 
           <div className="stack-md">

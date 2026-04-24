@@ -31,8 +31,7 @@ export function WorkflowDetailPage() {
         <p className="eyebrow">Step 4</p>
         <h2>Workflow detail</h2>
         <p className="muted">
-          Publish the generated workflow, then create an execution from the
-          published version.
+          Publish the generated workflow, then create an execution from the published version.
         </p>
       </div>
 
@@ -76,9 +75,7 @@ export function WorkflowDetailPage() {
 
             <button
               className="button button--secondary"
-              disabled={
-                createExecution.isPending || workflowQuery.data.status !== 'published'
-              }
+              disabled={createExecution.isPending || workflowQuery.data.status !== 'published'}
               onClick={handleCreateExecution}
               type="button"
             >
@@ -87,14 +84,10 @@ export function WorkflowDetailPage() {
           </div>
 
           {publishWorkflow.error ? (
-            <p className="banner banner--error">
-              {getApiErrorMessage(publishWorkflow.error)}
-            </p>
+            <p className="banner banner--error">{getApiErrorMessage(publishWorkflow.error)}</p>
           ) : null}
           {createExecution.error ? (
-            <p className="banner banner--error">
-              {getApiErrorMessage(createExecution.error)}
-            </p>
+            <p className="banner banner--error">{getApiErrorMessage(createExecution.error)}</p>
           ) : null}
 
           <div className="stack-md">

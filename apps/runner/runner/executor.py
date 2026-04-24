@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -20,7 +20,7 @@ _FAIL_STEP_MARKER = "FAIL_STEP"
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 class _HeartbeatThread(threading.Thread):
@@ -55,7 +55,9 @@ class _HeartbeatThread(threading.Thread):
                 )
                 logger.debug("Heartbeat sent for execution %s", self._execution_id)
             except httpx.HTTPError as exc:
-                logger.warning("Heartbeat failed for execution %s: %s", self._execution_id, exc)
+                logger.warning(
+                    "Heartbeat failed for execution %s: %s", self._execution_id, exc
+                )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -87,7 +89,10 @@ class Executor:
                     break
         except Exception as exc:
             logger.error(
-                "Unexpected error during execution %s: %s", execution_id, exc, exc_info=True
+                "Unexpected error during execution %s: %s",
+                execution_id,
+                exc,
+                exc_info=True,
             )
             outcome = "failed"
         finally:
@@ -95,12 +100,14 @@ class Executor:
             heartbeat.join(timeout=5)
 
         try:
-            self._client.complete_execution(execution_id, claim_token, final_status=outcome)
-            logger.info("Execution %s completed with outcome: %s", execution_id, outcome)
-        except httpx.HTTPError as exc:
-            logger.error(
-                "Failed to mark execution %s complete: %s", execution_id, exc
+            self._client.complete_execution(
+                execution_id, claim_token, final_status=outcome
             )
+            logger.info(
+                "Execution %s completed with outcome: %s", execution_id, outcome
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Failed to mark execution %s complete: %s", execution_id, exc)
 
     def _run_step(
         self,
@@ -114,9 +121,7 @@ class Executor:
 
         A step with 'FAIL_STEP' in its command is treated as a deliberate failure path.
         """
-        logger.info(
-            "Step %d/%s '%s': starting", step.position, step.id, step.name
-        )
+        logger.info("Step %d/%s '%s': starting", step.position, step.id, step.name)
         started_at = _utcnow()
 
         # Mark step as running

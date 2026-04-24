@@ -12,7 +12,7 @@ export function renderRoute(
   }: {
     path: string
     route: string
-  },
+  }
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -29,6 +29,6 @@ export function renderRoute(
           <Route element={element} path={path} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }

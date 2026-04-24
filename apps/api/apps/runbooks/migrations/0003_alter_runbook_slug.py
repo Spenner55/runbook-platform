@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('runbooks', '0002_alter_runbook_raw_content_alter_runbook_status_and_more'),
+        ("runbooks", "0002_alter_runbook_raw_content_alter_runbook_status_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='runbook',
-            name='slug',
+            model_name="runbook",
+            name="slug",
             field=models.SlugField(max_length=96),
         ),
     ]

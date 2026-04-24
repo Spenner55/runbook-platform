@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -25,7 +25,7 @@ _DEFAULT_TIMEOUT = httpx.Timeout(10.0)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 class ApiClient:
@@ -40,7 +40,11 @@ class ApiClient:
         self._runner_id = runner_id
         self._runner_version = runner_version
         self._owns_http_client = http_client is None
-        self._http = http_client if http_client is not None else httpx.Client(timeout=_DEFAULT_TIMEOUT)
+        self._http = (
+            http_client
+            if http_client is not None
+            else httpx.Client(timeout=_DEFAULT_TIMEOUT)
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

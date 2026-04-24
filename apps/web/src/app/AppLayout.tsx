@@ -12,8 +12,8 @@ export function AppLayout() {
           <p className="eyebrow">Phase 1 Vertical Slice</p>
           <h1>Runbook Platform</h1>
           <p className="lede">
-            Create organizations and runbooks, generate workflows through Django,
-            and inspect live execution progress from the browser.
+            Create organizations and runbooks, generate workflows through Django, and inspect live
+            execution progress from the browser.
           </p>
         </div>
 

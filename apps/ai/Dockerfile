@@ -5,8 +5,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY apps/ai/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY apps/ai/requirements/ /tmp/requirements/
+RUN pip install --no-cache-dir -r /tmp/requirements/dev.txt
 
 COPY apps/ai /app
 

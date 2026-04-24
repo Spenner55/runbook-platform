@@ -27,7 +27,9 @@ class Workflow(BaseModel):
         choices=Status.choices,
         default=Status.DRAFT,
     )
-    definition_schema_version = models.CharField(max_length=32, default="workflow.schema.v1")
+    definition_schema_version = models.CharField(
+        max_length=32, default="workflow.schema.v1"
+    )
     definition = models.JSONField(default=dict)
 
     class Meta:

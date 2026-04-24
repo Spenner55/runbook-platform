@@ -3,14 +3,18 @@ import uuid
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
+from apps.common.exceptions import (
+    DomainValidationError,
+    InvalidStateTransitionError,
+    InvalidWorkflowDefinitionError,
+)
 from apps.executions.models import Execution, ExecutionStep
 from apps.workflows.models import Workflow
-
 
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
+
 
 def create_execution(*, workflow: Workflow) -> Execution:
     """
@@ -88,6 +92,7 @@ def cancel_execution(*, execution: Execution) -> Execution:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _validate_workflow_definition(definition: dict) -> None:
     """Validate that a workflow definition can be expanded into execution steps."""
     if not isinstance(definition, dict):
@@ -126,6 +131,7 @@ def _validate_workflow_definition(definition: dict) -> None:
 # Internal runner service functions
 # ---------------------------------------------------------------------------
 
+
 def claim_next_execution(*, runner_id: str) -> dict | None:
     """
     Atomically claim the oldest queued execution for the given runner.
@@ -150,10 +156,16 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
         execution.claim_token = claim_token
         execution.claimed_at = now
         execution.last_heartbeat_at = now
-        execution.save(update_fields=[
-            "status", "claimed_by_runner_id", "claim_token",
-            "claimed_at", "last_heartbeat_at", "updated_at",
-        ])
+        execution.save(
+            update_fields=[
+                "status",
+                "claimed_by_runner_id",
+                "claim_token",
+                "claimed_at",
+                "last_heartbeat_at",
+                "updated_at",
+            ]
+        )
 
         steps = list(execution.steps.order_by("position"))
         return {
@@ -163,7 +175,9 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
         }
 
 
-def _validate_runner_ownership(execution: Execution, runner_id: str, claim_token: str) -> None:
+def _validate_runner_ownership(
+    execution: Execution, runner_id: str, claim_token: str
+) -> None:
     """Raise InvalidStateTransitionError if the given runner_id/claim_token doesn't own this execution."""
     if execution.claimed_by_runner_id != runner_id:
         raise InvalidStateTransitionError(

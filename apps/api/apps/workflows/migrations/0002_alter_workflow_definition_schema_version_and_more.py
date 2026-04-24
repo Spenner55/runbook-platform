@@ -4,26 +4,37 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('organizations', '0001_initial'),
-        ('runbooks', '0001_initial'),
-        ('workflows', '0001_initial'),
+        ("organizations", "0001_initial"),
+        ("runbooks", "0001_initial"),
+        ("workflows", "0001_initial"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='workflow',
-            name='definition_schema_version',
-            field=models.CharField(default='workflow.schema.v1', max_length=32),
+            model_name="workflow",
+            name="definition_schema_version",
+            field=models.CharField(default="workflow.schema.v1", max_length=32),
         ),
         migrations.AlterField(
-            model_name='workflow',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('published', 'Published'), ('superseded', 'Superseded'), ('archived', 'Archived')], default='draft', max_length=24),
+            model_name="workflow",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("draft", "Draft"),
+                    ("published", "Published"),
+                    ("superseded", "Superseded"),
+                    ("archived", "Archived"),
+                ],
+                default="draft",
+                max_length=24,
+            ),
         ),
         migrations.AddIndex(
-            model_name='workflow',
-            index=models.Index(fields=['organization', 'status', 'created_at'], name='wf_org_status_created_idx'),
+            model_name="workflow",
+            index=models.Index(
+                fields=["organization", "status", "created_at"],
+                name="wf_org_status_created_idx",
+            ),
         ),
     ]

@@ -4,39 +4,51 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0003_alter_execution_status_and_more'),
+        ("executions", "0003_alter_execution_status_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='executionstep',
-            name='error_message',
-            field=models.TextField(blank=True, default=''),
+            model_name="executionstep",
+            name="error_message",
+            field=models.TextField(blank=True, default=""),
         ),
         migrations.AlterField(
-            model_name='executionstep',
-            name='risk_level',
+            model_name="executionstep",
+            name="risk_level",
             field=models.CharField(max_length=32),
         ),
         migrations.AlterField(
-            model_name='executionstep',
-            name='status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('running', 'Running'), ('succeeded', 'Succeeded'), ('failed', 'Failed'), ('skipped', 'Skipped')], default='pending', max_length=24),
+            model_name="executionstep",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("pending", "Pending"),
+                    ("running", "Running"),
+                    ("succeeded", "Succeeded"),
+                    ("failed", "Failed"),
+                    ("skipped", "Skipped"),
+                ],
+                default="pending",
+                max_length=24,
+            ),
         ),
         migrations.AlterField(
-            model_name='executionstep',
-            name='step_key',
+            model_name="executionstep",
+            name="step_key",
             field=models.CharField(max_length=128),
         ),
         migrations.AlterField(
-            model_name='executionstep',
-            name='step_type',
+            model_name="executionstep",
+            name="step_type",
             field=models.CharField(max_length=64),
         ),
         migrations.AddIndex(
-            model_name='executionstep',
-            index=models.Index(fields=['execution', 'status', 'position'], name='step_exec_status_pos_idx'),
+            model_name="executionstep",
+            index=models.Index(
+                fields=["execution", "status", "position"],
+                name="step_exec_status_pos_idx",
+            ),
         ),
     ]

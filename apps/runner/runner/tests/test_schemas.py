@@ -8,24 +8,20 @@ import pytest
 from pydantic import ValidationError
 
 from runner.schemas import (
-    ClaimNextRequest,
-    ClaimNextResponse,
     ClaimedExecution,
     ClaimedStep,
+    ClaimNextResponse,
     CompleteExecutionRequest,
     CompleteExecutionResponse,
     HeartbeatRequest,
-    HeartbeatResponse,
     RunnerSettings,
-    StepUpdateRequest,
     StepUpdateResponse,
-    StepUpdateStepDetail,
 )
-
 
 # ---------------------------------------------------------------------------
 # RunnerSettings
 # ---------------------------------------------------------------------------
+
 
 def test_runner_settings_defaults():
     s = RunnerSettings(api_base_url="http://api:8000", runner_id="r1")
@@ -55,6 +51,7 @@ def test_runner_settings_from_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # ClaimedStep
 # ---------------------------------------------------------------------------
+
 
 def test_claimed_step_valid():
     step = ClaimedStep(
@@ -102,6 +99,7 @@ def test_claimed_step_invalid_status():
 # ClaimedExecution
 # ---------------------------------------------------------------------------
 
+
 def _make_step() -> dict:
     return {
         "id": str(uuid4()),
@@ -141,7 +139,10 @@ def test_claimed_execution_no_claim_token_field():
         workflow_snapshot={},
         steps=[],
     )
-    assert not hasattr(exe, "claim_token") or exe.__class__.model_fields.get("claim_token") is None
+    assert (
+        not hasattr(exe, "claim_token")
+        or exe.__class__.model_fields.get("claim_token") is None
+    )
 
 
 def test_claimed_execution_parses_django_response_shape():
@@ -165,6 +166,7 @@ def test_claimed_execution_parses_django_response_shape():
 # ---------------------------------------------------------------------------
 # ClaimNextResponse
 # ---------------------------------------------------------------------------
+
 
 def test_claim_next_response_with_work():
     data = {
@@ -197,6 +199,7 @@ def test_claim_next_response_no_work():
 # CompleteExecutionRequest
 # ---------------------------------------------------------------------------
 
+
 def test_complete_request_uses_final_status_not_outcome():
     req = CompleteExecutionRequest(
         runner_id="r1",
@@ -220,6 +223,7 @@ def test_complete_request_rejects_invalid_final_status():
 # ---------------------------------------------------------------------------
 # StepUpdateResponse
 # ---------------------------------------------------------------------------
+
 
 def test_step_update_response_parses_nested_django_shape():
     """Simulate the dict Django actually returns from ExecutionStepUpdateView."""
@@ -251,6 +255,7 @@ def test_step_update_response_parses_nested_django_shape():
 # CompleteExecutionResponse
 # ---------------------------------------------------------------------------
 
+
 def test_complete_response_parses_django_shape():
     """Django's complete view does NOT return started_at — must not be required."""
     data = {
@@ -265,6 +270,7 @@ def test_complete_response_parses_django_shape():
 # ---------------------------------------------------------------------------
 # HeartbeatRequest serialisation
 # ---------------------------------------------------------------------------
+
 
 def test_heartbeat_request_json_serialisation():
     req = HeartbeatRequest(

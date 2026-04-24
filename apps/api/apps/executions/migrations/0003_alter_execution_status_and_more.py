@@ -4,29 +4,45 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0002_execution_runner_fields'),
-        ('organizations', '0001_initial'),
-        ('workflows', '0002_alter_workflow_definition_schema_version_and_more'),
+        ("executions", "0002_execution_runner_fields"),
+        ("organizations", "0001_initial"),
+        ("workflows", "0002_alter_workflow_definition_schema_version_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='execution',
-            name='status',
-            field=models.CharField(choices=[('queued', 'Queued'), ('claimed', 'Claimed'), ('running', 'Running'), ('succeeded', 'Succeeded'), ('failed', 'Failed'), ('cancelled', 'Cancelled')], default='queued', max_length=24),
+            model_name="execution",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("queued", "Queued"),
+                    ("claimed", "Claimed"),
+                    ("running", "Running"),
+                    ("succeeded", "Succeeded"),
+                    ("failed", "Failed"),
+                    ("cancelled", "Cancelled"),
+                ],
+                default="queued",
+                max_length=24,
+            ),
         ),
         migrations.AddIndex(
-            model_name='execution',
-            index=models.Index(fields=['status', 'created_at'], name='exec_status_created_idx'),
+            model_name="execution",
+            index=models.Index(
+                fields=["status", "created_at"], name="exec_status_created_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='execution',
-            index=models.Index(fields=['organization', 'created_at'], name='exec_org_created_idx'),
+            model_name="execution",
+            index=models.Index(
+                fields=["organization", "created_at"], name="exec_org_created_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='execution',
-            index=models.Index(fields=['workflow', 'created_at'], name='exec_workflow_created_idx'),
+            model_name="execution",
+            index=models.Index(
+                fields=["workflow", "created_at"], name="exec_workflow_created_idx"
+            ),
         ),
     ]

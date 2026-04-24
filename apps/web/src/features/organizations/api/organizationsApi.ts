@@ -1,8 +1,5 @@
 import { apiRequest } from '../../../shared/api/client'
-import type {
-  CreateOrganizationInput,
-  Organization,
-} from '../types'
+import type { CreateOrganizationInput, Organization } from '../types'
 
 export function listOrganizations() {
   return apiRequest<Organization[]>('/api/v1/organizations/')

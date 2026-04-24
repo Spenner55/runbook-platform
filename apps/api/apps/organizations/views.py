@@ -29,4 +29,6 @@ class OrganizationViewSet(
             name=serializer.validated_data["name"],
             slug=serializer.validated_data["slug"],
         )
-        return Response(OrganizationDetailSerializer(org).data, status=status.HTTP_201_CREATED)
+        return Response(
+            OrganizationDetailSerializer(org).data, status=status.HTTP_201_CREATED
+        )

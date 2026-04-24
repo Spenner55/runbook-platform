@@ -9,12 +9,17 @@ import httpx
 import pytest
 
 from runner.client import ApiClient
-from runner.schemas import ClaimNextResponse, CompleteExecutionResponse, HeartbeatResponse, StepUpdateResponse
-
+from runner.schemas import (
+    ClaimNextResponse,
+    CompleteExecutionResponse,
+    HeartbeatResponse,
+    StepUpdateResponse,
+)
 
 # ---------------------------------------------------------------------------
 # Transport helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_transport(status_code: int, body: dict) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -23,6 +28,7 @@ def _make_transport(status_code: int, body: dict) -> httpx.MockTransport:
             headers={"Content-Type": "application/json"},
             content=json.dumps(body).encode(),
         )
+
     return httpx.MockTransport(handler)
 
 
@@ -53,6 +59,7 @@ def _step_dict() -> dict:
 # ---------------------------------------------------------------------------
 # claim_next
 # ---------------------------------------------------------------------------
+
 
 def test_claim_next_no_work_returns_response():
     body = {"execution": None, "poll_after_seconds": 5}
@@ -98,7 +105,11 @@ def test_claim_next_sends_correct_url_and_method():
         captured["path"] = request.url.path
         payload = json.loads(request.content)
         captured["runner_id"] = payload.get("runner_id")
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     client = make_client(httpx.MockTransport(handler))
     client.claim_next()
@@ -118,13 +129,22 @@ def test_claim_next_raises_on_non_2xx():
 # heartbeat
 # ---------------------------------------------------------------------------
 
+
 def test_heartbeat_sends_correct_fields():
     captured = {}
-    body = {"execution_id": str(uuid4()), "status": "claimed", "last_heartbeat_at": "2026-01-01T00:00:00Z"}
+    body = {
+        "execution_id": str(uuid4()),
+        "status": "claimed",
+        "last_heartbeat_at": "2026-01-01T00:00:00Z",
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     execution_id = uuid4()
     claim_token = uuid4()
@@ -139,7 +159,9 @@ def test_heartbeat_sends_correct_fields():
 
 
 def test_heartbeat_raises_on_409():
-    client = make_client(_make_transport(409, {"errors": [{"code": "claim_token_mismatch"}]}))
+    client = make_client(
+        _make_transport(409, {"errors": [{"code": "claim_token_mismatch"}]})
+    )
     with pytest.raises(httpx.HTTPStatusError):
         client.heartbeat(uuid4(), uuid4())
 
@@ -147,6 +169,7 @@ def test_heartbeat_raises_on_409():
 # ---------------------------------------------------------------------------
 # update_step
 # ---------------------------------------------------------------------------
+
 
 def test_update_step_running_sends_correct_payload():
     captured = {}
@@ -167,7 +190,11 @@ def test_update_step_running_sends_correct_payload():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     claim_token = uuid4()
     client = make_client(httpx.MockTransport(handler))
@@ -199,7 +226,11 @@ def test_update_step_succeeded_includes_exit_code():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     client = make_client(httpx.MockTransport(handler))
     client.update_step(execution_id, step_id, uuid4(), status="succeeded", exit_code=0)
@@ -212,18 +243,29 @@ def test_update_step_succeeded_includes_exit_code():
 # complete_execution
 # ---------------------------------------------------------------------------
 
+
 def test_complete_execution_sends_final_status_not_outcome():
     captured = {}
     execution_id = uuid4()
-    body = {"id": str(execution_id), "status": "succeeded", "finished_at": "2026-01-01T00:00:00Z"}
+    body = {
+        "id": str(execution_id),
+        "status": "succeeded",
+        "finished_at": "2026-01-01T00:00:00Z",
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     claim_token = uuid4()
     client = make_client(httpx.MockTransport(handler))
-    resp = client.complete_execution(execution_id, claim_token, final_status="succeeded")
+    resp = client.complete_execution(
+        execution_id, claim_token, final_status="succeeded"
+    )
 
     assert "final_status" in captured
     assert captured["final_status"] == "succeeded"
@@ -235,14 +277,24 @@ def test_complete_execution_sends_final_status_not_outcome():
 def test_complete_execution_failed_path():
     captured = {}
     execution_id = uuid4()
-    body = {"id": str(execution_id), "status": "failed", "finished_at": "2026-01-01T00:00:00Z"}
+    body = {
+        "id": str(execution_id),
+        "status": "failed",
+        "finished_at": "2026-01-01T00:00:00Z",
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
-        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=json.dumps(body).encode())
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
 
     client = make_client(httpx.MockTransport(handler))
-    resp = client.complete_execution(execution_id, uuid4(), final_status="failed", error_message="oops")
+    resp = client.complete_execution(
+        execution_id, uuid4(), final_status="failed", error_message="oops"
+    )
 
     assert captured["final_status"] == "failed"
     assert captured["error_message"] == "oops"
@@ -250,6 +302,8 @@ def test_complete_execution_failed_path():
 
 
 def test_complete_execution_raises_on_4xx():
-    client = make_client(_make_transport(409, {"errors": [{"code": "invalid_state_transition"}]}))
+    client = make_client(
+        _make_transport(409, {"errors": [{"code": "invalid_state_transition"}]})
+    )
     with pytest.raises(httpx.HTTPStatusError):
         client.complete_execution(uuid4(), uuid4(), final_status="succeeded")

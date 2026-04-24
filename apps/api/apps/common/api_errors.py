@@ -1,6 +1,5 @@
-from rest_framework.views import exception_handler as drf_default_handler
 from rest_framework.response import Response
-from rest_framework import serializers as drf_serializers
+from rest_framework.views import exception_handler as drf_default_handler
 
 from apps.common.exceptions import _BaseDomainError
 
@@ -55,9 +54,15 @@ def _flatten_drf_errors(data) -> list[dict]:
             if isinstance(messages, list):
                 for msg in messages:
                     if hasattr(msg, "code"):
-                        errors.append(_entry(code=msg.code or "invalid", detail=str(msg), attr=attr))
+                        errors.append(
+                            _entry(
+                                code=msg.code or "invalid", detail=str(msg), attr=attr
+                            )
+                        )
                     else:
-                        errors.append(_entry(code="invalid", detail=str(msg), attr=attr))
+                        errors.append(
+                            _entry(code="invalid", detail=str(msg), attr=attr)
+                        )
             elif isinstance(messages, str):
                 errors.append(_entry(code="invalid", detail=messages, attr=attr))
             else:

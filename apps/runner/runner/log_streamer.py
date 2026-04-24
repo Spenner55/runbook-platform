@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 
 def _utcnow() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()
 
 
 class _JsonFormatter(logging.Formatter):
@@ -35,7 +35,9 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(base, default=str)
 
 
-def configure_logging(level: str = "INFO", runner_id: str = "", runner_version: str = "") -> logging.Logger:
+def configure_logging(
+    level: str = "INFO", runner_id: str = "", runner_version: str = ""
+) -> logging.Logger:
     """Set up JSON logging to stdout. Returns the root runner logger."""
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_JsonFormatter())
@@ -110,7 +112,9 @@ class LogStreamer:
     # Execution lifecycle
     # ------------------------------------------------------------------
 
-    def execution_claim_received(self, execution_id: UUID, step_count: int, claim_token_prefix: str) -> None:
+    def execution_claim_received(
+        self, execution_id: UUID, step_count: int, claim_token_prefix: str
+    ) -> None:
         self._log(
             logging.INFO,
             "execution_claim_received",
@@ -123,7 +127,12 @@ class LogStreamer:
         )
 
     def execution_claim_failed(self, error: str) -> None:
-        self._log(logging.ERROR, "execution_claim_failed", f"Claim failed: {error}", {"error_message": error})
+        self._log(
+            logging.ERROR,
+            "execution_claim_failed",
+            f"Claim failed: {error}",
+            {"error_message": error},
+        )
 
     def execution_succeeded(self, execution_id: UUID) -> None:
         self._log(
@@ -138,7 +147,11 @@ class LogStreamer:
             logging.WARNING,
             "execution_failed",
             f"Execution {execution_id} failed",
-            {"execution_id": str(execution_id), "execution_status": "failed", "error_message": error},
+            {
+                "execution_id": str(execution_id),
+                "execution_status": "failed",
+                "error_message": error,
+            },
         )
 
     def execution_terminal_update_failed(self, execution_id: UUID, error: str) -> None:
@@ -153,7 +166,9 @@ class LogStreamer:
     # Step lifecycle
     # ------------------------------------------------------------------
 
-    def step_starting(self, execution_id: UUID, step_id: UUID, step_key: str, position: int) -> None:
+    def step_starting(
+        self, execution_id: UUID, step_id: UUID, step_key: str, position: int
+    ) -> None:
         self._log(
             logging.INFO,
             "step_starting",
@@ -166,7 +181,9 @@ class LogStreamer:
             },
         )
 
-    def step_succeeded(self, execution_id: UUID, step_id: UUID, step_key: str, position: int) -> None:
+    def step_succeeded(
+        self, execution_id: UUID, step_id: UUID, step_key: str, position: int
+    ) -> None:
         self._log(
             logging.INFO,
             "step_succeeded",
@@ -180,7 +197,14 @@ class LogStreamer:
             },
         )
 
-    def step_failed(self, execution_id: UUID, step_id: UUID, step_key: str, position: int, error: str = "") -> None:
+    def step_failed(
+        self,
+        execution_id: UUID,
+        step_id: UUID,
+        step_key: str,
+        position: int,
+        error: str = "",
+    ) -> None:
         self._log(
             logging.WARNING,
             "step_failed",
@@ -195,12 +219,18 @@ class LogStreamer:
             },
         )
 
-    def step_intentional_failure_triggered(self, execution_id: UUID, step_id: UUID, step_key: str) -> None:
+    def step_intentional_failure_triggered(
+        self, execution_id: UUID, step_id: UUID, step_key: str
+    ) -> None:
         self._log(
             logging.INFO,
             "step_intentional_failure_triggered",
             f"FAIL_STEP marker detected in step {step_key}",
-            {"execution_id": str(execution_id), "step_id": str(step_id), "step_key": step_key},
+            {
+                "execution_id": str(execution_id),
+                "step_id": str(step_id),
+                "step_key": step_key,
+            },
         )
 
     # ------------------------------------------------------------------
