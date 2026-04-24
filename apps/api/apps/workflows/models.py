@@ -44,7 +44,7 @@ class Workflow(BaseModel):
                 name="unique_workflow_version_per_runbook",
             ),
             models.CheckConstraint(
-                check=models.Q(version__gte=1),
+                condition=models.Q(version__gte=1),
                 name="workflow_version_gte_1",
             ),
         ]

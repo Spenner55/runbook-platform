@@ -16,8 +16,12 @@ export function WorkflowCreatePage() {
       return
     }
 
-    const workflow = await createWorkflow.mutateAsync({ runbook_id: runbookId })
-    navigate(`/workflows/${workflow.id}`)
+    try {
+      const workflow = await createWorkflow.mutateAsync({ runbook_id: runbookId })
+      navigate(`/workflows/${workflow.id}`)
+    } catch (_) {
+      // createWorkflow.error captures the failure; no navigation on error
+    }
   }
 
   if (!runbookId) {
