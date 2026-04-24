@@ -9,7 +9,6 @@ from apps.workflows.internal_clients import (
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
-    StubWorkflowTransformClient,
 )
 from apps.runbooks.models import Runbook
 from apps.workflows import services
@@ -46,18 +45,15 @@ class WorkflowViewSet(
         runbook = get_object_or_404(Runbook, pk=serializer.validated_data["runbook_id"])
 
         try:
-            workflow = services.create_workflow(
-                runbook=runbook,
-                transform_client=StubWorkflowTransformClient(),
-            )
+            workflow = services.create_workflow_from_runbook(runbook=runbook)
         except (AiServiceUnavailableError, AiServiceTimeoutError) as exc:
             raise ExternalDependencyError(
-                code="workflow_transform_unavailable",
+                code="workflow_ai_unavailable",
                 detail=str(exc),
             ) from exc
         except (AiServiceBadResponseError, AiServiceContractError) as exc:
             raise ExternalDependencyError(
-                code="workflow_transform_unavailable",
+                code="workflow_ai_bad_response",
                 detail=str(exc),
             ) from exc
 

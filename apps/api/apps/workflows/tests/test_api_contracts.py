@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
+from apps.workflows.internal_clients import StubWorkflowTransformClient
 from apps.common.exceptions import ConcurrencyConflictError
 
 
@@ -16,7 +17,11 @@ def runbook(org):
 
 @pytest.fixture
 def draft_workflow(runbook):
-    return workflow_services.create_workflow_from_runbook(runbook=runbook)
+    """Create a draft workflow using the stub (no AI service call)."""
+    return workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=StubWorkflowTransformClient(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -25,12 +30,21 @@ def draft_workflow(runbook):
 
 @pytest.mark.django_db
 def test_create_workflow_returns_201(runbook):
-    client = Client()
-    response = client.post(
-        "/api/v1/workflows/",
-        data={"runbook_id": str(runbook.id)},
-        content_type="application/json",
+    """POST /api/v1/workflows/ creates a workflow via the AI boundary (mocked)."""
+    stub_workflow = workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=StubWorkflowTransformClient(),
     )
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        return_value=stub_workflow,
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
     assert response.status_code == 201
     body = response.json()
     assert body["version"] == 1
@@ -64,7 +78,7 @@ def test_create_workflow_missing_runbook_id_returns_400():
 @pytest.mark.django_db
 def test_create_workflow_version_conflict_returns_409(runbook):
     with patch(
-        "apps.workflows.views.services.create_workflow",
+        "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=ConcurrencyConflictError(
             code="workflow_version_conflict",
             detail="Workflow version allocation conflicted with another request.",
@@ -83,28 +97,83 @@ def test_create_workflow_version_conflict_returns_409(runbook):
 
 
 # ---------------------------------------------------------------------------
-# AI error propagation — now routes through ExternalDependencyError envelope
+# AI error propagation
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-@patch(
-    "apps.workflows.views.services.create_workflow",
-    side_effect=Exception("ai unavailable"),  # simulated after the view catches and re-raises
-)
-def test_create_workflow_ai_error_surfaces_as_503(mock_create, runbook):
-    """AI errors are re-raised as ExternalDependencyError (503) via the view."""
+def test_create_workflow_ai_unavailable_surfaces_as_503(runbook):
     from apps.workflows.internal_clients import AiServiceUnavailableError
-    mock_create.side_effect = AiServiceUnavailableError("ai unavailable")
-    client = Client()
-    response = client.post(
-        "/api/v1/workflows/",
-        data={"runbook_id": str(runbook.id)},
-        content_type="application/json",
-    )
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        side_effect=AiServiceUnavailableError("ai unavailable"),
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
     assert response.status_code == 503
     body = response.json()
     assert "errors" in body
-    assert body["errors"][0]["code"] == "workflow_transform_unavailable"
+    assert body["errors"][0]["code"] == "workflow_ai_unavailable"
+
+
+@pytest.mark.django_db
+def test_create_workflow_ai_timeout_surfaces_as_503(runbook):
+    from apps.workflows.internal_clients import AiServiceTimeoutError
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        side_effect=AiServiceTimeoutError("timed out"),
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+    assert response.status_code == 503
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "workflow_ai_unavailable"
+
+
+@pytest.mark.django_db
+def test_create_workflow_ai_bad_response_surfaces_as_503(runbook):
+    from apps.workflows.internal_clients import AiServiceBadResponseError
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        side_effect=AiServiceBadResponseError("bad body"),
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+    assert response.status_code == 503
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "workflow_ai_bad_response"
+
+
+@pytest.mark.django_db
+def test_create_workflow_ai_contract_error_surfaces_as_503(runbook):
+    from apps.workflows.internal_clients import AiServiceContractError
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        side_effect=AiServiceContractError("missing field"),
+    ):
+        client = Client()
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+    assert response.status_code == 503
+    body = response.json()
+    assert "errors" in body
+    assert body["errors"][0]["code"] == "workflow_ai_bad_response"
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +206,9 @@ def test_publish_already_published_returns_409(draft_workflow):
 @pytest.mark.django_db
 def test_publish_supersedes_existing_published_workflow(runbook):
     """Publishing a new version must supersede the previously published one."""
-    wf1 = workflow_services.create_workflow_from_runbook(runbook=runbook)
-    wf2 = workflow_services.create_workflow_from_runbook(runbook=runbook)
+    stub = StubWorkflowTransformClient()
+    wf1 = workflow_services.create_workflow(runbook=runbook, transform_client=stub)
+    wf2 = workflow_services.create_workflow(runbook=runbook, transform_client=stub)
 
     client = Client()
     client.post(f"/api/v1/workflows/{wf1.id}/publish/")

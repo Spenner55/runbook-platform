@@ -220,12 +220,38 @@ def test_publish_workflow_rejects_non_draft(runbook):
 
 
 # ---------------------------------------------------------------------------
-# create_workflow_from_runbook convenience wrapper
+# create_workflow_from_runbook — AI boundary wiring
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_create_workflow_from_runbook_uses_stub(runbook):
-    """Convenience wrapper must work end-to-end without HTTP calls."""
-    workflow = services.create_workflow_from_runbook(runbook=runbook)
+def test_create_workflow_from_runbook_uses_http_client(runbook):
+    """create_workflow_from_runbook must go through HttpWorkflowTransformClient, not the stub."""
+    from unittest.mock import MagicMock, patch
+    from apps.workflows.internal_clients import HttpWorkflowTransformClient, WorkflowCandidate, WorkflowCandidateStep
+
+    fake_candidate = WorkflowCandidate(
+        request_id="req-test",
+        workflow_title="Deploy Service",
+        steps=[
+            WorkflowCandidateStep(
+                step_key="step-001",
+                name="Verify prerequisites",
+                step_type="manual_task",
+                risk_level="low",
+                requires_approval=False,
+            ),
+        ],
+    )
+    mock_http_client = MagicMock(spec=HttpWorkflowTransformClient)
+    mock_http_client.transform_runbook.return_value = fake_candidate
+
+    with patch.object(HttpWorkflowTransformClient, "from_settings", return_value=mock_http_client):
+        workflow = services.create_workflow_from_runbook(runbook=runbook)
+
     assert workflow.version == 1
     assert workflow.status == Workflow.Status.DRAFT
+    mock_http_client.transform_runbook.assert_called_once_with(
+        runbook_title=runbook.title,
+        runbook_slug=runbook.slug,
+        raw_content=runbook.raw_content,
+    )

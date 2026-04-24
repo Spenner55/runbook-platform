@@ -61,67 +61,96 @@ class WorkflowCandidate:
 # Client
 # ---------------------------------------------------------------------------
 
-def _build_timeout() -> httpx.Timeout:
-    return httpx.Timeout(
-        connect=settings.AI_CONNECT_TIMEOUT_SECONDS,
-        read=settings.AI_READ_TIMEOUT_SECONDS,
-        write=settings.AI_WRITE_TIMEOUT_SECONDS,
-        pool=settings.AI_POOL_TIMEOUT_SECONDS,
-    )
-
-
-def parse_runbook_to_workflow_candidate(
-    *,
-    request_id: str,
-    runbook_id: str,
-    runbook_title: str,
-    raw_content: str,
-) -> WorkflowCandidate:
+class RunbookAiClient:
     """
-    Call the AI service to convert a runbook into a workflow candidate.
+    Thin synchronous HTTP client for the internal AI parse service.
 
-    Called from the workflow service *outside* any DB transaction so the
-    connection is not held open while waiting on the network.
+    Use `from_settings()` in production code.
+    Pass a custom `transport` (e.g. httpx.MockTransport) in tests.
     """
-    url = f"{settings.AI_BASE_URL}/parse/runbook"
-    payload = {
-        "request_id": request_id,
-        "runbook": {
-            "id": runbook_id,
-            "title": runbook_title,
-            "raw_content": raw_content,
-        },
-    }
 
-    try:
-        response = httpx.post(url, json=payload, timeout=_build_timeout())
-    except httpx.ConnectError as exc:
-        raise AiServiceUnavailableError(
-            f"AI service unreachable at {url}: {exc}"
-        ) from exc
-    except httpx.TimeoutException as exc:
-        raise AiServiceTimeoutError(
-            f"AI service timed out at {url}: {exc}"
-        ) from exc
-    except httpx.RequestError as exc:
-        raise AiServiceUnavailableError(
-            f"AI service request failed: {exc}"
-        ) from exc
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        timeout: httpx.Timeout,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = httpx.Client(timeout=timeout, transport=transport)
 
-    if response.status_code != 200:
-        raise AiServiceBadResponseError(
-            f"AI service returned HTTP {response.status_code} for {url}"
+    @classmethod
+    def from_settings(cls) -> "RunbookAiClient":
+        return cls(
+            base_url=settings.AI_BASE_URL,
+            timeout=httpx.Timeout(
+                connect=settings.AI_CONNECT_TIMEOUT_SECONDS,
+                read=settings.AI_READ_TIMEOUT_SECONDS,
+                write=settings.AI_WRITE_TIMEOUT_SECONDS,
+                pool=settings.AI_POOL_TIMEOUT_SECONDS,
+            ),
         )
 
-    try:
-        data = response.json()
-    except Exception as exc:
-        raise AiServiceBadResponseError(
-            "AI service returned a non-JSON body"
-        ) from exc
+    def parse_runbook_to_workflow_candidate(
+        self,
+        *,
+        request_id: str,
+        runbook_id: str,
+        runbook_title: str,
+        raw_content: str,
+    ) -> WorkflowCandidate:
+        """
+        Call the AI service to convert a runbook into a workflow candidate.
 
-    return _validate_and_map_candidate(data)
+        Must be called OUTSIDE any DB transaction so no connection is held
+        open while waiting on the network.
+        """
+        url = f"{self._base_url}/parse/runbook"
+        payload = {
+            "request_id": request_id,
+            "runbook": {
+                "id": runbook_id,
+                "title": runbook_title,
+                "raw_content": raw_content,
+            },
+        }
 
+        try:
+            response = self._client.post(url, json=payload)
+        except httpx.ConnectError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service unreachable at {url}: {exc}"
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise AiServiceTimeoutError(
+                f"AI service timed out at {url}: {exc}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service request failed: {exc}"
+            ) from exc
+
+        if response.status_code != 200:
+            raise AiServiceBadResponseError(
+                f"AI service returned HTTP {response.status_code} for {url}"
+            )
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise AiServiceBadResponseError(
+                "AI service returned a non-JSON body"
+            ) from exc
+
+        return _validate_and_map_candidate(data)
+
+    def close(self) -> None:
+        self._client.close()
+
+
+# ---------------------------------------------------------------------------
+# Response validation / mapping
+# ---------------------------------------------------------------------------
 
 def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
     """Validate raw response dict and return a typed WorkflowCandidate."""

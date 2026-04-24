@@ -66,7 +66,7 @@ def _extract_steps(
                 WorkflowCandidateStep(
                     step_key=f"step-{len(steps) + 1}",
                     name=name,
-                    step_type="manual",
+                    step_type="manual_task",
                     risk_level="medium",
                     requires_approval=False,
                 )
@@ -80,14 +80,14 @@ def _default_steps(title: str) -> list[WorkflowCandidateStep]:
         WorkflowCandidateStep(
             step_key="step-1",
             name="Verify prerequisites",
-            step_type="manual",
+            step_type="manual_task",
             risk_level="low",
             requires_approval=False,
         ),
         WorkflowCandidateStep(
             step_key="step-2",
             name=f"Execute: {title}"[:255],
-            step_type="manual",
+            step_type="manual_task",
             risk_level="medium",
             requires_approval=False,
         ),
