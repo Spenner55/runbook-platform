@@ -5,14 +5,15 @@ These views are intentionally separate from the public ExecutionViewSet.
 They accept runner-owned requests only and must not be registered on the
 public router.
 """
+
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.executions import services
 from apps.executions.internal_serializers import (
-    ClaimNextRequestSerializer,
     ClaimedExecutionSerializer,
+    ClaimNextRequestSerializer,
     ExecutionCompleteSerializer,
     HeartbeatSerializer,
     StepUpdateSerializer,
@@ -34,11 +35,13 @@ class ClaimNextExecutionView(APIView):
             return Response({"execution": None, "poll_after_seconds": 5})
 
         execution = result["execution"]
-        return Response({
-            "execution": ClaimedExecutionSerializer(execution).data,
-            "claim_token": result["claim_token"],
-            "poll_after_seconds": 5,
-        })
+        return Response(
+            {
+                "execution": ClaimedExecutionSerializer(execution).data,
+                "claim_token": result["claim_token"],
+                "poll_after_seconds": 5,
+            }
+        )
 
 
 class ExecutionHeartbeatView(APIView):
@@ -56,11 +59,13 @@ class ExecutionHeartbeatView(APIView):
             claim_token=str(d["claim_token"]),
         )
         execution.refresh_from_db(fields=["last_heartbeat_at", "status"])
-        return Response({
-            "execution_id": str(execution.id),
-            "status": execution.status,
-            "last_heartbeat_at": execution.last_heartbeat_at,
-        })
+        return Response(
+            {
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "last_heartbeat_at": execution.last_heartbeat_at,
+            }
+        )
 
 
 class ExecutionStepUpdateView(APIView):
@@ -84,11 +89,13 @@ class ExecutionStepUpdateView(APIView):
             error_message=d.get("error_message", ""),
         )
         execution.refresh_from_db(fields=["status"])
-        return Response({
-            "execution_id": str(execution.id),
-            "step": ExecutionStepSerializer(step).data,
-            "execution_status": execution.status,
-        })
+        return Response(
+            {
+                "execution_id": str(execution.id),
+                "step": ExecutionStepSerializer(step).data,
+                "execution_status": execution.status,
+            }
+        )
 
 
 class ExecutionCompleteView(APIView):
@@ -106,8 +113,10 @@ class ExecutionCompleteView(APIView):
             claim_token=str(d["claim_token"]),
             outcome=d["final_status"],
         )
-        return Response({
-            "id": str(execution.id),
-            "status": execution.status,
-            "finished_at": execution.finished_at,
-        })
+        return Response(
+            {
+                "id": str(execution.id),
+                "status": execution.status,
+                "finished_at": execution.finished_at,
+            }
+        )

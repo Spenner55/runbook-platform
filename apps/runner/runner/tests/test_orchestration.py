@@ -9,27 +9,24 @@ from __future__ import annotations
 
 import threading
 from typing import Any
-from unittest.mock import call
 from uuid import UUID, uuid4
-
-import pytest
 
 from runner.executor import Executor
 from runner.poller import Poller
 from runner.schemas import (
-    ClaimNextResponse,
     ClaimedExecution,
     ClaimedStep,
+    ClaimNextResponse,
     CompleteExecutionResponse,
     HeartbeatResponse,
     StepUpdateResponse,
     StepUpdateStepDetail,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake client
 # ---------------------------------------------------------------------------
+
 
 class FakeApiClient:
     """
@@ -47,7 +44,9 @@ class FakeApiClient:
     def claim_next(self) -> ClaimNextResponse:
         return self._claim_response
 
-    def heartbeat(self, execution_id: UUID, claim_token: UUID, observed_status: str = "claimed") -> HeartbeatResponse:
+    def heartbeat(
+        self, execution_id: UUID, claim_token: UUID, observed_status: str = "claimed"
+    ) -> HeartbeatResponse:
         with self._lock:
             self.heartbeat_calls.append((execution_id, claim_token))
         return HeartbeatResponse(status=observed_status)
@@ -62,7 +61,9 @@ class FakeApiClient:
         **kwargs: Any,
     ) -> StepUpdateResponse:
         with self._lock:
-            self.step_update_calls.append({"step_id": step_id, "status": status, **kwargs})
+            self.step_update_calls.append(
+                {"step_id": step_id, "status": status, **kwargs}
+            )
         return StepUpdateResponse(
             execution_id=execution_id,
             step=StepUpdateStepDetail(id=step_id, status=status),
@@ -77,13 +78,16 @@ class FakeApiClient:
         error_message: str = "",
     ) -> CompleteExecutionResponse:
         with self._lock:
-            self.complete_calls.append({"execution_id": execution_id, "final_status": final_status})
+            self.complete_calls.append(
+                {"execution_id": execution_id, "final_status": final_status}
+            )
         return CompleteExecutionResponse(id=execution_id, status=final_status)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_step(position: int, command: str = "") -> ClaimedStep:
     return ClaimedStep(
@@ -110,7 +114,9 @@ def _make_claim_response(steps: list[ClaimedStep]) -> tuple[ClaimNextResponse, U
         workflow_snapshot={},
         steps=steps,
     )
-    return ClaimNextResponse(execution=exe, claim_token=token, poll_after_seconds=5), token
+    return ClaimNextResponse(
+        execution=exe, claim_token=token, poll_after_seconds=5
+    ), token
 
 
 def _step_statuses(client: FakeApiClient) -> list[str]:
@@ -121,9 +127,11 @@ def _step_statuses(client: FakeApiClient) -> list[str]:
 # Happy path sequencing
 # ---------------------------------------------------------------------------
 
+
 def test_happy_path_step_order_and_statuses(monkeypatch):
     """Each step must be marked running then succeeded, in position order."""
     import runner.executor as executor_mod
+
     monkeypatch.setattr(executor_mod.time, "sleep", lambda _: None)
 
     steps = [_make_step(2), _make_step(1)]  # deliberately out of order
@@ -140,13 +148,16 @@ def test_happy_path_step_order_and_statuses(monkeypatch):
 
     # step IDs in position order
     step_by_id = {s.id: s for s in steps}
-    running_ids = [c["step_id"] for c in client.step_update_calls if c["status"] == "running"]
+    running_ids = [
+        c["step_id"] for c in client.step_update_calls if c["status"] == "running"
+    ]
     positions = [step_by_id[sid].position for sid in running_ids]
     assert positions == sorted(positions)
 
 
 def test_happy_path_complete_called_once_with_succeeded(monkeypatch):
     import runner.executor as executor_mod
+
     monkeypatch.setattr(executor_mod.time, "sleep", lambda _: None)
 
     resp, token = _make_claim_response([_make_step(1), _make_step(2)])
@@ -163,8 +174,10 @@ def test_happy_path_complete_called_once_with_succeeded(monkeypatch):
 # Failure path sequencing
 # ---------------------------------------------------------------------------
 
+
 def test_fail_step_marks_step_failed_then_completes_failed(monkeypatch):
     import runner.executor as executor_mod
+
     monkeypatch.setattr(executor_mod.time, "sleep", lambda _: None)
 
     steps = [_make_step(1, command="echo FAIL_STEP"), _make_step(2), _make_step(3)]
@@ -183,6 +196,7 @@ def test_fail_step_marks_step_failed_then_completes_failed(monkeypatch):
 
 def test_failure_leaves_later_steps_untouched(monkeypatch):
     import runner.executor as executor_mod
+
     monkeypatch.setattr(executor_mod.time, "sleep", lambda _: None)
 
     steps = [_make_step(1, command="FAIL_STEP"), _make_step(2)]
@@ -193,7 +207,6 @@ def test_failure_leaves_later_steps_untouched(monkeypatch):
     executor.run(resp.execution, token)
 
     step_ids_touched = {c["step_id"] for c in client.step_update_calls}
-    step_2_id = steps[1].id if steps[1].position == 2 else steps[0].id
     # Step 2 should not have been touched
     for s in steps:
         if s.command == "FAIL_STEP":
@@ -203,6 +216,7 @@ def test_failure_leaves_later_steps_untouched(monkeypatch):
 
 def test_complete_called_exactly_once_on_failure(monkeypatch):
     import runner.executor as executor_mod
+
     monkeypatch.setattr(executor_mod.time, "sleep", lambda _: None)
 
     resp, token = _make_claim_response([_make_step(1, command="FAIL_STEP")])
@@ -218,6 +232,7 @@ def test_complete_called_exactly_once_on_failure(monkeypatch):
 # Heartbeat start/stop
 # ---------------------------------------------------------------------------
 
+
 def test_heartbeat_is_sent_while_execution_active(monkeypatch):
     """
     Use a long fake step delay + fast heartbeat interval to guarantee
@@ -225,7 +240,6 @@ def test_heartbeat_is_sent_while_execution_active(monkeypatch):
     """
     import runner.executor as executor_mod
 
-    beat_events: list[tuple] = []
     original_init = executor_mod._HeartbeatThread.__init__
 
     def patched_init(self, client, execution_id, claim_token, interval=10):
@@ -234,9 +248,9 @@ def test_heartbeat_is_sent_while_execution_active(monkeypatch):
     monkeypatch.setattr(executor_mod._HeartbeatThread, "__init__", patched_init)
 
     # Give execution real time to run (0.05s step delay) so heartbeats fire
-    sleep_calls: list[float] = []
     def fake_sleep(s: float) -> None:
         import time
+
         time.sleep(min(s, 0.05))
 
     monkeypatch.setattr(executor_mod.time, "sleep", fake_sleep)
@@ -256,7 +270,6 @@ def test_no_heartbeat_without_active_execution():
     Poller should not call executor (and thus no heartbeat) when claim_next
     returns no work.
     """
-    import time
     from unittest.mock import MagicMock, patch
 
     client_mock = MagicMock()
@@ -277,9 +290,10 @@ def test_no_heartbeat_without_active_execution():
 # Poller claim handoff
 # ---------------------------------------------------------------------------
 
+
 def test_poller_passes_claim_token_to_executor(monkeypatch):
     """Poller must pass response.claim_token as the second arg to executor.run."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     client_mock = MagicMock()
     executor_mock = MagicMock()
@@ -287,9 +301,13 @@ def test_poller_passes_claim_token_to_executor(monkeypatch):
 
     token = uuid4()
     exe = ClaimedExecution(
-        id=uuid4(), status="claimed", workflow_id=uuid4(),
-        organization_id=uuid4(), workflow_version=1,
-        workflow_snapshot={}, steps=[],
+        id=uuid4(),
+        status="claimed",
+        workflow_id=uuid4(),
+        organization_id=uuid4(),
+        workflow_version=1,
+        workflow_snapshot={},
+        steps=[],
     )
     client_mock.claim_next.return_value = ClaimNextResponse(
         execution=exe, claim_token=token, poll_after_seconds=5

@@ -4,14 +4,14 @@ from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
 from apps.common.exceptions import ExternalDependencyError
+from apps.runbooks.models import Runbook
+from apps.workflows import services
 from apps.workflows.internal_clients import (
     AiServiceBadResponseError,
     AiServiceContractError,
     AiServiceTimeoutError,
     AiServiceUnavailableError,
 )
-from apps.runbooks.models import Runbook
-from apps.workflows import services
 from apps.workflows.models import Workflow
 from apps.workflows.serializers import (
     WorkflowArchiveSerializer,
@@ -57,7 +57,9 @@ class WorkflowViewSet(
                 detail=str(exc),
             ) from exc
 
-        return Response(WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED)
+        return Response(
+            WorkflowDetailSerializer(workflow).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):

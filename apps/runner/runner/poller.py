@@ -40,7 +40,9 @@ class Poller:
             return
 
         if response.execution is None:
-            logger.debug("No queued executions; sleeping %ds", response.poll_after_seconds)
+            logger.debug(
+                "No queued executions; sleeping %ds", response.poll_after_seconds
+            )
             time.sleep(response.poll_after_seconds)
             return
 

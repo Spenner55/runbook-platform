@@ -5,10 +5,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { useOrganizations } from '../../features/organizations/hooks/useOrganizations'
 import { useCreateRunbook } from '../../features/runbooks/hooks/useCreateRunbook'
 import { useRunbooks } from '../../features/runbooks/hooks/useRunbooks'
-import {
-  getApiErrorMessage,
-  getApiFieldError,
-} from '../../shared/api/client'
+import { getApiErrorMessage, getApiFieldError } from '../../shared/api/client'
 
 export function RunbooksPage() {
   const [searchParams] = useSearchParams()
@@ -21,11 +18,8 @@ export function RunbooksPage() {
   const [rawContent, setRawContent] = useState('')
 
   const selectedOrganization = useMemo(
-    () =>
-      organizationsQuery.data?.find(
-        (organization) => organization.id === organizationId,
-      ),
-    [organizationId, organizationsQuery.data],
+    () => organizationsQuery.data?.find((organization) => organization.id === organizationId),
+    [organizationId, organizationsQuery.data]
   )
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -71,8 +65,7 @@ export function RunbooksPage() {
           <p className="eyebrow">Step 2</p>
           <h2>Create a runbook</h2>
           <p className="muted">
-            Organization:{' '}
-            <strong>{selectedOrganization?.name ?? organizationId}</strong>
+            Organization: <strong>{selectedOrganization?.name ?? organizationId}</strong>
           </p>
         </div>
 
@@ -87,9 +80,7 @@ export function RunbooksPage() {
               value={title}
             />
             {getApiFieldError(createRunbook.error, 'title') ? (
-              <span className="field__error">
-                {getApiFieldError(createRunbook.error, 'title')}
-              </span>
+              <span className="field__error">{getApiFieldError(createRunbook.error, 'title')}</span>
             ) : null}
           </label>
 
@@ -103,9 +94,7 @@ export function RunbooksPage() {
               value={slug}
             />
             {getApiFieldError(createRunbook.error, 'slug') ? (
-              <span className="field__error">
-                {getApiFieldError(createRunbook.error, 'slug')}
-              </span>
+              <span className="field__error">{getApiFieldError(createRunbook.error, 'slug')}</span>
             ) : null}
           </label>
 
@@ -121,9 +110,7 @@ export function RunbooksPage() {
           </label>
 
           {createRunbook.error ? (
-            <p className="banner banner--error">
-              {getApiErrorMessage(createRunbook.error)}
-            </p>
+            <p className="banner banner--error">{getApiErrorMessage(createRunbook.error)}</p>
           ) : null}
 
           <button className="button" disabled={createRunbook.isPending} type="submit">
@@ -136,16 +123,12 @@ export function RunbooksPage() {
         <div className="panel__header">
           <p className="eyebrow">Source documents</p>
           <h2>Runbooks</h2>
-          <p className="muted">
-            Generate a workflow from any stored runbook.
-          </p>
+          <p className="muted">Generate a workflow from any stored runbook.</p>
         </div>
 
         {runbooksQuery.isLoading ? <p className="muted">Loading runbooks…</p> : null}
         {runbooksQuery.error ? (
-          <p className="banner banner--error">
-            {getApiErrorMessage(runbooksQuery.error)}
-          </p>
+          <p className="banner banner--error">{getApiErrorMessage(runbooksQuery.error)}</p>
         ) : null}
 
         {runbooksQuery.data?.length ? (

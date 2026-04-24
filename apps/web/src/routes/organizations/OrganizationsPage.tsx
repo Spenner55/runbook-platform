@@ -2,10 +2,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 
-import {
-  getApiErrorMessage,
-  getApiFieldError,
-} from '../../shared/api/client'
+import { getApiErrorMessage, getApiFieldError } from '../../shared/api/client'
 import { useCreateOrganization } from '../../features/organizations/hooks/useCreateOrganization'
 import { useOrganizations } from '../../features/organizations/hooks/useOrganizations'
 
@@ -31,9 +28,7 @@ export function OrganizationsPage() {
         <div className="panel__header">
           <p className="eyebrow">Step 1</p>
           <h2>Create an organization</h2>
-          <p className="muted">
-            Organizations anchor the rest of the Phase 1 flow.
-          </p>
+          <p className="muted">Organizations anchor the rest of the Phase 1 flow.</p>
         </div>
 
         <form className="stack-md" onSubmit={handleSubmit}>
@@ -72,16 +67,10 @@ export function OrganizationsPage() {
           </label>
 
           {createOrganization.error ? (
-            <p className="banner banner--error">
-              {getApiErrorMessage(createOrganization.error)}
-            </p>
+            <p className="banner banner--error">{getApiErrorMessage(createOrganization.error)}</p>
           ) : null}
 
-          <button
-            className="button"
-            disabled={createOrganization.isPending}
-            type="submit"
-          >
+          <button className="button" disabled={createOrganization.isPending} type="submit">
             {createOrganization.isPending ? 'Creating…' : 'Create organization'}
           </button>
         </form>
@@ -98,9 +87,7 @@ export function OrganizationsPage() {
 
         {organizationsQuery.isLoading ? <p className="muted">Loading organizations…</p> : null}
         {organizationsQuery.error ? (
-          <p className="banner banner--error">
-            {getApiErrorMessage(organizationsQuery.error)}
-          </p>
+          <p className="banner banner--error">{getApiErrorMessage(organizationsQuery.error)}</p>
         ) : null}
 
         {organizationsQuery.data?.length ? (

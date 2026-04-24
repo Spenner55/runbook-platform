@@ -1,4 +1,5 @@
 """Unit tests for the deterministic workflow parser service."""
+
 from app.schemas.workflow_parse import ParseRunbookRequest, RunbookInput
 from app.services.workflow_parser import parse_runbook_to_candidate
 
@@ -70,4 +71,6 @@ def test_same_input_same_output():
     req = _make_request("1. Alpha\n2. Beta")
     r1 = parse_runbook_to_candidate(req)
     r2 = parse_runbook_to_candidate(req)
-    assert [(s.step_key, s.name) for s in r1.steps] == [(s.step_key, s.name) for s in r2.steps]
+    assert [(s.step_key, s.name) for s in r1.steps] == [
+        (s.step_key, s.name) for s in r2.steps
+    ]

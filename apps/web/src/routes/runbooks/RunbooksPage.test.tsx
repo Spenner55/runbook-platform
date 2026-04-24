@@ -33,8 +33,8 @@ describe('RunbooksPage', () => {
     const org = { id: 'org-1', name: 'Acme', slug: 'acme', created_at: '', updated_at: '' }
 
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse([org]))  // organizations
-      .mockResolvedValueOnce(createJsonResponse([]))     // runbooks
+      .mockResolvedValueOnce(createJsonResponse([org])) // organizations
+      .mockResolvedValueOnce(createJsonResponse([])) // runbooks
 
     renderRoute(<RunbooksPage />, {
       path: '/runbooks',
@@ -60,11 +60,11 @@ describe('RunbooksPage', () => {
     }
 
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse([org]))             // organizations
-      .mockResolvedValueOnce(createJsonResponse([]))                // runbooks (initial)
+      .mockResolvedValueOnce(createJsonResponse([org])) // organizations
+      .mockResolvedValueOnce(createJsonResponse([])) // runbooks (initial)
       .mockResolvedValueOnce(createJsonResponse(newRunbook, { status: 201 })) // create
-      .mockResolvedValueOnce(createJsonResponse([]))                // organizations refetch
-      .mockResolvedValueOnce(createJsonResponse([newRunbook]))      // runbooks refetch
+      .mockResolvedValueOnce(createJsonResponse([])) // organizations refetch
+      .mockResolvedValueOnce(createJsonResponse([newRunbook])) // runbooks refetch
 
     renderRoute(<RunbooksPage />, {
       path: '/runbooks',
@@ -87,7 +87,7 @@ describe('RunbooksPage', () => {
         ([url, opts]) =>
           typeof url === 'string' &&
           url.includes('/api/v1/runbooks/') &&
-          (opts as RequestInit)?.method === 'POST',
+          (opts as RequestInit)?.method === 'POST'
       )
       expect(postCall).toBeDefined()
     })

@@ -1,7 +1,8 @@
 from fastapi import FastAPI
+
+from app.api.routes.enrich import router as enrich_router
 from app.api.routes.health import router as health_router
 from app.api.routes.parse import router as parse_router
-from app.api.routes.enrich import router as enrich_router
 from app.api.routes.summarize import router as summarize_router
 
 app = FastAPI(title="Runbook Platform AI Service")

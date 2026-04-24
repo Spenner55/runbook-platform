@@ -1,0 +1,25 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["apps/api", "apps/ai", "apps/runner"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long — handled by ruff format
+]
+
+[tool.ruff.lint.per-file-ignores]
+"apps/api/config/settings/*.py" = ["F403"]
+"apps/api/apps/*/migrations/*.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

@@ -80,16 +80,19 @@ describe('ExecutionDetailPage', () => {
       expect(screen.getByText('Polling for runner updates…')).toBeInTheDocument()
     })
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2)
-    }, { timeout: 3000 })
+    await waitFor(
+      () => {
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 3000 }
+    )
 
     expect(screen.getAllByText('succeeded').length).toBeGreaterThan(0)
   })
 
   it('renders the Django error envelope when execution detail fails', async () => {
     fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'execution unavailable' }, { status: 503 }),
+      createJsonResponse({ detail: 'execution unavailable' }, { status: 503 })
     )
 
     renderRoute(<ExecutionDetailPage />, {

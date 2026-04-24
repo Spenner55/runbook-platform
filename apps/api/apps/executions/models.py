@@ -41,9 +41,15 @@ class Execution(BaseModel):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["status", "created_at"], name="exec_status_created_idx"),
-            models.Index(fields=["organization", "created_at"], name="exec_org_created_idx"),
-            models.Index(fields=["workflow", "created_at"], name="exec_workflow_created_idx"),
+            models.Index(
+                fields=["status", "created_at"], name="exec_status_created_idx"
+            ),
+            models.Index(
+                fields=["organization", "created_at"], name="exec_org_created_idx"
+            ),
+            models.Index(
+                fields=["workflow", "created_at"], name="exec_workflow_created_idx"
+            ),
         ]
 
     def __str__(self):

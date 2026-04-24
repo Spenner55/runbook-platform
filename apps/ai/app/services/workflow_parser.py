@@ -5,6 +5,7 @@ Extracts a structured workflow candidate from raw runbook content.
 Does NOT persist anything — returns a candidate structure only.
 Version assignment and persistence are Django's responsibility.
 """
+
 from __future__ import annotations
 
 import re
@@ -51,7 +52,7 @@ def _extract_steps(
 
     steps: list[WorkflowCandidateStep] = []
     pattern = re.compile(
-        r'^(?:step\s*)?\d+[\.\:\)]\s*(.+)',
+        r"^(?:step\s*)?\d+[\.\:\)]\s*(.+)",
         re.IGNORECASE,
     )
 

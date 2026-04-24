@@ -31,6 +31,7 @@ def execution(published_workflow):
 # Create endpoint
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_execution_returns_201(published_workflow):
     client = Client()
@@ -101,6 +102,7 @@ def test_create_execution_draft_workflow_returns_400_with_envelope(runbook):
 # Retrieve
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_get_execution_returns_steps(execution):
     client = Client()
@@ -119,6 +121,7 @@ def test_get_execution_returns_steps(execution):
 # ---------------------------------------------------------------------------
 # Cancel action
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_cancel_execution_returns_cancelled_status(execution):

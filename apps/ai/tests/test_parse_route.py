@@ -3,6 +3,7 @@ FastAPI contract tests for POST /parse/runbook.
 
 Uses TestClient so no real network is needed.
 """
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -22,6 +23,7 @@ _VALID_PAYLOAD = {
 # ---------------------------------------------------------------------------
 # Response shape
 # ---------------------------------------------------------------------------
+
 
 def test_parse_runbook_returns_200():
     response = client.post("/parse/runbook", json=_VALID_PAYLOAD)
@@ -68,6 +70,7 @@ def test_each_step_has_required_fields():
 # Deterministic behaviour
 # ---------------------------------------------------------------------------
 
+
 def test_numbered_steps_produce_one_step_per_line():
     response = client.post("/parse/runbook", json=_VALID_PAYLOAD)
     steps = response.json()["steps"]
@@ -83,6 +86,7 @@ def test_same_input_produces_same_output():
 # ---------------------------------------------------------------------------
 # Fallback for empty content
 # ---------------------------------------------------------------------------
+
 
 def test_empty_content_returns_fallback_steps():
     payload = {
@@ -115,6 +119,7 @@ def test_empty_content_includes_warning():
 # ---------------------------------------------------------------------------
 # Validation — missing required fields
 # ---------------------------------------------------------------------------
+
 
 def test_missing_request_id_returns_422():
     payload = {

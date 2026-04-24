@@ -23,10 +23,7 @@ function getDetailMessage(data: unknown): string | undefined {
   return typeof detail === 'string' ? detail : undefined
 }
 
-function getFieldMessage(
-  data: unknown,
-  fieldName: string,
-): string | undefined {
+function getFieldMessage(data: unknown, fieldName: string): string | undefined {
   if (!data || typeof data !== 'object') {
     return undefined
   }
@@ -36,9 +33,7 @@ function getFieldMessage(
     return value
   }
   if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === 'string')
-      .join(', ')
+    return value.filter((item): item is string => typeof item === 'string').join(', ')
   }
   return undefined
 }
@@ -53,20 +48,14 @@ export function getApiErrorMessage(error: unknown): string {
   return 'Request failed.'
 }
 
-export function getApiFieldError(
-  error: unknown,
-  fieldName: string,
-): string | undefined {
+export function getApiFieldError(error: unknown, fieldName: string): string | undefined {
   if (!(error instanceof ApiError)) {
     return undefined
   }
   return getFieldMessage(error.data, fieldName)
 }
 
-export async function apiRequest<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
 
@@ -88,7 +77,7 @@ export async function apiRequest<T>(
     throw new ApiError(
       getDetailMessage(data) ?? `Request failed with status ${response.status}.`,
       response.status,
-      data,
+      data
     )
   }
 

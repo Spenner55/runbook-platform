@@ -13,15 +13,29 @@ class RunbookCreateSerializer(serializers.Serializer):
 class RunbookListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Runbook
-        fields = ["id", "title", "slug", "status", "organization_id", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "title",
+            "slug",
+            "status",
+            "organization_id",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class RunbookDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Runbook
         fields = [
-            "id", "title", "slug", "status", "raw_content",
-            "organization_id", "created_at", "updated_at",
+            "id",
+            "title",
+            "slug",
+            "status",
+            "raw_content",
+            "organization_id",
+            "created_at",
+            "updated_at",
         ]
 
 

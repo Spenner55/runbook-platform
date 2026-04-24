@@ -1,8 +1,13 @@
-import pytest
-from django.db import IntegrityError
 from unittest.mock import MagicMock, patch
 
-from apps.common.exceptions import ConcurrencyConflictError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
+import pytest
+from django.db import IntegrityError
+
+from apps.common.exceptions import (
+    ConcurrencyConflictError,
+    InvalidStateTransitionError,
+    InvalidWorkflowDefinitionError,
+)
 from apps.runbooks import services as runbook_services
 from apps.workflows import services
 from apps.workflows.internal_clients import (
@@ -12,10 +17,10 @@ from apps.workflows.internal_clients import (
 )
 from apps.workflows.models import Workflow
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _stub():
     return StubWorkflowTransformClient()
@@ -52,13 +57,17 @@ def _candidate(steps=None, title="Deploy Service"):
 @pytest.fixture
 def runbook(org):
     return runbook_services.create_runbook(
-        organization=org, title="Deploy Service", slug="deploy-service", raw_content="Do step one"
+        organization=org,
+        title="Deploy Service",
+        slug="deploy-service",
+        raw_content="Do step one",
     )
 
 
 # ---------------------------------------------------------------------------
 # Version assignment
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_create_workflow_assigns_version_1(runbook):
@@ -91,6 +100,7 @@ def test_create_workflow_versions_are_independent_per_runbook(org):
 # ---------------------------------------------------------------------------
 # Definition and status
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_create_workflow_status_is_draft(runbook):
@@ -128,6 +138,7 @@ def test_definition_maps_candidate_fields(runbook):
 # Transform client boundary
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_transform_client_receives_correct_runbook_fields(runbook):
     client = _fixed_client(_candidate())
@@ -155,6 +166,7 @@ def test_transform_failure_leaves_no_workflow_row(runbook):
 # Candidate validation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_empty_steps_raises_invalid_definition_error(runbook):
     client = _fixed_client(_candidate(steps=[]))
@@ -166,8 +178,20 @@ def test_empty_steps_raises_invalid_definition_error(runbook):
 @pytest.mark.django_db
 def test_duplicate_step_key_raises_invalid_definition_error(runbook):
     steps = [
-        WorkflowCandidateStep(step_key="dup", name="Step A", step_type="manual", risk_level="low", requires_approval=False),
-        WorkflowCandidateStep(step_key="dup", name="Step B", step_type="manual", risk_level="low", requires_approval=False),
+        WorkflowCandidateStep(
+            step_key="dup",
+            name="Step A",
+            step_type="manual",
+            risk_level="low",
+            requires_approval=False,
+        ),
+        WorkflowCandidateStep(
+            step_key="dup",
+            name="Step B",
+            step_type="manual",
+            risk_level="low",
+            requires_approval=False,
+        ),
     ]
     client = _fixed_client(_candidate(steps=steps))
     with pytest.raises(InvalidWorkflowDefinitionError):
@@ -177,7 +201,13 @@ def test_duplicate_step_key_raises_invalid_definition_error(runbook):
 @pytest.mark.django_db
 def test_step_missing_name_raises_invalid_definition_error(runbook):
     steps = [
-        WorkflowCandidateStep(step_key="s1", name="", step_type="manual", risk_level="low", requires_approval=False),
+        WorkflowCandidateStep(
+            step_key="s1",
+            name="",
+            step_type="manual",
+            risk_level="low",
+            requires_approval=False,
+        ),
     ]
     client = _fixed_client(_candidate(steps=steps))
     with pytest.raises(InvalidWorkflowDefinitionError):
@@ -187,6 +217,7 @@ def test_step_missing_name_raises_invalid_definition_error(runbook):
 # ---------------------------------------------------------------------------
 # Version conflict
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_version_conflict_raises_concurrency_error(runbook):
@@ -202,6 +233,7 @@ def test_version_conflict_raises_concurrency_error(runbook):
 # ---------------------------------------------------------------------------
 # publish_workflow
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_publish_workflow_transitions_status(runbook):
@@ -223,11 +255,17 @@ def test_publish_workflow_rejects_non_draft(runbook):
 # create_workflow_from_runbook — AI boundary wiring
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_workflow_from_runbook_uses_http_client(runbook):
     """create_workflow_from_runbook must go through HttpWorkflowTransformClient, not the stub."""
     from unittest.mock import MagicMock, patch
-    from apps.workflows.internal_clients import HttpWorkflowTransformClient, WorkflowCandidate, WorkflowCandidateStep
+
+    from apps.workflows.internal_clients import (
+        HttpWorkflowTransformClient,
+        WorkflowCandidate,
+        WorkflowCandidateStep,
+    )
 
     fake_candidate = WorkflowCandidate(
         request_id="req-test",
@@ -245,7 +283,9 @@ def test_create_workflow_from_runbook_uses_http_client(runbook):
     mock_http_client = MagicMock(spec=HttpWorkflowTransformClient)
     mock_http_client.transform_runbook.return_value = fake_candidate
 
-    with patch.object(HttpWorkflowTransformClient, "from_settings", return_value=mock_http_client):
+    with patch.object(
+        HttpWorkflowTransformClient, "from_settings", return_value=mock_http_client
+    ):
         workflow = services.create_workflow_from_runbook(runbook=runbook)
 
     assert workflow.version == 1

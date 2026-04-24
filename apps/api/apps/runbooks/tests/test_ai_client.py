@@ -3,9 +3,11 @@ Tests for RunbookAiClient.
 
 Uses httpx.MockTransport so no real network calls are made.
 """
+
 import json
-import pytest
+
 import httpx
+import pytest
 
 from apps.runbooks.ai_client import (
     AiServiceBadResponseError,
@@ -16,10 +18,10 @@ from apps.runbooks.ai_client import (
     WorkflowCandidate,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_client(handler) -> RunbookAiClient:
     """Build a RunbookAiClient backed by a MockTransport."""
@@ -75,6 +77,7 @@ def _call(client: RunbookAiClient) -> WorkflowCandidate:
 # Request payload shape
 # ---------------------------------------------------------------------------
 
+
 def test_sends_correct_request_payload():
     """Client must send the expected JSON body to /parse/runbook."""
     captured = {}
@@ -98,6 +101,7 @@ def test_sends_correct_request_payload():
 # ---------------------------------------------------------------------------
 # Success response mapping
 # ---------------------------------------------------------------------------
+
 
 def test_success_response_maps_to_candidate():
     client = _make_client(lambda _: _json_response(_VALID_RESPONSE))
@@ -132,6 +136,7 @@ def test_warnings_included_in_candidate():
 # HTTP error mapping
 # ---------------------------------------------------------------------------
 
+
 def test_non_200_raises_bad_response_error():
     client = _make_client(lambda _: httpx.Response(500, content=b"error"))
     with pytest.raises(AiServiceBadResponseError):
@@ -140,7 +145,9 @@ def test_non_200_raises_bad_response_error():
 
 def test_non_json_body_raises_bad_response_error():
     client = _make_client(
-        lambda _: httpx.Response(200, content=b"not json", headers={"content-type": "text/plain"})
+        lambda _: httpx.Response(
+            200, content=b"not json", headers={"content-type": "text/plain"}
+        )
     )
     with pytest.raises(AiServiceBadResponseError):
         _call(client)
@@ -176,6 +183,7 @@ def test_connect_timeout_raises_timeout_error():
 # ---------------------------------------------------------------------------
 # Contract validation errors
 # ---------------------------------------------------------------------------
+
 
 def test_missing_workflow_title_raises_contract_error():
     response = {**_VALID_RESPONSE, "workflow_title": ""}

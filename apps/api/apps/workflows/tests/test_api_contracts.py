@@ -1,11 +1,12 @@
-import pytest
-from django.test import Client
 from unittest.mock import patch
 
+import pytest
+from django.test import Client
+
+from apps.common.exceptions import ConcurrencyConflictError
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
-from apps.common.exceptions import ConcurrencyConflictError
 
 
 @pytest.fixture
@@ -27,6 +28,7 @@ def draft_workflow(runbook):
 # ---------------------------------------------------------------------------
 # Create endpoint
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_create_workflow_returns_201(runbook):
@@ -100,9 +102,11 @@ def test_create_workflow_version_conflict_returns_409(runbook):
 # AI error propagation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_workflow_ai_unavailable_surfaces_as_503(runbook):
     from apps.workflows.internal_clients import AiServiceUnavailableError
+
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceUnavailableError("ai unavailable"),
@@ -122,6 +126,7 @@ def test_create_workflow_ai_unavailable_surfaces_as_503(runbook):
 @pytest.mark.django_db
 def test_create_workflow_ai_timeout_surfaces_as_503(runbook):
     from apps.workflows.internal_clients import AiServiceTimeoutError
+
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceTimeoutError("timed out"),
@@ -141,6 +146,7 @@ def test_create_workflow_ai_timeout_surfaces_as_503(runbook):
 @pytest.mark.django_db
 def test_create_workflow_ai_bad_response_surfaces_as_503(runbook):
     from apps.workflows.internal_clients import AiServiceBadResponseError
+
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceBadResponseError("bad body"),
@@ -160,6 +166,7 @@ def test_create_workflow_ai_bad_response_surfaces_as_503(runbook):
 @pytest.mark.django_db
 def test_create_workflow_ai_contract_error_surfaces_as_503(runbook):
     from apps.workflows.internal_clients import AiServiceContractError
+
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceContractError("missing field"),
@@ -179,6 +186,7 @@ def test_create_workflow_ai_contract_error_surfaces_as_503(runbook):
 # ---------------------------------------------------------------------------
 # Publish action
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_publish_workflow_transitions_to_published(draft_workflow):
@@ -203,6 +211,7 @@ def test_publish_already_published_returns_409(draft_workflow):
 # Publish supersede behavior
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_publish_supersedes_existing_published_workflow(runbook):
     """Publishing a new version must supersede the previously published one."""
@@ -223,6 +232,7 @@ def test_publish_supersedes_existing_published_workflow(runbook):
 # ---------------------------------------------------------------------------
 # Archive action
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_archive_draft_workflow_transitions_to_archived(draft_workflow):

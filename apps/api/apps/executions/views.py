@@ -19,7 +19,11 @@ class ExecutionViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = Execution.objects.select_related("workflow", "organization").prefetch_related("steps").all()
+    queryset = (
+        Execution.objects.select_related("workflow", "organization")
+        .prefetch_related("steps")
+        .all()
+    )
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -32,7 +36,9 @@ class ExecutionViewSet(
         serializer = ExecutionCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        workflow = get_object_or_404(Workflow, pk=serializer.validated_data["workflow_id"])
+        workflow = get_object_or_404(
+            Workflow, pk=serializer.validated_data["workflow_id"]
+        )
         execution = services.create_execution(workflow=workflow)
 
         return Response(

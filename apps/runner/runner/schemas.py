@@ -8,10 +8,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 class RunnerSettings(BaseModel):
     api_base_url: str
@@ -26,16 +26,25 @@ class RunnerSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     @classmethod
-    def from_env(cls) -> "RunnerSettings":
+    def from_env(cls) -> RunnerSettings:
         import os
+
         return cls(
             api_base_url=os.environ.get("API_BASE_URL", "http://api:8000"),
-            runner_id=os.environ.get("RUNNER_ID", os.environ.get("HOSTNAME", "runner-dev")),
+            runner_id=os.environ.get(
+                "RUNNER_ID", os.environ.get("HOSTNAME", "runner-dev")
+            ),
             runner_version=os.environ.get("RUNNER_VERSION", "0.1.0"),
             registration_token=os.environ.get("RUNNER_REGISTRATION_TOKEN", ""),
-            poll_interval_seconds=int(os.environ.get("RUNNER_POLL_INTERVAL_SECONDS", "5")),
-            heartbeat_interval_seconds=int(os.environ.get("RUNNER_HEARTBEAT_INTERVAL_SECONDS", "10")),
-            fake_step_delay_seconds=float(os.environ.get("RUNNER_FAKE_STEP_DELAY_SECONDS", "1.0")),
+            poll_interval_seconds=int(
+                os.environ.get("RUNNER_POLL_INTERVAL_SECONDS", "5")
+            ),
+            heartbeat_interval_seconds=int(
+                os.environ.get("RUNNER_HEARTBEAT_INTERVAL_SECONDS", "10")
+            ),
+            fake_step_delay_seconds=float(
+                os.environ.get("RUNNER_FAKE_STEP_DELAY_SECONDS", "1.0")
+            ),
             log_level=os.environ.get("RUNNER_LOG_LEVEL", "INFO"),
         )
 
@@ -43,6 +52,7 @@ class RunnerSettings(BaseModel):
 # ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
+
 
 class ClaimNextRequest(BaseModel):
     runner_id: str
@@ -93,6 +103,7 @@ class ClaimNextResponse(BaseModel):
 # Heartbeat
 # ---------------------------------------------------------------------------
 
+
 class HeartbeatRequest(BaseModel):
     runner_id: str
     claim_token: UUID
@@ -113,6 +124,7 @@ class HeartbeatResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Step update
 # ---------------------------------------------------------------------------
+
 
 class StepUpdateRequest(BaseModel):
     runner_id: str
@@ -149,6 +161,7 @@ class StepUpdateResponse(BaseModel):
 # Complete execution
 # ---------------------------------------------------------------------------
 
+
 class CompleteExecutionRequest(BaseModel):
     runner_id: str
     claim_token: UUID
@@ -170,6 +183,7 @@ class CompleteExecutionResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Local runtime result models
 # ---------------------------------------------------------------------------
+
 
 class StepRunResult(BaseModel):
     status: Literal["succeeded", "failed"]

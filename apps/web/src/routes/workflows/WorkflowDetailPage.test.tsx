@@ -14,8 +14,20 @@ const DRAFT_WORKFLOW = {
   definition: {
     name: 'Rotate Creds',
     steps: [
-      { id: 'step-1', name: 'Verify IAM context', type: 'manual_task', risk: 'medium', requiresApproval: false },
-      { id: 'step-2', name: 'Create replacement key', type: 'manual_task', risk: 'high', requiresApproval: true },
+      {
+        id: 'step-1',
+        name: 'Verify IAM context',
+        type: 'manual_task',
+        risk: 'medium',
+        requiresApproval: false,
+      },
+      {
+        id: 'step-2',
+        name: 'Create replacement key',
+        type: 'manual_task',
+        risk: 'high',
+        requiresApproval: true,
+      },
     ],
   },
   definition_schema_version: 'workflow.schema.v1',
@@ -40,7 +52,7 @@ describe('WorkflowDetailPage', () => {
   })
 
   it('shows loading state while workflow query is pending', () => {
-    fetchMock.mockReturnValue(new Promise(() => {}))  // never resolves
+    fetchMock.mockReturnValue(new Promise(() => {})) // never resolves
 
     renderRoute(<WorkflowDetailPage />, {
       path: '/workflows/:workflowId',
@@ -142,16 +154,14 @@ describe('WorkflowDetailPage', () => {
         ([url, opts]) =>
           typeof url === 'string' &&
           url.includes('/api/v1/executions/') &&
-          (opts as RequestInit)?.method === 'POST',
+          (opts as RequestInit)?.method === 'POST'
       )
       expect(postCall).toBeDefined()
     })
   })
 
   it('shows error banner when workflow query fails', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'Not found' }, { status: 404 }),
-    )
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ detail: 'Not found' }, { status: 404 }))
 
     renderRoute(<WorkflowDetailPage />, {
       path: '/workflows/:workflowId',

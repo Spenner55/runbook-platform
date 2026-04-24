@@ -19,7 +19,7 @@ export function WorkflowCreatePage() {
     try {
       const workflow = await createWorkflow.mutateAsync({ runbook_id: runbookId })
       navigate(`/workflows/${workflow.id}`)
-    } catch (_) {
+    } catch {
       // createWorkflow.error captures the failure; no navigation on error
     }
   }
@@ -44,8 +44,7 @@ export function WorkflowCreatePage() {
         <p className="eyebrow">Step 3</p>
         <h2>Create a workflow from a runbook</h2>
         <p className="muted">
-          Django owns orchestration here and calls the internal AI parser behind
-          the service layer.
+          Django owns orchestration here and calls the internal AI parser behind the service layer.
         </p>
       </div>
 
@@ -72,9 +71,7 @@ export function WorkflowCreatePage() {
           </div>
 
           {createWorkflow.error ? (
-            <p className="banner banner--error">
-              {getApiErrorMessage(createWorkflow.error)}
-            </p>
+            <p className="banner banner--error">{getApiErrorMessage(createWorkflow.error)}</p>
           ) : null}
 
           <button

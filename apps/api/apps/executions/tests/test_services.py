@@ -1,7 +1,12 @@
-import pytest
 from unittest.mock import patch
 
-from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError, InvalidWorkflowDefinitionError
+import pytest
+
+from apps.common.exceptions import (
+    DomainValidationError,
+    InvalidStateTransitionError,
+    InvalidWorkflowDefinitionError,
+)
 from apps.executions import services
 from apps.executions.models import Execution, ExecutionStep
 from apps.runbooks import services as runbook_services
@@ -33,6 +38,7 @@ def draft_workflow(runbook):
 # Happy path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_execution_creates_execution_row(published_workflow):
     execution = services.create_execution(workflow=published_workflow)
@@ -60,6 +66,7 @@ def test_create_execution_materializes_steps_in_order(published_workflow):
 # ---------------------------------------------------------------------------
 # Immutable snapshot copy
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_create_execution_copies_workflow_version(published_workflow):
@@ -94,6 +101,7 @@ def test_create_execution_step_fields_copied_from_definition(published_workflow)
 # Status gate
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_execution_requires_published_workflow(draft_workflow):
     with pytest.raises(DomainValidationError) as exc_info:
@@ -104,6 +112,7 @@ def test_create_execution_requires_published_workflow(draft_workflow):
 # ---------------------------------------------------------------------------
 # Definition validation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_create_execution_rejects_empty_steps(published_workflow):
@@ -126,6 +135,7 @@ def test_create_execution_rejects_missing_steps_key(published_workflow):
 # Atomicity
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 def test_create_execution_is_atomic(published_workflow):
     with patch(
@@ -141,6 +151,7 @@ def test_create_execution_is_atomic(published_workflow):
 # ---------------------------------------------------------------------------
 # cancel_execution (runner-adjacent, ValueError by design)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 def test_cancel_execution_transitions_to_cancelled(published_workflow):

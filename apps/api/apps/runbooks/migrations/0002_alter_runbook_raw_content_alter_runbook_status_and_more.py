@@ -4,25 +4,35 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('organizations', '0001_initial'),
-        ('runbooks', '0001_initial'),
+        ("organizations", "0001_initial"),
+        ("runbooks", "0001_initial"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='runbook',
-            name='raw_content',
+            model_name="runbook",
+            name="raw_content",
             field=models.TextField(),
         ),
         migrations.AlterField(
-            model_name='runbook',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('ready', 'Ready'), ('archived', 'Archived')], default='draft', max_length=24),
+            model_name="runbook",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("draft", "Draft"),
+                    ("ready", "Ready"),
+                    ("archived", "Archived"),
+                ],
+                default="draft",
+                max_length=24,
+            ),
         ),
         migrations.AddIndex(
-            model_name='runbook',
-            index=models.Index(fields=['organization', 'status', 'created_at'], name='rb_org_status_created_idx'),
+            model_name="runbook",
+            index=models.Index(
+                fields=["organization", "status", "created_at"],
+                name="rb_org_status_created_idx",
+            ),
         ),
     ]

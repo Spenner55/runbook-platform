@@ -5,15 +5,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-import pytest
-
 from runner.poller import Poller
-from runner.schemas import ClaimNextResponse, ClaimedExecution, ClaimedStep
-
+from runner.schemas import ClaimedExecution, ClaimedStep, ClaimNextResponse
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_claimed_execution() -> ClaimedExecution:
     step = ClaimedStep(
@@ -41,6 +39,7 @@ def make_claimed_execution() -> ClaimedExecution:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @patch("runner.poller.time.sleep")
 def test_no_work_sleeps_for_poll_interval(mock_sleep):
