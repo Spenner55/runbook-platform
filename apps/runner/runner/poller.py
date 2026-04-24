@@ -45,6 +45,15 @@ class Poller:
             return
 
         execution = response.execution
+        claim_token = response.claim_token
+
+        if claim_token is None:
+            logger.error(
+                "Claim-next returned execution %s but no claim_token — skipping",
+                execution.id,
+            )
+            return
+
         logger.info(
             "Claimed execution %s (workflow_version=%d, steps=%d)",
             execution.id,
@@ -52,4 +61,4 @@ class Poller:
             len(execution.steps),
         )
         # Block until execution is finished before polling again
-        self._executor.run(execution)
+        self._executor.run(execution, claim_token)

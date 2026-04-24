@@ -2,41 +2,43 @@
 
 from __future__ import annotations
 
-import logging
-import os
-import sys
+import httpx
 
 from runner.client import ApiClient
 from runner.executor import Executor
+from runner.log_streamer import LogStreamer, configure_logging
 from runner.poller import Poller
-
-
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        stream=sys.stdout,
-    )
+from runner.schemas import RunnerSettings
 
 
 def main() -> None:
-    _configure_logging()
-    logger = logging.getLogger(__name__)
+    settings = RunnerSettings.from_env()
 
-    api_base_url = os.environ.get("API_BASE_URL", "http://api:8000")
-    runner_id = os.environ.get("RUNNER_REGISTRATION_TOKEN", "default-runner")
+    base_logger = configure_logging(
+        level=settings.log_level,
+        runner_id=settings.runner_id,
+        runner_version=settings.runner_version,
+    )
+    log = LogStreamer(
+        base_logger=base_logger,
+        runner_id=settings.runner_id,
+        runner_version=settings.runner_version,
+    )
 
-    logger.info("Runner starting — api=%s runner_id=%s", api_base_url, runner_id)
+    log.runner_started()
 
-    client = ApiClient(base_url=api_base_url, runner_id=runner_id)
-    executor = Executor(client=client)
-    poller = Poller(client=client, executor=executor)
+    timeout = httpx.Timeout(10.0)
+    with httpx.Client(timeout=timeout) as http_client:
+        api_client = ApiClient(
+            base_url=settings.api_base_url,
+            runner_id=settings.runner_id,
+            runner_version=settings.runner_version,
+            http_client=http_client,
+        )
+        executor = Executor(client=api_client)
+        poller = Poller(client=api_client, executor=executor)
 
-    try:
         poller.run_forever()
-    finally:
-        client.close()
-        logger.info("Runner stopped")
 
 
 if __name__ == "__main__":
