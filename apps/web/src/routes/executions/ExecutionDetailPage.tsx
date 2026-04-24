@@ -51,6 +51,18 @@ export function ExecutionDetailPage() {
               <p className="detail-grid__label">Finished</p>
               <p>{formatDateTime(executionQuery.data.finished_at)}</p>
             </div>
+            <div>
+              <p className="detail-grid__label">Runner</p>
+              <p>{executionQuery.data.claimed_by_runner_id || '—'}</p>
+            </div>
+            <div>
+              <p className="detail-grid__label">Claimed</p>
+              <p>{formatDateTime(executionQuery.data.claimed_at)}</p>
+            </div>
+            <div>
+              <p className="detail-grid__label">Last heartbeat</p>
+              <p>{formatDateTime(executionQuery.data.last_heartbeat_at)}</p>
+            </div>
           </div>
 
           {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) ? (
