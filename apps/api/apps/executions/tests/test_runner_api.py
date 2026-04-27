@@ -25,7 +25,9 @@ def runbook(org):
 
 @pytest.fixture
 def published_workflow(runbook):
-    wf = workflow_services.create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
+    wf = workflow_services.create_workflow(
+        runbook=runbook, transform_client=StubWorkflowTransformClient()
+    )
     return workflow_services.publish_workflow(workflow=wf)
 
 
