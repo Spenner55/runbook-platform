@@ -4,6 +4,7 @@ from django.test import Client
 from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
+from apps.workflows.internal_clients import StubWorkflowTransformClient
 
 
 @pytest.fixture
@@ -18,7 +19,9 @@ def runbook(org):
 
 @pytest.fixture
 def published_workflow(runbook):
-    wf = workflow_services.create_workflow_from_runbook(runbook=runbook)
+    wf = workflow_services.create_workflow(
+        runbook=runbook, transform_client=StubWorkflowTransformClient()
+    )
     return workflow_services.publish_workflow(workflow=wf)
 
 
@@ -85,7 +88,9 @@ def test_create_execution_unknown_workflow_returns_404():
 
 @pytest.mark.django_db
 def test_create_execution_draft_workflow_returns_400_with_envelope(runbook):
-    draft_wf = workflow_services.create_workflow_from_runbook(runbook=runbook)
+    draft_wf = workflow_services.create_workflow(
+        runbook=runbook, transform_client=StubWorkflowTransformClient()
+    )
     client = Client()
     response = client.post(
         "/api/v1/executions/",

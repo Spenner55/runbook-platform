@@ -6,12 +6,16 @@
 | --- | --- |
 | Phase number | 04 |
 | Objective | Build the first versioned REST API surface for the Runbook Platform under `/api/v1/`, keeping public CRUD separate from runner-only internal endpoints and preserving the existing service-layer architecture. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Primary outputs | Versioned route tree, public CRUD endpoints for organizations/runbooks/workflows/executions, internal runner endpoints for claim/heartbeat/step updates/completion, serializer split by use case, standardized error envelope, and an atomic concurrency-safe `claim-next` contract. |
 | Dependencies | `/home/dylan/code/runbook-platform/docs/blueprints/phase-02-django-domain-foundation-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-03-application-service-layer-blueprint.md`, Django project scaffold in `/home/dylan/code/runbook-platform/apps/api`, PostgreSQL from `/home/dylan/code/runbook-platform/docker-compose.yml`, and workflow schema scaffold in `/home/dylan/code/runbook-platform/packages/contracts/workflow/workflow.schema.json`. |
 | Local runtime source of truth | Docker Compose in `/home/dylan/code/runbook-platform/docker-compose.yml`. |
 | Documentation basis reviewed on | 2026-03-31 |
 | Official docs basis | Django 6.0 transactions and `select_for_update()` docs, DRF versioning, generic views, viewsets, routers, serializers, exceptions, and DRF 3.16 announcement. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, the versioned public API and internal runner API are implemented under `/api/v1/` and `/api/v1/internal/`. Current endpoint and response details are maintained in `docs/architecture/api-contracts.md` and may differ slightly from early blueprint examples.
 
 ### Official Documentation Reviewed
 

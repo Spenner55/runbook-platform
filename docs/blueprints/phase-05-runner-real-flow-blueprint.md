@@ -6,13 +6,17 @@
 | --- | --- |
 | Phase number | 05 |
 | Objective | Implement the first real runner execution flow for the vertical slice: poll Django for queued executions, claim work, simulate step execution, emit structured logs, send heartbeat updates, and close executions through Django internal endpoints only. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Primary outputs | Real poller loop, typed runner API client, sequential fake executor, deterministic failure path via `FAIL_STEP`, heartbeat flow, structured logging, thin `main.py`, and runner-focused tests. |
 | Dependencies | `/home/dylan/code/runbook-platform/docs/blueprints/phase-02-django-domain-foundation-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-03-application-service-layer-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-04-versioned-rest-apis-blueprint.md`, `/home/dylan/code/runbook-platform/apps/runner`, `/home/dylan/code/runbook-platform/docker-compose.yml`, `/home/dylan/code/runbook-platform/.env.example`. |
-| Current runner state | `/home/dylan/code/runbook-platform/apps/runner/runner/main.py` is a heartbeat print loop; `/home/dylan/code/runbook-platform/apps/runner/runner/client.py`, `/home/dylan/code/runbook-platform/apps/runner/runner/executor.py`, and `/home/dylan/code/runbook-platform/apps/runner/runner/log_streamer.py` are placeholders. |
+| Current runner state | Implemented for the local vertical slice: `main.py` wires settings/client/executor/poller, `client.py` calls Django internal APIs, `poller.py` claims work, and `executor.py` simulates sequential step execution with heartbeat support. |
 | Runtime baseline in repo | Python 3.12 from `/home/dylan/code/runbook-platform/apps/runner/Dockerfile`, `httpx>=0.27,<1.0`, `pydantic>=2.0,<3.0` from `/home/dylan/code/runbook-platform/apps/runner/requirements.txt`. |
 | Documentation basis reviewed on | 2026-03-31 |
 | Phase guardrails | Runner must not talk directly to PostgreSQL, must call Django internal endpoints only, must stay poll-based, must keep `main.py` thin, and must not introduce Celery, Redis, Kafka, websockets, or background infrastructure beyond the runner process itself. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, the runner real flow is implemented for simulated step execution. Future real sandboxing, artifact upload, approval-aware step-start behavior, and runner authentication remain planned/deferred. Current runner guidance lives in `docs/architecture/runner.md`.
 
 ### Official Documentation Reviewed
 

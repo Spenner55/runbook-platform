@@ -1,3 +1,10 @@
 # Docker Assets
 
-Container build definitions live close to each app today. Use this directory for shared Docker snippets, base images, or future production-oriented container assets.
+Container build definitions currently live close to each app:
+
+- `apps/api/Dockerfile`
+- `apps/ai/Dockerfile`
+- `apps/runner/Dockerfile`
+- `apps/web/Dockerfile`
+
+Use this directory only for shared Docker snippets, base-image material, or production-oriented container assets after ownership is documented.

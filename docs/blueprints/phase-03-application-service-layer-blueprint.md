@@ -6,13 +6,17 @@
 | --- | --- |
 | Phase number | 03 |
 | Objective | Introduce a clean Django application service layer for the first real vertical slice so create flows are orchestrated in services instead of views, while preserving the AI-service boundary and execution-history immutability. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Primary outcomes | `create_runbook`, `create_workflow`, and `create_execution` service flows; deterministic stub workflow transformation behind an internal client boundary; explicit transaction boundaries; consistent error contract; tests focused on services and API-adjacent behavior. |
 | Dependencies | `/home/dylan/code/runbook-platform/docs/blueprints/phase-02-django-domain-foundation-blueprint.md`, domain models in `organizations`, `runbooks`, `workflows`, `executions`, and the placeholder AI service in `/home/dylan/code/runbook-platform/apps/ai`. |
 | In-scope apps | `/home/dylan/code/runbook-platform/apps/api/apps/runbooks`, `/home/dylan/code/runbook-platform/apps/api/apps/workflows`, `/home/dylan/code/runbook-platform/apps/api/apps/executions`, plus small shared support in `/home/dylan/code/runbook-platform/apps/api/apps/common`. |
 | Out of scope | Real approvals, policies, audit, artifacts, background jobs, full auth, permissions hardening, real AI inference, runner claim/advance flows, and broad CRUD beyond the vertical-slice create paths. |
 | Documentation basis reviewed on | 2026-03-31 |
 | Official docs basis | Django 6.0 transactions docs, Django model/constraint docs, DRF 3.16 serializer docs, DRF generic-view docs, DRF exception docs, and the DRF 3.16 announcement. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, service modules exist for organizations, runbooks, workflows, and executions. Workflow creation now uses the Django-to-FastAPI parse boundary via `apps/workflows/internal_clients.py` and `apps/runbooks/ai_client.py`; it is no longer only a local stub transform. The rule remains: service modules own orchestration and transactions, while views and serializers stay thin.
 
 ### Official Documentation Reviewed
 

@@ -1,3 +1,5 @@
 # Compose Assets
 
-Use this directory for split compose files, overrides, and profile-specific local orchestration as the stack grows beyond the root `docker-compose.yml`.
+The root `docker-compose.yml` is the current local orchestration source of truth.
+
+Use this directory for future split Compose files, overrides, profiles, or production-like local variants only after documenting how they relate to the root Compose file.

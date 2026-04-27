@@ -1,11 +1,14 @@
 # SDK
 
-Shared client-side helpers for calling the API, AI service, and future runner-facing utilities.
+Minimal TypeScript package scaffold for future shared client helpers.
 
 ## Current Scope
-- Minimal TypeScript package scaffold
 
-## Next Steps
-- Add typed API clients
-- Export shared DTO helpers from `packages/contracts`
-- Add runtime validation once package boundaries are finalized
+- `src/index.ts` package placeholder.
+- Not used by the current React app, runner, API, or AI service.
+
+## Boundary Rules
+
+- Do not add direct AI or runner browser clients here.
+- Do not bypass Django public API contracts.
+- Add SDK behavior only after API ownership and versioning rules are documented.

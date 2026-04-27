@@ -6,12 +6,16 @@
 | --- | --- |
 | Phase number | 02 |
 | Objective | Build the Django domain foundation for the first real vertical slice by turning placeholder app packages into real Django apps and introducing production-shaped v1 domain models, admin registration, and migrations. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Dependencies | Existing Django project scaffold in `apps/api`, Docker Compose runtime in `/home/dylan/code/runbook-platform/docker-compose.yml`, PostgreSQL service, placeholder packages under `/home/dylan/code/runbook-platform/apps/api/apps`, and the Phase 1 execution plan at `/home/dylan/code/runbook-platform/docs/blueprints/phase-01-end-to-end-vertical-slice-blueprint.md`. |
 | Outputs | Real Django apps for `common`, `organizations`, `runbooks`, `workflows`, and `executions`; shared abstract base models; initial domain models; Django admin registration; initial migrations; model smoke tests. |
 | Local runtime source of truth | Docker Compose. All routine commands in this phase should run through `docker compose exec api ...` or existing `make` wrappers. |
 | Documentation basis reviewed on | 2026-03-31 |
 | Official docs basis | Django 6.0 model field/options/constraints/index/postgres-index docs, DRF 3.16 docs and announcement. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, the core domain foundation is implemented in `apps/api/apps/common`, `organizations`, `runbooks`, `workflows`, and `executions`. Placeholder packages for `approvals`, `policies`, `audit`, `integrations`, `artifacts`, and `users` remain future-phase scaffolding only. Current field-level truth is documented in `docs/architecture/data-model.md`.
 
 ### Out of Scope
 

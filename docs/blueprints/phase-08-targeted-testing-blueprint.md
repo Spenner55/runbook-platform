@@ -6,12 +6,16 @@
 | --- | --- |
 | Phase number | 08 |
 | Objective | Add a narrow, high-value testing layer before continuing feature work, with the strongest emphasis on Django service behavior, critical API contracts, runner execution logic, and a minimal frontend smoke suite. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Documentation basis reviewed on | 2026-04-01 |
 | Current repo anchors reviewed | `/home/dylan/code/runbook-platform/apps/api`, `/home/dylan/code/runbook-platform/apps/runner`, `/home/dylan/code/runbook-platform/apps/web`, `/home/dylan/code/runbook-platform/docker-compose.yml`, `/home/dylan/code/runbook-platform/Makefile`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-03-application-service-layer-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-04-versioned-rest-apis-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-05-runner-real-flow-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-06-react-product-slice-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-07-ai-service-boundary-blueprint.md`. |
-| Current repo state relevant to testing | `/home/dylan/code/runbook-platform/apps/api/requirements/dev.txt` already includes `pytest` and `pytest-django`; `/home/dylan/code/runbook-platform/apps/api/Dockerfile` currently installs only `requirements/base.txt`; `/home/dylan/code/runbook-platform/apps/runner` has no test dependency yet; `/home/dylan/code/runbook-platform/apps/web/package.json` has no test tooling yet; code in API, runner, and web is still scaffold-heavy. |
+| Current repo state relevant to testing | Targeted API, runner, AI, and web tests exist. API uses `pytest`/`pytest-django`; runner and AI use pytest; web uses Vitest and Testing Library. CI runs these suites plus lint/format gates. |
 | In scope | Django tests for runbook creation, workflow creation service, execution creation service, claim-next atomic behavior, and execution status transition rules; runner tests for polling loop behavior, step status transitions, failure handling, and API client payload mapping; frontend tests for form submission smoke, execution detail rendering, and loading/error states. |
 | Out of scope | Broad line coverage targets, browser E2E, visual regression, Playwright/Cypress suites, real container execution inside unit tests, overbuilt factory frameworks, testing library internals, or adding tests for placeholder code that has no business value yet. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, targeted tests exist for Django API/service behavior, runner behavior, AI parse behavior, and frontend route/page behavior. Current verification commands are documented in `docs/runbooks/local-development.md`.
 
 ### Official docs reviewed first
 
