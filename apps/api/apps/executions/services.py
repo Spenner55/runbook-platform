@@ -211,6 +211,10 @@ def heartbeat_execution(
 
 _VALID_STEP_TRANSITIONS: dict[str, set[str]] = {
     ExecutionStep.Status.PENDING: {ExecutionStep.Status.RUNNING},
+    ExecutionStep.Status.WAITING_FOR_APPROVAL: {
+        ExecutionStep.Status.RUNNING,
+        ExecutionStep.Status.FAILED,
+    },
     ExecutionStep.Status.RUNNING: {
         ExecutionStep.Status.SUCCEEDED,
         ExecutionStep.Status.FAILED,

@@ -59,6 +59,7 @@ class Execution(BaseModel):
 class ExecutionStep(BaseModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
+        WAITING_FOR_APPROVAL = "waiting_for_approval", "Waiting for Approval"
         RUNNING = "running", "Running"
         SUCCEEDED = "succeeded", "Succeeded"
         FAILED = "failed", "Failed"

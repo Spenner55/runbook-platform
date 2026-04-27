@@ -5,6 +5,14 @@ import { getApiErrorMessage } from '../../shared/api/client'
 
 const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'claimed', 'running'])
 
+function getStepPillClass(status: string) {
+  if (status === 'succeeded') return 'pill pill--success'
+  if (status === 'failed') return 'pill pill--danger'
+  if (status === 'waiting_for_approval') return 'pill pill--warn'
+  if (status === 'running') return 'pill pill--info'
+  return 'pill'
+}
+
 function formatDateTime(value: string | null) {
   if (!value) {
     return 'Not set'
@@ -78,13 +86,20 @@ export function ExecutionDetailPage() {
                     </strong>
                     <p className="muted">
                       {step.step_type} · risk {step.risk_level}
+                      {step.requires_approval ? ' · approval required' : ''}
                     </p>
+                    {step.status === 'waiting_for_approval' ? (
+                      <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
+                        Awaiting approval before command execution.{' '}
+                        <a href="/approvals">Go to Approvals Inbox</a>
+                      </p>
+                    ) : null}
                     {step.error_message ? (
                       <p className="field__error">{step.error_message}</p>
                     ) : null}
                   </div>
                   <div className="step-list__meta">
-                    <span className="pill">{step.status}</span>
+                    <span className={getStepPillClass(step.status)}>{step.status}</span>
                     <span className="muted">exit {step.exit_code ?? '—'}</span>
                   </div>
                 </li>

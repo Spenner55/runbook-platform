@@ -71,7 +71,7 @@ class ClaimedStep(BaseModel):
     risk_level: str
     command: str = ""
     requires_approval: bool = False
-    status: Literal["pending", "running", "succeeded", "failed", "skipped"]
+    status: Literal["pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"]
 
     model_config = ConfigDict(extra="ignore")
 
@@ -176,6 +176,67 @@ class CompleteExecutionResponse(BaseModel):
     id: UUID
     status: str
     finished_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Step start
+# ---------------------------------------------------------------------------
+
+
+class StepStartRequest(BaseModel):
+    runner_id: str
+    claim_token: UUID
+    sent_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ApprovalRequestDetail(BaseModel):
+    id: UUID
+    status: str
+    requested_at: datetime | None = None
+    timeout_seconds: int | None = None
+    expires_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class StepStartResponse(BaseModel):
+    execution_id: UUID
+    execution_status: str
+    step: dict[str, Any]
+    runner_action: Literal["run", "wait_for_approval", "blocked"]
+    poll_after_seconds: int
+    approval_request: ApprovalRequestDetail | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Approval status polling
+# ---------------------------------------------------------------------------
+
+
+class ApprovalStatusRequest(BaseModel):
+    runner_id: str
+    claim_token: UUID
+    observed_step_status: str = "waiting_for_approval"
+    sent_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ApprovalStatusResponse(BaseModel):
+    execution_id: UUID
+    execution_status: str
+    step_id: UUID
+    step_status: str
+    approval_request: ApprovalRequestDetail | None = None
+    runner_action: Literal["wait", "run", "fail"]
+    poll_after_seconds: int
 
     model_config = ConfigDict(extra="ignore")
 

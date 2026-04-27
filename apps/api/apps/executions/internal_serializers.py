@@ -87,3 +87,49 @@ class ExecutionCompleteSerializer(serializers.Serializer):
         required=False, allow_null=True, default=None
     )
     error_message = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+# ---------------------------------------------------------------------------
+# Step-start (replaces direct pending→running update for all steps)
+# ---------------------------------------------------------------------------
+
+
+class StepStartSerializer(serializers.Serializer):
+    runner_id = serializers.CharField(max_length=255)
+    claim_token = serializers.UUIDField()
+    sent_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+
+class InternalApprovalRequestSerializer(serializers.Serializer):
+    """Minimal approval request shape used inside runner responses."""
+
+    id = serializers.UUIDField()
+    status = serializers.CharField()
+    requested_at = serializers.DateTimeField()
+    timeout_seconds = serializers.IntegerField(allow_null=True)
+    expires_at = serializers.DateTimeField(allow_null=True)
+    resolved_at = serializers.DateTimeField(allow_null=True)
+
+    def to_representation(self, instance):
+        return {
+            "id": str(instance.id),
+            "status": instance.status,
+            "requested_at": instance.requested_at,
+            "timeout_seconds": instance.timeout_seconds,
+            "expires_at": instance.expires_at,
+            "resolved_at": instance.resolved_at,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Approval-status polling
+# ---------------------------------------------------------------------------
+
+
+class ApprovalStatusRequestSerializer(serializers.Serializer):
+    runner_id = serializers.CharField(max_length=255)
+    claim_token = serializers.UUIDField()
+    observed_step_status = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, default=""
+    )
+    sent_at = serializers.DateTimeField(required=False, allow_null=True, default=None)

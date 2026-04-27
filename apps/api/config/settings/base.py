@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "apps.runbooks.apps.RunbooksConfig",
     "apps.workflows.apps.WorkflowsConfig",
     "apps.executions.apps.ExecutionsConfig",
+    "apps.approvals.apps.ApprovalsConfig",
 ]
 
 MIDDLEWARE = [

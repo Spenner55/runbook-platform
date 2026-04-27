@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 
 import { AppLayout } from './AppLayout'
+import { ApprovalsInboxPage } from '../routes/approvals/ApprovalsInboxPage'
 import { ExecutionDetailPage } from '../routes/executions/ExecutionDetailPage'
 import { OrganizationsPage } from '../routes/organizations/OrganizationsPage'
 import { RunbooksPage } from '../routes/runbooks/RunbooksPage'
@@ -18,6 +19,7 @@ export const router = createBrowserRouter([
       { path: 'workflows/new', element: <WorkflowCreatePage /> },
       { path: 'workflows/:workflowId', element: <WorkflowDetailPage /> },
       { path: 'executions/:executionId', element: <ExecutionDetailPage /> },
+      { path: 'approvals', element: <ApprovalsInboxPage /> },
     ],
   },
 ])

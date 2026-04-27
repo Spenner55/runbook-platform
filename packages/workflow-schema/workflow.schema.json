@@ -18,7 +18,8 @@
           "type": { "type": "string" },
           "risk": { "type": "string" },
           "command": { "type": "string" },
-          "requiresApproval": { "type": "boolean" }
+          "requiresApproval": { "type": "boolean" },
+          "approvalTimeoutSeconds": { "type": "integer", "minimum": 1 }
         }
       }
     }
