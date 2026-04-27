@@ -6,6 +6,7 @@ from apps.executions import services
 from apps.executions.models import Execution
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
+from apps.workflows.internal_clients import StubWorkflowTransformClient
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def runbook(org):
 
 @pytest.fixture
 def published_workflow(runbook):
-    wf = workflow_services.create_workflow_from_runbook(runbook=runbook)
+    wf = workflow_services.create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
     return workflow_services.publish_workflow(workflow=wf)
 
 
