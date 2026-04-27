@@ -6,12 +6,16 @@
 |---|---|
 | Phase number | 09 |
 | Objective | Make the local development environment fast, repeatable, and consistent across machines — without touching production infra. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Depends on | Phases 01–08 (domain models, service layer, APIs, runner, React slice, tests) |
 | Authored | 2026-04-15 |
 | Repo root reviewed | `/home/dylan/code/runbook-platform` |
 | In scope | Makefile improvements, seed data system, pre-commit hooks, Python + JS/TS linting/formatting stack, Docker-first workflow enforcement |
 | Out of scope | CI/CD pipeline changes beyond `ci.yml` linting gates, production deployment, AWS infra, container security hardening, secrets management, feature flags |
+
+### Current repo alignment notes
+
+As of 2026-04-27, the root Makefile includes local lifecycle, migration, test, seed, lint, format, shell, and per-service start/stop targets. `seed_dev`, `wait_for_db`, ruff, Prettier, ESLint, Vitest, and CI gates are present. Current local workflow is documented in `docs/runbooks/local-development.md`.
 
 ---
 

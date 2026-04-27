@@ -1,218 +1,115 @@
 # Internal Runner API
 
-These endpoints are used exclusively by the runner process. They live under
-`/api/v1/internal/` and are separate from the public REST API.
+Runner endpoints are under `/api/v1/internal/` and are not public product APIs.
 
-**The frontend never calls these endpoints. The runner never calls public endpoints for execution state.**
+The frontend must never call these endpoints. The runner must not use public execution endpoints to mutate execution state.
 
----
+For full contract status, see [API contracts](../architecture/api-contracts.md).
 
-## Design principles
+## Design Principles
 
-- All state mutations use explicit `POST` actions, not `PATCH`.
-- Every mutating endpoint validates runner ownership via `runner_id` + `claim_token`.
-- Step transitions are a narrow allowlist — arbitrary field mutation is not possible.
-- The claim uses `SELECT FOR UPDATE SKIP LOCKED` for concurrency safety.
+- Runner state mutations use explicit `POST` actions.
+- Mutating endpoints validate `runner_id` and `claim_token`.
+- Step transitions are allowlisted in the service layer.
+- Claiming work uses `SELECT FOR UPDATE SKIP LOCKED`.
 
----
-
-## Endpoints
-
-### Claim next execution
+## Claim Next
 
 `POST /api/v1/internal/executions/claim-next/`
 
-Atomically claims the oldest `queued` execution and returns its full step list.
-If no work is available, returns `execution: null` with a sleep hint.
-
-**Request**
-
-```json
-{ "runner_id": "my-runner-token" }
-```
-
-**Response — work available**
+Request:
 
 ```json
 {
-  "execution": {
-    "id": "<uuid>",
-    "status": "claimed",
-    "workflow_id": "<uuid>",
-    "organization_id": "<uuid>",
-    "workflow_version": 1,
-    "workflow_snapshot": { ... },
-    "claim_token": "<uuid>",
-    "steps": [
-      {
-        "id": "<uuid>",
-        "position": 1,
-        "step_key": "s1",
-        "name": "Step 1",
-        "step_type": "manual",
-        "risk_level": "low",
-        "command": "echo hello",
-        "requires_approval": false,
-        "status": "pending"
-      }
-    ]
-  },
+  "runner_id": "runner-dev",
+  "runner_version": "0.1.0",
+  "requested_at": "<iso8601>"
+}
+```
+
+Response with work includes `execution`, top-level `claim_token`, and `poll_after_seconds`.
+
+Response with no work:
+
+```json
+{
+  "execution": null,
   "poll_after_seconds": 5
 }
 ```
 
-**Response — no work**
-
-```json
-{ "execution": null, "poll_after_seconds": 5 }
-```
-
-**Service called:** `executions.services.claim_next_execution(runner_id)`
-
----
-
-### Heartbeat
+## Heartbeat
 
 `POST /api/v1/internal/executions/{execution_id}/heartbeat/`
 
-Updates `last_heartbeat_at` on the execution. Valid only while the execution is
-in `claimed` or `running` status.
-
-**Request**
+Request:
 
 ```json
 {
-  "runner_id": "my-runner-token",
-  "claim_token": "<uuid>"
+  "runner_id": "runner-dev",
+  "claim_token": "<uuid>",
+  "observed_status": "running",
+  "sent_at": "<iso8601>"
 }
 ```
 
-**Response**
-
-```json
-{ "status": "ok" }
-```
-
-**Errors**
-
-| HTTP | Condition |
-|------|-----------|
-| 400 | Runner ID or claim token mismatch |
-| 400 | Execution not in `claimed` or `running` status |
-| 404 | Execution not found |
-
-**Service called:** `executions.services.heartbeat_execution(execution, runner_id, claim_token)`
-
----
-
-### Update step
-
-`POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/update/`
-
-Applies a status transition to one step. Allowed transitions:
-
-- `pending` → `running`
-- `running` → `succeeded`
-- `running` → `failed`
-
-When the first step transitions to `running`, Django automatically moves the
-parent execution from `claimed` to `running` and records `started_at`.
-
-**Request**
+Response:
 
 ```json
 {
-  "runner_id": "my-runner-token",
-  "claim_token": "<uuid>",
+  "execution_id": "<uuid>",
   "status": "running",
-  "started_at": "<iso8601>",
-  "finished_at": null,
-  "exit_code": null,
+  "last_heartbeat_at": "<iso8601>"
+}
+```
+
+## Step Update
+
+`POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/update/`
+
+Service-allowed transitions:
+
+- `pending -> running`
+- `running -> succeeded`
+- `running -> failed`
+
+Response includes `execution_id`, updated `step`, and `execution_status`.
+
+## Complete Execution
+
+`POST /api/v1/internal/executions/{execution_id}/complete/`
+
+Request:
+
+```json
+{
+  "runner_id": "runner-dev",
+  "claim_token": "<uuid>",
+  "final_status": "succeeded",
+  "finished_at": "<iso8601>",
   "error_message": ""
 }
 ```
 
-Fields `started_at`, `finished_at`, `exit_code`, and `error_message` are
-optional. Django defaults timestamps to `now()` when omitted.
-
-**Response** — the updated step in the public `ExecutionStep` shape:
+Response:
 
 ```json
 {
   "id": "<uuid>",
-  "position": 1,
-  "step_key": "s1",
-  "name": "Step 1",
-  "step_type": "manual",
-  "risk_level": "low",
-  "command": "echo hello",
-  "requires_approval": false,
-  "status": "running",
-  "started_at": "<iso8601>",
-  "finished_at": null,
-  "exit_code": null,
-  "error_message": ""
+  "status": "succeeded",
+  "finished_at": "<iso8601>"
 }
 ```
 
-**Errors**
+## Ownership Model
 
-| HTTP | Condition |
-|------|-----------|
-| 400 | Runner ID or claim token mismatch |
-| 400 | Invalid step transition (e.g. `pending` → `succeeded`) |
-| 400 | Step ID not found on this execution |
-| 404 | Execution not found |
-
-**Service called:** `executions.services.update_execution_step(...)`
-
----
-
-### Complete execution
-
-`POST /api/v1/internal/executions/{execution_id}/complete/`
-
-Marks an execution terminal. Valid only while the execution is in `claimed` or
-`running` status.
-
-**Request**
-
-```json
-{
-  "runner_id": "my-runner-token",
-  "claim_token": "<uuid>",
-  "outcome": "succeeded"
-}
-```
-
-`outcome` must be `"succeeded"` or `"failed"`.
-
-**Response** — the full execution detail shape (same as the public `GET /api/v1/executions/{id}/`).
-
-**Errors**
-
-| HTTP | Condition |
-|------|-----------|
-| 400 | Runner ID or claim token mismatch |
-| 400 | Execution not in a completable status |
-| 400 | Invalid outcome value |
-| 404 | Execution not found |
-
-**Service called:** `executions.services.complete_execution(execution, runner_id, claim_token, outcome)`
-
----
-
-## Runner ownership model
-
-When `claim-next` succeeds, Django records:
+When claim-next succeeds, Django records:
 
 | Field | Value |
-|-------|-------|
-| `claimed_by_runner_id` | The `runner_id` from the request |
-| `claim_token` | A freshly generated UUID |
-| `claimed_at` | Timestamp of the claim |
-| `last_heartbeat_at` | Same as `claimed_at` initially |
+| --- | --- |
+| `claimed_by_runner_id` | Request `runner_id`. |
+| `claim_token` | Fresh Django-generated UUID. |
+| `claimed_at` | Claim timestamp. |
+| `last_heartbeat_at` | Initially same as claim timestamp. |
 
-All subsequent internal calls must supply the same `runner_id` and `claim_token`.
-Mismatches return `400`. These fields are internal — they are not exposed on the
-public execution endpoints.
+All later internal mutation calls must supply the matching `runner_id` and `claim_token`.

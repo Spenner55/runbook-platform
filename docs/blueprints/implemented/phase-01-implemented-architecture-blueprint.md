@@ -12,16 +12,20 @@
 | Audit basis | Current repository state, including uncommitted Phase 1-related changes present in the working tree during the audit |
 | Related blueprint dependencies | `phase-01-end-to-end-vertical-slice-blueprint.md`, `phase-02-django-domain-foundation-blueprint.md`, `phase-03-application-service-layer-blueprint.md`, `phase-04-versioned-rest-apis-blueprint.md`, `phase-05-runner-real-flow-blueprint.md`, `phase-06-react-product-slice-blueprint.md`, `phase-07-ai-service-boundary-blueprint.md`, `phase-08-targeted-testing-blueprint.md` |
 
+## Current repo alignment notes
+
+As of 2026-04-27, this implemented snapshot is partially stale. The React product slice now includes real routes, feature API clients, TanStack Query hooks, and page tests. The AI service now has parse tests. Use `docs/architecture/` for current architecture truth and keep this file as a historical implementation audit.
+
 ## 2. Executive Summary
 
 Phase 1 currently delivers a real backend execution slice across Django, PostgreSQL, the runner, and the FastAPI parsing service. Organizations, runbooks, workflows, executions, and execution steps are real persisted models. Public and internal versioned APIs exist under `/api/v1/...`. The runner really polls Django, claims queued executions, updates step status, sends heartbeats, and completes executions. The AI boundary is real in the sense that Django now calls FastAPI over HTTP to create workflow candidates before persisting workflows.
 
-The slice is not fully end-to-end from the product surface yet. The React app in `apps/web` is still a placeholder landing page, so there is no real operator flow in the browser for creating organizations, runbooks, workflows, or executions, and no frontend polling UI for execution progress. The AI behavior is also still stubbed in practice: the FastAPI service uses deterministic parsing in `app/services/workflow_parser.py`, not a provider-backed model workflow. The runner execution path is also intentionally fake: it simulates step work and treats `FAIL_STEP` in a command as a deliberate failure marker.
+The slice now includes a real React product surface for the core local workflow: organizations, runbooks, workflow creation/detail, and execution detail are represented in `apps/web`. The AI behavior is still stubbed in practice: the FastAPI service uses deterministic parsing in `app/services/workflow_parser.py`, not a provider-backed model workflow. The runner execution path is also intentionally fake: it simulates step work and treats `FAIL_STEP` in a command as a deliberate failure marker.
 
 Practical maturity:
 
 - Real now: Django domain model, core service layer, versioned APIs, runner polling and claim flow, execution persistence, internal AI HTTP boundary, targeted Django and runner tests, Docker runtime wiring.
-- Stubbed or incomplete: operator-facing frontend slice, real sandboxed command execution, artifact upload, structured runner logging helpers, AI provider integration, broader error-contract hardening, frontend tests.
+- Stubbed or incomplete: real sandboxed command execution, artifact upload, structured runner logging helpers, AI provider integration, auth/permissions, approvals, policies, audit, artifacts, integrations, and production hardening.
 
 ## 3. End-to-End System Walkthrough
 
@@ -103,9 +107,9 @@ When the runner finishes or hits a failure, it calls `POST /api/v1/internal/exec
 
 ### 3.9 Frontend visibility
 
-Frontend visibility is not truly implemented yet. `apps/web/src/App.tsx` only renders a static “Frontend is running” page. There are no routes, no API client, no React Query usage, no creation forms, and no execution detail polling UI.
+Frontend visibility is implemented for the core local vertical slice. `apps/web` includes React Router routes, a shared Django API client, TanStack Query providers/hooks, feature API modules, creation forms, workflow detail, and execution detail views.
 
-The backend slice can be exercised end to end by tests and APIs, but not yet by the planned operator-facing React flow.
+The product surface still lacks future auth, approvals, policies, audit, artifacts, integrations, and live streaming.
 
 ### 3.10 AI service interaction
 
@@ -125,13 +129,13 @@ What remains stubbed:
 
 ### 3.11 Test coverage
 
-The repo has targeted automated coverage for the implemented backend slice:
+The repo has targeted automated coverage for the implemented slice:
 
 - Django tests cover runbook, workflow, and execution service behavior plus core API contracts.
 - Execution claim tests cover basic queue claim behavior.
 - Runner tests cover poller and executor behavior.
-- There are no frontend tests.
-- There are no AI service tests.
+- Frontend page tests cover route-level behavior.
+- AI tests cover parse route and parser behavior.
 
 During this audit the following runtime checks succeeded:
 
@@ -148,20 +152,23 @@ During this audit the following runtime checks succeeded:
 
 Responsibilities now:
 
-- prove the Vite/React app boots
-- provide a single placeholder page
+- render the core product slice for organizations, runbooks, workflows, and executions
+- call Django public APIs only
+- keep server state in TanStack Query hooks and feature API modules
 
 Entry points:
 
 - `apps/web/src/main.tsx`
-- `apps/web/src/App.tsx`
+- `apps/web/src/app/router.tsx`
+- `apps/web/src/app/AppLayout.tsx`
 
 Key files:
 
 - `apps/web/package.json`
-- `apps/web/src/App.tsx`
 - `apps/web/src/main.tsx`
 - `apps/web/src/index.css`
+- `apps/web/src/features/*`
+- `apps/web/src/routes/*`
 
 Important implementation choices:
 
@@ -501,15 +508,15 @@ What remains stubbed:
 - heartbeat ownership failures and other runner-facing state transitions
 - true concurrent PostgreSQL claim races
 - runner HTTP client contract mapping
-- frontend behavior
+- broader frontend behavior beyond current route/page smoke tests
 
 ## 11. Known Limitations
 
-- The React product slice is still a placeholder, so the vertical slice is not operator-usable through the browser.
+- The React product slice covers the core local vertical slice, but it is still unauthenticated and lacks future expansion features.
 - Execution work is fake and sequential; there is no subprocess, sandbox, or artifact handling.
 - Workflow parsing is deterministic and local; it is not yet real AI orchestration.
-- AI failures are not yet translated into a stable public API error contract.
-- `Workflow.definition_schema_version` is inconsistent between model default (`1.0`) and service-created rows (`workflow.schema.v1`).
+- AI failures are translated to the current Django error envelope, but production-grade retry/observability behavior is still deferred.
+- `Workflow.definition_schema_version` currently defaults to `workflow.schema.v1`.
 - Two workflow schema packages exist with duplicated placeholder JSON schema files.
 - Internal endpoint isolation is structural only; auth and permissions are not implemented.
 - Logging is functional but not structured to the level planned in later blueprints.

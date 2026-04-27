@@ -1,3 +1,11 @@
+"""
+Versioned API route tree.
+
+Public product endpoints are registered on the router. Runner-only endpoints
+stay as explicit `/internal/` paths so their serializers and ownership rules do
+not leak into public viewsets.
+"""
+
 from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 

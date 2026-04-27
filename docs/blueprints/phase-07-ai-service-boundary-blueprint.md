@@ -6,14 +6,18 @@
 | --- | --- |
 | Phase number | 07 |
 | Objective | Add the AI service boundary correctly so workflow creation from a runbook remains a Django-owned flow, while FastAPI stays an internal parsing dependency only. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | In-scope AI use case | Create workflow from runbook. Exactly one AI use case in this phase. |
 | Out of scope | Summary generation, enrichment pipelines, failure summarization, background AI job orchestration, direct frontend-to-FastAPI calls, direct runner-to-FastAPI calls, FastAPI persistence, generalized AI abstraction layers, and multi-use-case AI routing. |
 | Documentation basis reviewed on | 2026-04-01 |
 | Current repo anchors reviewed | `/home/dylan/code/runbook-platform/apps/api`, `/home/dylan/code/runbook-platform/apps/ai`, `/home/dylan/code/runbook-platform/apps/web`, `/home/dylan/code/runbook-platform/apps/runner`, `/home/dylan/code/runbook-platform/.env.example`, `/home/dylan/code/runbook-platform/docker-compose.yml`, `/home/dylan/code/runbook-platform/packages/contracts/workflow/workflow.schema.json`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-03-application-service-layer-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-04-versioned-rest-apis-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-05-runner-real-flow-blueprint.md`. |
-| Current repo state relevant to this phase | `/home/dylan/code/runbook-platform/apps/ai/app/api/routes/parse.py` exposes a placeholder `POST /parse/runbook`; `/home/dylan/code/runbook-platform/apps/ai/app/main.py` also registers `enrich` and `summarize`; `/home/dylan/code/runbook-platform/apps/api/apps/runbooks` exists but has no AI client yet; `/home/dylan/code/runbook-platform/apps/api/requirements/base.txt` does not yet include `httpx`; `/home/dylan/code/runbook-platform/.env.example` already carries `AI_BASE_URL`, `API_BASE_URL`, and `VITE_API_BASE_URL`. |
+| Current repo state relevant to this phase | `POST /parse/runbook` is implemented with Pydantic schemas and deterministic parser tests; Django has an `httpx` AI client boundary; `enrich` and `summarize` routes remain placeholders and are not integrated into Django. |
 
 ## Official Docs Reviewed
+
+## Current repo alignment notes
+
+As of 2026-04-27, the AI service boundary is live for advisory runbook parsing. FastAPI remains stateless and advisory. Provider-backed parsing, enrichment, and failure summarization are still planned/deferred. Current guidance lives in `docs/architecture/ai-service-boundary.md`.
 
 FastAPI:
 

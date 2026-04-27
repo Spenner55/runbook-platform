@@ -1,5 +1,7 @@
 import { buildApiUrl } from './env'
 
+// Frontend HTTP stays behind this Django API client. Do not add direct calls to
+// the FastAPI AI service, runner service, or `/api/v1/internal/` endpoints here.
 type ErrorPayload = Record<string, unknown>
 
 export class ApiError extends Error {

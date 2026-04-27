@@ -6,13 +6,17 @@
 | --- | --- |
 | Phase number | 06 |
 | Objective | Build the first usable React interface for the thin vertical slice so an operator can create and inspect organizations, runbooks, workflows, and executions entirely through Django APIs. |
-| Status | Planned |
+| Status | Implemented; retained as planning blueprint |
 | Primary outputs | App router, minimal app layout, shared Django API client, TanStack Query integration, feature-based frontend structure, page-level containers for the vertical slice, execution-detail polling, and a clear implementation/testing plan. |
 | Dependencies | `/home/dylan/code/runbook-platform/docs/blueprints/phase-02-django-domain-foundation-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-03-application-service-layer-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-04-versioned-rest-apis-blueprint.md`, `/home/dylan/code/runbook-platform/docs/blueprints/phase-05-runner-real-flow-blueprint.md`, and the current Vite app in `/home/dylan/code/runbook-platform/apps/web`. |
 | Frontend runtime baseline in repo | React `19.2.4`, React Router DOM `7.13.2`, TanStack Query `5.95.2`, Vite `8.0.1`, TypeScript `5.9.3` from `/home/dylan/code/runbook-platform/apps/web/package.json`. |
-| Current frontend state | `/home/dylan/code/runbook-platform/apps/web/src/App.tsx` is a placeholder landing page and `/home/dylan/code/runbook-platform/apps/web/src/main.tsx` renders only `App`. |
+| Current frontend state | Implemented route/page slice exists for organizations, runbooks, workflow creation/detail, and execution detail using React Router, TanStack Query, and feature-scoped API modules. |
 | Documentation basis reviewed on | 2026-03-31 |
 | Official docs basis | Latest official docs reviewed first from React, Vite, React Router, and TanStack Query. |
+
+### Current repo alignment notes
+
+As of 2026-04-27, the frontend product slice is no longer a placeholder landing page. Current frontend architecture is documented in `docs/architecture/frontend.md`. Authentication, protected routes, approvals, policies, and live streaming remain future phases.
 
 ### Official Documentation Reviewed
 

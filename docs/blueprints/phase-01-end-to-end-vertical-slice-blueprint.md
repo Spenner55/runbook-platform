@@ -4,6 +4,10 @@ Runbook Platform — Phase 1 Execution Blueprint
 End-to-End Vertical Slice Implementation Plan
 ---------------------------------------------
 
+## Current repo alignment notes
+
+As of 2026-04-27, the core vertical slice described by this blueprint is substantially implemented across Django, runner, AI, and React. Treat this file as historical implementation guidance, not as the current API reference. Current architecture truth lives in `docs/architecture/`, and current API truth lives in `docs/architecture/api-contracts.md`.
+
 ## Purpose
 
 This document defines a step-by-step execution plan to build the first real working slice of the Runbook Platform.
