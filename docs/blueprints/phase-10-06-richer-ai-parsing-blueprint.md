@@ -328,9 +328,42 @@ def _content_hash(raw_content: str) -> str:
     return hashlib.sha256(raw_content.encode()).hexdigest()
 ```
 
-Before calling the AI service, check if `_content_hash(runbook.raw_content)` is in `_PARSE_CACHE`. If it is, skip the LLM call and use the cached definition directly. The cache is per-process and cleared on server restart — this is sufficient for Phase 10.6. Do not add Redis or Postgres-backed caching until measured need.
+Before calling the AI service, check if the composite cache key is in `_PARSE_CACHE`. If it is, skip the LLM call and use the cached definition directly. The cache is per-process and cleared on server restart — this is sufficient for Phase 10.6. Do not add Redis or Postgres-backed caching until measured need.
 
-**Cache invalidation:** The cache key is the content hash. If the runbook's `raw_content` changes, the hash changes and a new LLM call is made. Since the cache key is content-based (not runbook-ID-based), editing a runbook automatically bypasses the cache.
+> **ARCHITECTURE DECISION (C-M02): The cache key must include model version, prompt version, schema version, and organization ID — not raw content hash alone.**
+>
+> A content-hash-only key means:
+> - If `AI_PARSE_MODEL` is upgraded, stale cached output from the old model is served.
+> - If the prompt template is revised (fixing a hallucination), stale cached outputs bypass the fix.
+> - If the workflow schema changes, cached definitions based on the old schema may fail validation.
+> - If org-specific behaviors are introduced (e.g., org-level risk overrides), cross-org cache pollution occurs.
+
+**Composite cache key:**
+```python
+from functools import lru_cache
+
+CURRENT_PROMPT_VERSION = "v1"  # Increment when parse/enrich prompts change
+
+def _cache_key(raw_content: str, org_id: str) -> str:
+    content_hash = hashlib.sha256(raw_content.encode()).hexdigest()
+    schema_hash = _get_schema_hash()  # hash of workflow.schema.json, cached at startup
+    return f"{settings.AI_PARSE_MODEL}:{CURRENT_PROMPT_VERSION}:{schema_hash}:{org_id}:{content_hash}"
+```
+
+The `_PARSE_CACHE` dict is bounded using `functools.lru_cache` or a `collections.OrderedDict` with a max size (e.g., 256 entries). An unbounded dict is a memory leak: long-running workers accumulate entries indefinitely.
+
+```python
+from collections import OrderedDict
+_PARSE_CACHE: OrderedDict[str, dict] = OrderedDict()
+_CACHE_MAX_SIZE = 256
+
+def _cache_put(key: str, value: dict) -> None:
+    _PARSE_CACHE[key] = value
+    if len(_PARSE_CACHE) > _CACHE_MAX_SIZE:
+        _PARSE_CACHE.popitem(last=False)  # evict oldest
+```
+
+**Cache invalidation:** The composite key changes whenever model, prompt version, schema, or org changes. No manual invalidation required.
 
 **Cache scope:** The in-memory cache only prevents re-parsing within a single Django process lifetime. This is acceptable for Phase 10.6. Cross-process caching (multiple Gunicorn workers) is a Phase 10.9 concern.
 
@@ -1409,34 +1442,44 @@ docker compose exec api pytest apps/executions/tests/
 
 **Small steps:**
 
-1. In `complete_execution(...)` (or whichever service function transitions execution to a terminal state), after the state change is committed, call:
+> **ARCHITECTURE DECISION (K-H07): `summarize_execution` must be dispatched via `transaction.on_commit()`, not called inline.**
+>
+> `complete_execution()` runs inside a database transaction. Calling `summarize_execution()` synchronously inside or immediately after that transaction means the runner's `complete_execution` HTTP call blocks for up to `AI_READ_TIMEOUT_SECONDS` (currently 60 seconds) waiting for OpenAI to return a summary. This holds a DB connection and causes the runner to time out. The summary is a non-critical enhancement — it must not extend the critical path.
+
+1. Add a feature flag to `base.py`:
+   ```python
+   AI_SUMMARIZE_ENABLED = env.bool("AI_SUMMARIZE_ENABLED", default=False)
+   ```
+   Default is `False` — summarize is off until measured. Enable explicitly in dev/staging when evaluating the feature.
+
+2. In `complete_execution(...)`, dispatch the summarize call via `transaction.on_commit()` so it runs after the transaction commits and does not block the runner's response:
 
 ```python
-try:
-    client = RunbookAiClient.from_settings()
-    summary = client.summarize_execution(
-        request_id=str(execution.id),
-        workflow_name=execution.workflow.name,
-        execution_status=execution.status,
-        steps=[...],
-        failed_step_name=failed_step.name if failed_step else None,
-        artifact_count=execution.artifacts.count(),
-    )
-    # Store as text artifact using ArtifactService
-    ArtifactService.create_from_text(
-        execution=execution,
-        name="execution_summary.md",
-        content=summary,
-        mime_type="text/plain",
-    )
-except Exception:
-    logger.warning("Execution summary generation failed", exc_info=True)
-    # Do not fail the execution transition on summary error
+if settings.AI_SUMMARIZE_ENABLED:
+    execution_id = str(execution.id)
+    def _dispatch_summarize():
+        try:
+            client = RunbookAiClient.from_settings()
+            summary = client.summarize_execution(
+                request_id=execution_id,
+                workflow_name=execution.workflow.name,
+                execution_status=execution.status,
+                steps=[...],
+                failed_step_name=failed_step.name if failed_step else None,
+                artifact_count=execution.artifacts.count(),
+            )
+            ArtifactService.create_from_text(
+                execution=execution,
+                name="execution_summary.md",
+                content=summary,
+                mime_type="text/plain",
+            )
+        except Exception:
+            logger.warning("Execution summary generation failed", execution_id=execution_id, exc_info=True)
+    transaction.on_commit(_dispatch_summarize)
 ```
 
-2. Wrap in `try/except Exception` because summary generation must never affect execution state. This is the same pattern as integration dispatch.
-
-3. Add service test: `complete_execution()` with mocked AI client calls `summarize_execution()`; summary artifact is created; AI client failure does not propagate.
+3. Add service test: `complete_execution()` with mocked AI client dispatches `summarize_execution()` after commit when `AI_SUMMARIZE_ENABLED=True`; AI client failure does not propagate; when `AI_SUMMARIZE_ENABLED=False`, no AI client call is made.
 
 **Commands:**
 
@@ -1689,8 +1732,14 @@ The Milestone 12 manual gate is required. It is the only test that proves the fu
 **Risk:** Over time, as the LLM provider updates the underlying model, the same prompt produces different output. Existing workflows remain correct (they are already parsed and saved), but new parse requests may produce different step classifications.
 
 **Mitigation:**
-- Pin the model version in `AI_PARSE_MODEL` (e.g., `gpt-4o-2024-11-20`) rather than using a floating alias. This prevents model updates from affecting output without a deliberate prompt review.
-- Golden tests (`@pytest.mark.integration`) can be run against a new model version to evaluate output quality before changing `AI_PARSE_MODEL`.
+> **ARCHITECTURE DECISION (K-L03): `AI_PARSE_MODEL` default must be a pinned dated alias, not a floating alias.**
+>
+> Setting `AI_PARSE_MODEL=gpt-4o` (floating) means that when OpenAI silently upgrades what `gpt-4o` points to, existing prompt templates and golden tests are tested against a different model than production uses. Output changes silently break workflows without a deployment event to blame.
+
+- The default in `config.py` must be `AI_PARSE_MODEL = "gpt-4o-2024-11-20"` (or whatever dated alias is current at implementation time — check OpenAI docs). Never default to a floating alias like `gpt-4o`.
+- When upgrading the model, change the pinned alias explicitly in code, increment `CURRENT_PROMPT_VERSION`, and re-run golden tests against the new alias before merging.
+- Update `.env.example` default to the pinned alias as well.
+- Golden tests (`@pytest.mark.integration`) must be run against the exact model in `AI_PARSE_MODEL` to evaluate output quality before changing the pinned version.
 - Prompts are versioned with the code. Any prompt change requires a PR, a golden test run, and team review.
 
 ### Sensitive data in runbook content sent to the LLM
@@ -1712,6 +1761,73 @@ The Milestone 12 manual gate is required. It is the only test that proves the fu
 - `AI_MAX_INPUT_CHARS = 100,000` (roughly 25,000 tokens) is enforced by Django before calling the AI service.
 - `AI_MAX_COMPLETION_TOKENS = 4096` caps the output token budget per call.
 - Two calls are made per workflow creation (parse + enrich), so total token budget is bounded at approximately `25,000 input + 2 × 4,096 output = ~33,000 tokens per workflow`. At typical OpenAI pricing, this is under $0.50 per parse.
+
+### Pre-auth cost and data-governance controls (H-05)
+
+> **ARCHITECTURE DECISION (H-05): Phase 10.6 introduces real LLM calls before auth (Phase 10.7). Without explicit controls, any user can trigger unbounded OpenAI spend and submit sensitive content to OpenAI without per-org consent.**
+
+**Risk:** Phase 10.6 ships AI parsing before Phase 10.7 adds per-organization opt-in, consent gates, and RBAC. In this window, the following risks are live:
+1. Any authenticated user can parse unlimited runbooks, running up OpenAI costs.
+2. Sensitive runbook content (passwords, API keys, infrastructure topology) is sent to OpenAI without a documented org consent flow.
+3. Production deployments can be publicly exposed before per-org controls exist.
+
+**Mitigations required in Phase 10.6:**
+
+**1. Private-environment guard (`AI_PARSE_REQUIRES_PRIVATE_ENV`)**
+
+Add to `base.py`:
+```python
+AI_PARSE_REQUIRES_PRIVATE_ENV = env.bool("AI_PARSE_REQUIRES_PRIVATE_ENV", default=True)
+```
+In `prod.py` startup validation:
+```python
+if settings.AI_PARSE_REQUIRES_PRIVATE_ENV and not settings.DEBUG:
+    # If private_env is required and DEBUG is off, verify this is a known private deployment.
+    # Use the presence of a DEPLOY_ENV var (e.g., "staging" or "dev") vs absence to gate.
+    deploy_env = env("DEPLOY_ENV", default="")
+    if deploy_env not in {"dev", "staging", "test"}:
+        raise ImproperlyConfigured(
+            "AI_PARSE_REQUIRES_PRIVATE_ENV=True is set but DEPLOY_ENV is not 'dev', 'staging', or 'test'. "
+            "Phase 10.6 must not be enabled in production until Phase 10.7 per-org opt-in is complete. "
+            "Set AI_PARSE_REQUIRES_PRIVATE_ENV=False explicitly to override after Phase 10.7."
+        )
+```
+This prevents accidental production deployment of AI parsing before per-org consent exists.
+
+**2. Per-day cost ceiling (`AI_PARSE_DAILY_BUDGET_USD`)**
+
+Add to `base.py`:
+```python
+AI_PARSE_DAILY_BUDGET_USD = env.float("AI_PARSE_DAILY_BUDGET_USD", default=10.0)
+```
+Before each parse call in `create_workflow_from_runbook()`, check a Django cache key `ai_parse_daily_cost_{date}` against the budget:
+```python
+from django.core.cache import cache
+from django.utils import timezone
+
+today = timezone.now().date().isoformat()
+daily_cost = cache.get(f"ai_parse_daily_cost_{today}", 0.0)
+if settings.AI_PARSE_DAILY_BUDGET_USD > 0 and daily_cost >= settings.AI_PARSE_DAILY_BUDGET_USD:
+    raise AiDailyBudgetExceededError(
+        code="ai_daily_budget_exceeded",
+        message="Daily AI parse budget has been reached. Try again tomorrow.",
+    )
+```
+After a successful parse, increment the cost estimate:
+```python
+estimated_cost = (input_chars / 4) * 0.000005  # rough GPT-4o input token cost
+cache.incr_float(f"ai_parse_daily_cost_{today}", estimated_cost)
+```
+This is a best-effort guard using an in-process cache (Django default cache). Phase 10.7/10.10 may replace with a Redis counter for accuracy across multiple workers.
+
+Surface this as HTTP 429 with `{"error": {"code": "ai_daily_budget_exceeded"}}`.
+
+**3. Phase 10.6 → 10.7 release gate**
+
+The phase-10.6→10.7 handoff checklist must include:
+- [ ] `AI_PARSE_REQUIRES_PRIVATE_ENV` is lifted only after Phase 10.7 per-org opt-in is verified.
+- [ ] A documented decision on data processing agreements with OpenAI for production data.
+- [ ] `AI_PARSE_DAILY_BUDGET_USD` is tuned to a production-appropriate value once real usage data is known.
 
 ### AI service unavailable during execution
 
@@ -1774,7 +1890,9 @@ Phase 10.6 is done when:
 - [ ] `accept_workflow_review()` and `reject_workflow_review()` service functions exist and are covered by tests.
 - [ ] `POST /api/v1/workflows/{id}/accept-review/` and `POST /api/v1/workflows/{id}/reject-review/` endpoints exist and are registered.
 - [ ] Execution creation raises `InvalidStateTransitionError(code="workflow_requires_review")` when the workflow has `requires_review=True`. Covered by test.
-- [ ] `summarize_execution()` is called after execution completes. Summary is stored as a text artifact. Failure does not affect execution state.
+- [ ] `summarize_execution()` is dispatched via `transaction.on_commit()` when `AI_SUMMARIZE_ENABLED=True`. Default is `AI_SUMMARIZE_ENABLED=False`. The summarize call does NOT block the runner's `complete_execution` HTTP call. Failure does not affect execution state.
+- [ ] `AI_PARSE_REQUIRES_PRIVATE_ENV=True` is the default. Production startup raises `ImproperlyConfigured` when `DEPLOY_ENV` is not a known private/staging value, blocking accidental production deployment before Phase 10.7 per-org opt-in.
+- [ ] `AI_PARSE_DAILY_BUDGET_USD=10.0` is the default. Parse calls return HTTP 429 with `{"error": {"code": "ai_daily_budget_exceeded"}}` when the daily cost estimate is exceeded.
 - [ ] All AI service unit tests pass without real LLM calls (deterministic fallback).
 - [ ] All Django AI client tests pass with `httpx.MockTransport`.
 - [ ] All Django service tests (parse→enrich pipeline, review acceptance, rejection, execution guard) pass.

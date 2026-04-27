@@ -224,7 +224,9 @@ Recommended constraints:
 
 Do not enforce uniqueness on audit events. Retried operations and repeated state transitions can legitimately create multiple events with the same object and event type at different times.
 
-### 5.5 Immutability rules
+### 5.5 Application-level append-only guarantees
+
+These are **application-level** guarantees only. They do not protect against direct database modifications by users with superuser or DBA credentials. See the trust boundary note below.
 
 Application-level rules:
 
@@ -249,10 +251,33 @@ Admin read-only behavior:
 - `has_delete_permission()` returns `False`.
 - `has_module_permission()` can remain default so staff can find the audit area.
 
-Database-level immutability:
+Database-level controls (v1 minimum):
 
 - Do not add triggers in Phase 10.3. They complicate migrations and tests.
 - Do not add separate append-only storage. The service and model/admin guardrails are sufficient for this phase.
+- The production database application role (used by Django) **MUST NOT** be granted `UPDATE` or `DELETE` on the `audit_auditevent` table. Grant only `INSERT` and `SELECT`. This is enforced by the production DB setup in Phase 10.9/10.10.
+- PITR (point-in-time recovery) backup retention must be configured before this audit trail is used for compliance or incident investigation.
+
+**Trust boundary:** Application-level append-only means that no application code path can modify or delete audit records. It does NOT mean that the records are tamper-proof against: a database superuser with direct SQL access, an accidental `django_migrations` rollback that truncates tables, or a backup/restore that overwrites data. If compliance requirements later demand stronger guarantees, consider an append-only Postgres role, a hash-chain, or export to an external WORM (write-once-read-many) archive. That is deferred to Phase 11+.
+
+**Ordering rule for audit vs external effects:** `AuditService.emit(...)` MUST be called inside the same `transaction.atomic()` block as the domain mutation it records. External-effect dispatchers (such as integration notifications) MUST be scheduled via `transaction.on_commit()`, not called inline in the same transaction. This keeps audit writes atomic with the domain change while ensuring external calls never hold the transaction open waiting for a remote HTTP response.
+
+```python
+with transaction.atomic():
+    execution.status = "failed"
+    execution.save(update_fields=["status"])
+    AuditService.emit(                              # in-transaction
+        event_type="execution.failed",
+        object_id=execution.id,
+        ...
+    )
+    transaction.on_commit(
+        lambda: IntegrationService.notify(          # after-commit, never inside tx
+            event_type="execution.failed",
+            context=...,
+        )
+    )
+```
 
 ---
 

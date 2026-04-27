@@ -151,6 +151,7 @@ The following invariants from the platform roadmap apply in full. Each has a spe
 
 **`base.py` (minimal additions):**
 - Add `RequestIDMiddleware` to `MIDDLEWARE` (between SecurityMiddleware and CorsMiddleware)
+- Add `csp.middleware.CSPMiddleware` to `MIDDLEWARE` — **required**: without this middleware registered, all `CSP_*` settings in `prod.py` are silently no-ops; no `Content-Security-Policy` header is emitted. Place it after `SecurityMiddleware`.
 - Add `structlog` to `INSTALLED_APPS` if required
 - Add `django_prometheus` to `INSTALLED_APPS`
 - Logging configuration pointing to `structlog` processor chain (dev: pretty console, prod: JSON)
@@ -219,6 +220,7 @@ The following invariants from the platform roadmap apply in full. Each has a spe
 - `structlog>=24.0,<25.0`
 - `django-prometheus>=0.3,<1.0`
 - `django-ratelimit>=4.1,<5.0`
+- `django-csp>=3.7,<4.0` — required to emit `Content-Security-Policy` response headers. Without this package installed, the `CSP_*` settings in `prod.py` are silently ignored because no middleware reads them.
 - `uvicorn[standard]>=0.29,<1.0` (if not already added in Phase 10.8)
 
 **`prod.txt` (complete rewrite):**
@@ -235,7 +237,7 @@ Note: `psycopg[binary]` is already in `base.txt`. `PgBouncer` is a separate Dock
 - Update `api` service to connect to PgBouncer (port 5432 on the `pgbouncer` service) instead of Postgres directly.
 - Add `stop_grace_period: 90s` to the `runner` service (must be longer than the 60-second SIGTERM hard timeout).
 - Add `stop_signal: SIGTERM` explicitly to the `runner` service (Docker default is SIGTERM, but making it explicit documents the intent).
-- Add a healthcheck to the `api` service: `test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]`.
+- Add a healthcheck to the `api` service: `test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready/"]`. Use `/health/ready/` (DB-only check), not `/health/` (which also checks the AI service — AI being down must not fail the Django container healthcheck).
 - Add a healthcheck to the `ai` service: `test: ["CMD", "curl", "-f", "http://localhost:8001/health"]`.
 
 ### `.env.example` (additions)
@@ -365,10 +367,28 @@ Both emit standard Prometheus text format at their respective `/metrics` endpoin
 | `ai_summarize_request_duration_seconds` | Histogram | `outcome` | `/summarize` route |
 | `ai_llm_tokens_used_total` | Counter | `route`, `token_type` (prompt/completion) | LLM client wrapper |
 
-**Metrics access control:** In production, the `/metrics` endpoint should not be publicly accessible. Options:
-1. Require `Authorization: Bearer <PROMETHEUS_METRICS_TOKEN>` on `/metrics/` (simple, correct for Phase 10.9).
-2. Restrict by network (only allow requests from within the VPC — Phase 10.10 concern).
-For Phase 10.9, implement option 1: a `PrometheusMetricsPermission` class that checks the token if `PROMETHEUS_METRICS_TOKEN` is set in the environment; allow all if not set (dev mode).
+**Metrics access control:** In production, the `/metrics/` endpoint must not be publicly accessible. It exposes execution counts, latency distributions, and organization-level activity patterns.
+
+> **ARCHITECTURE DECISION (H-08): Metrics fail-closed in production.**
+>
+> The `PrometheusMetricsPermission` class must fail-closed, not fail-open. If `PROMETHEUS_METRICS_ENABLED=True` and `PROMETHEUS_METRICS_TOKEN` is empty or unset, startup must raise `ImproperlyConfigured` — not silently serve metrics to the world. Dev mode (`DEBUG=True`) may skip the check.
+
+Implementation:
+1. Add to the startup validation in `prod.py` (alongside `_require_env` checks):
+   ```python
+   if env.bool("PROMETHEUS_METRICS_ENABLED", default=False):
+       _require_env("PROMETHEUS_METRICS_TOKEN")  # raises ImproperlyConfigured if missing
+   ```
+2. Implement `PrometheusMetricsPermission` to check `Authorization: Bearer <PROMETHEUS_METRICS_TOKEN>` on every request to `/metrics/`. Return 403 if token is missing or wrong.
+3. In `dev.py`, `PROMETHEUS_METRICS_ENABLED = False` (metrics off by default in local dev; enable explicitly when needed).
+
+Add to `.env.example`:
+```
+PROMETHEUS_METRICS_ENABLED=false
+PROMETHEUS_METRICS_TOKEN=
+```
+
+Phase 10.10 (network-level VPC restriction) is a defense-in-depth addition, not a replacement for the token check. Both controls should be active in production.
 
 ### 5.4 Traces
 
@@ -385,7 +405,7 @@ Every inter-service HTTP call must have an explicit timeout. No call may use the
 | Call direction | Client | Connect timeout | Read timeout | Write timeout | Total |
 |---|---|---|---|---|---|
 | Django → AI service | `httpx.AsyncClient` | `AI_CONNECT_TIMEOUT_SECONDS` (default: 1.0s) | `AI_READ_TIMEOUT_SECONDS` (default: 20.0s) | `AI_WRITE_TIMEOUT_SECONDS` (default: 5.0s) | N/A |
-| Django → integrations (Slack, PagerDuty) | `httpx.AsyncClient` | 3.0s | 3.0s | 3.0s | 9.0s |
+| Django → integrations (Slack, PagerDuty) | `httpx.Client` (sync — Phase 10.5 uses synchronous Django views; see M-04) | 3.0s | 3.0s | 3.0s | 9.0s |
 | Runner → Django internal API | `httpx.Client` | 5.0s | 30.0s | 10.0s | N/A |
 
 These values already exist for the Django → AI direction (configured in `base.py`). The integration and runner timeouts must be explicitly set and documented in `.env.example`.
@@ -421,12 +441,61 @@ Rationale for runner's 30-second read timeout: the `claim-next` response is fast
 
 **Important:** The watchdog must not compete with a live runner. `select_for_update(skip_locked=True)` ensures that if a live runner is currently updating a step on an execution, the watchdog skips that execution. The runner's heartbeat timestamp will be updated before the watchdog's 300-second window expires.
 
+### 6.3.1 Watchdog: expired approval recovery (K-M07)
+
+**Problem:** If a human approver never acts on an `ApprovalRequest` and it passes its `expires_at` deadline, the execution remains blocked on `wait_for_approval` indefinitely — no runner crash, no stale heartbeat. The stuck-execution watchdog in §6.3 does not detect this case because the execution may have a live heartbeat from a runner that is correctly waiting.
+
+**Solution:** A second sweep function `recover_expired_approvals()` that runs in the same `check_stuck_executions` management command:
+1. Queries for `ApprovalRequest` rows in `pending` status where `expires_at < now()`.
+2. For each expired approval (using `select_for_update(skip_locked=True)`):
+   - Sets `ApprovalRequest.status = "timed_out"` with `decided_at = now()`, `decided_by_label = "watchdog"`.
+   - Emits an audit event: `approval.timeout`.
+   - Finds the blocked execution and sets it to `failed` with `error_message = "Execution failed: approval request timed out"`.
+   - Emits an audit event: `execution.approval_timeout`.
+   - Logs a structured warning including `approval_id`, `execution_id`, `expires_at`.
+3. Returns a count of expired approvals resolved.
+
+**Prerequisite:** Phase 10.1 must add an `expires_at` field on `ApprovalRequest` and populate it from a configurable `APPROVAL_TIMEOUT_SECONDS` setting (default: `None` for no timeout). Phase 10.9's watchdog management command is the consumer of that field — the command must gracefully skip the sweep if `ApprovalRequest` does not have an `expires_at` column (use `hasattr` check or Django `check` framework, not a hard import-time dependency).
+
+**Scheduling:** Same ECS scheduled task as the stuck-execution watchdog — run both sweeps in a single management command invocation. Update `check_stuck_executions` to also call `recover_expired_approvals()`.
+
 ### 6.4 Health check endpoints
 
-**Django `/health/` (detailed):**
+> **ARCHITECTURE DECISION (H-02): Split health endpoints — ALB must never use the AI-dependency check.**
+>
+> The Django API exposes three distinct health endpoints. The AI service being unreachable must not cause the ALB to mark Django API containers as unhealthy. Coupling ALB target health to an external dependency means a transient AI service outage takes the entire API out of the load balancer rotation — which is far worse than serving partial functionality.
+
+**Three-endpoint model:**
+
+| Endpoint | Checks | Used by | Returns 503 when |
+|---|---|---|---|
+| `GET /health/live` | None (process up = healthy) | Internal watchdog, docs | Never (if process is dead, no response is returned) |
+| `GET /health/ready/` | DB connection only | **ALB target health check, docker-compose healthcheck** | Database is unreachable |
+| `GET /health/` | DB + AI service | Operations/ops dashboards only | DB or AI is unhealthy |
+
+**Django `GET /health/live` (liveness):**
+Returns immediately with no I/O. Proves the Django process is alive and accepting requests.
+```json
+{"status": "live", "service": "api"}
+```
+Always HTTP 200. No database or AI service call.
+
+**Django `GET /health/ready/` (readiness — ALB-facing):**
+Checks only that the database is reachable and migrations are current. Used by the ALB target group health check and the docker-compose healthcheck.
+```json
+{"status": "ready", "checks": {"database": {"status": "healthy", "latency_ms": 3}}}
+```
+HTTP 200 when database is reachable and migrations are current. HTTP 503 if database is unreachable or unapplied migrations exist.
+
+The database check calls `connection.ensure_connection()` then `cursor.execute("SELECT 1")` with a 2-second timeout. Migrations check calls `django.core.management.call_command("migrate", "--check")`.
+
+**INVARIANT:** The ALB target health check and the docker-compose healthcheck MUST use `/health/ready/`. They MUST NOT use `/health/`. An AI service outage must not remove the Django API from the load balancer rotation.
+
+**Django `GET /health/` (dependency health — informational only):**
+Checks DB + AI service. Used by operators and monitoring dashboards only — never by ALB or docker-compose.
 ```json
 {
-  "status": "healthy",
+  "status": "healthy" | "unhealthy",
   "service": "api",
   "version": "1.0.0",
   "timestamp": "2026-04-24T12:00:00Z",
@@ -436,26 +505,9 @@ Rationale for runner's 30-second read timeout: the `claim-next` response is fast
   }
 }
 ```
+HTTP 200 when all checks pass. HTTP 503 if any check fails. Both checks run concurrently using `asyncio.gather` (async view). The AI service check calls `httpx.AsyncClient().get(settings.AI_BASE_URL + "/health", timeout=2.0)`.
 
-If any check fails:
-```json
-{
-  "status": "unhealthy",
-  "checks": {
-    "database": {"status": "unhealthy", "error": "connection refused"},
-    "ai_service": {"status": "healthy", "latency_ms": 45}
-  }
-}
-```
-
-HTTP 200 when healthy, HTTP 503 when unhealthy.
-
-The database check runs `connection.ensure_connection()` and `connection.cursor().execute("SELECT 1")` with a 2-second timeout. The AI service check runs `httpx.get(settings.AI_BASE_URL + "/health", timeout=2.0)`. Both checks run concurrently using `asyncio.gather` (make the view async).
-
-**Django `/health/ready/` (readiness, new):**
-A simpler readiness probe that only checks whether the database migrations are applied (call `django.core.management.call_command("migrate", "--check")`). Returns 200 if migrations are current, 503 if not. Used by ECS task definition's health check during rolling deploys — a new container should not receive traffic if migrations haven't been applied.
-
-**AI service `/health` (improved):**
+**AI service `GET /health` (improved):**
 Returns `{"status": "ok" | "degraded", "service": "ai", "checks": {"openai": "ok" | "unreachable"}}`. Always HTTP 200 (the AI service itself is up; dependency state is informational).
 
 **Runner (no HTTP health endpoint):**
@@ -600,6 +652,8 @@ CSP_FONT_SRC = ("'self'",)
 CSP_CONNECT_SRC = ("'self'",)
 CSP_FRAME_ANCESTORS = ("'none'",)
 ```
+
+**IMPORTANT:** The `CSP_*` settings above are read by `django-csp`'s middleware. They have no effect unless `csp.middleware.CSPMiddleware` is registered in `MIDDLEWARE` (documented in §4 `base.py` additions). Verify with a response header test — see §11 test suite.
 
 Note: CSP is initially permissive on `style-src` because Vite production builds may inline critical CSS. Tighten to `'nonce-...'` in Phase 10.10 once the exact requirements are known.
 
@@ -910,35 +964,50 @@ make logs | grep -A5 "parse"
 
 ### Milestone 3 — Expanded health and readiness endpoints
 
-**Purpose:** Make Django's `/health/` endpoint actually test its dependencies, and add a `/health/ready/` readiness probe.
+**Purpose:** Split Django health into three endpoints so the ALB target health check never depends on AI service availability. See §6.4 for endpoint contract.
 
 **Files touched:**
 - `apps/api/apps/common/health.py` (new)
-- `apps/api/config/urls.py` — replace simple `health` function with `detailed_health_view`; add `/health/ready/`
+- `apps/api/config/urls.py` — add `live_view`, replace simple `health` function with `detailed_health_view`, add `readiness_view` at `/health/ready/`
 
 **Steps:**
-1. Create `apps/api/apps/common/health.py` with an async `detailed_health_view` that:
-   - Checks DB: `await sync_to_async(connection.ensure_connection)()` then `await sync_to_async(connection.cursor().execute)("SELECT 1")`. Record latency.
-   - Checks AI service: `async with httpx.AsyncClient() as client: await client.get(settings.AI_BASE_URL + "/health", timeout=2.0)`. Record latency.
-   - Returns HTTP 200 + JSON if all checks pass.
-   - Returns HTTP 503 + JSON if any check fails.
-2. Update `apps/api/config/urls.py` to import and use `detailed_health_view`.
-3. Add a simple `readiness_view` that calls `django.db.connection.ensure_connection()` only (no AI service check — readiness is just "am I up and can I hit the DB").
+1. Create `apps/api/apps/common/health.py` with three views:
+   - `live_view` (sync, no I/O): returns `{"status": "live", "service": "api"}` with HTTP 200.
+   - `readiness_view` (sync): runs `connection.ensure_connection()` + `cursor.execute("SELECT 1")` with a 2-second timeout, then `call_command("migrate", "--check")`. Returns `{"status": "ready", "checks": {"database": {"status": "healthy", "latency_ms": N}}}` HTTP 200, or `{"status": "not_ready", ...}` HTTP 503.
+   - `detailed_health_view` (async): runs DB check + AI service check concurrently via `asyncio.gather`. Returns HTTP 200 if all pass, HTTP 503 if any fail. See §6.4 for full JSON shape.
+2. Update `apps/api/config/urls.py`:
+   ```python
+   path("health/live", live_view),
+   path("health/ready/", readiness_view),
+   path("health/", detailed_health_view),
+   ```
+3. Update `docker-compose.yml` API healthcheck to use `/health/ready/` (done in the docker-compose additions above in §5).
 
 **Verification:**
 ```bash
+curl -s http://localhost:8000/health/live
+# Expect: {"status": "live", "service": "api"}
+curl -s http://localhost:8000/health/ready/ | python3 -m json.tool
+# Expect: {"status": "ready", "checks": {"database": {"status": "healthy", ...}}}
 curl -s http://localhost:8000/health/ | python3 -m json.tool
 # Expect: {"status": "healthy", "checks": {"database": {...}, "ai_service": {...}}}
-curl -s http://localhost:8000/health/ready/
-# Expect: 200
-# Now stop the postgres container:
-docker compose stop postgres
+
+# Stop AI service; confirm readiness still returns 200 (DB-only):
+docker compose stop ai
+curl -s http://localhost:8000/health/ready/ -o /dev/null -w "%{http_code}"
+# Expect: 200  <-- AI being down must NOT fail the readiness probe
 curl -s http://localhost:8000/health/ -o /dev/null -w "%{http_code}"
+# Expect: 503  <-- detailed health correctly reflects AI is down
+docker compose start ai
+
+# Stop postgres; confirm readiness returns 503:
+docker compose stop postgres
+curl -s http://localhost:8000/health/ready/ -o /dev/null -w "%{http_code}"
 # Expect: 503
 docker compose start postgres
 ```
 
-**Human approval gate:** Confirm 503 when database is down, 200 when healthy.
+**Human approval gate:** Confirm: (1) `/health/ready/` returns 200 when AI is down but DB is up. (2) `/health/ready/` returns 503 when DB is down. (3) `/health/` returns 503 when AI is down.
 
 ---
 
@@ -1232,10 +1301,13 @@ except Exception as exc:
 - `test_request_id_in_response_header` — confirm header name is `X-Request-ID`.
 
 **Health endpoint tests (`apps/api/apps/common/tests/test_health.py`):**
-- `test_health_returns_200_when_all_checks_pass` — mock DB check and AI service check both succeed; assert HTTP 200 and `"status": "healthy"`.
-- `test_health_returns_503_when_db_down` — mock DB check raises exception; assert HTTP 503 and `"database": {"status": "unhealthy"}`.
-- `test_health_returns_503_when_ai_service_down` — mock `httpx.get` to AI service raises `httpx.ConnectError`; assert HTTP 503.
-- `test_readiness_returns_200` — DB available; assert HTTP 200.
+- `test_live_always_returns_200` — assert `GET /health/live` returns HTTP 200 with no mocking required.
+- `test_readiness_returns_200_when_db_healthy` — mock DB check succeeds; assert `GET /health/ready/` returns HTTP 200 and `"status": "ready"`.
+- `test_readiness_returns_503_when_db_down` — mock DB check raises exception; assert `GET /health/ready/` returns HTTP 503.
+- `test_readiness_returns_200_when_ai_service_down` — mock DB check succeeds, mock AI service raises `httpx.ConnectError`; assert `GET /health/ready/` returns **HTTP 200**. This is the critical ALB-decoupling test: AI service outage must not fail the readiness probe.
+- `test_health_returns_200_when_all_checks_pass` — mock DB check and AI service check both succeed; assert `GET /health/` returns HTTP 200 and `"status": "healthy"`.
+- `test_health_returns_503_when_db_down` — mock DB check raises exception; assert `GET /health/` returns HTTP 503 and `"database": {"status": "unhealthy"}`.
+- `test_health_returns_503_when_ai_service_down` — mock AI service check raises `httpx.ConnectError`; assert `GET /health/` returns HTTP 503.
 
 **Watchdog tests (`apps/api/apps/executions/tests/test_watchdog.py`):**
 - `test_recover_execution_with_stale_heartbeat` — see Milestone 8.
@@ -1244,9 +1316,17 @@ except Exception as exc:
 - `test_watchdog_emits_audit_event` — if audit app is active, assert `AuditEvent` with `event_type="execution.watchdog_recovery"` is created.
 - `test_watchdog_handles_empty_table` — no executions; returns empty list without error.
 
+**Security header tests (`apps/api/apps/common/tests/test_security_headers.py`):**
+- `test_csp_header_present_in_response` — with `DJANGO_SETTINGS_MODULE=config.settings.prod` overrides active, make any authenticated GET; assert response has `Content-Security-Policy` header containing `default-src 'self'`. This test confirms `csp.middleware.CSPMiddleware` is registered and `django-csp` is installed — without both, the header is absent.
+- `test_x_frame_options_deny` — assert response has `X-Frame-Options: DENY`.
+- `test_referrer_policy_present` — assert response has `Referrer-Policy: strict-origin-when-cross-origin`.
+
 **Metrics tests (`apps/api/apps/executions/tests/test_metrics.py`):**
 - `test_execution_counter_increments_on_completion` — mock `prometheus_client.Counter`; call `complete_execution`; assert counter was incremented.
 - `test_step_histogram_records_duration` — mock histogram; call `update_execution_step` with `succeeded`; assert histogram observed a positive duration.
+- `test_metrics_endpoint_returns_403_without_token` — set `PROMETHEUS_METRICS_ENABLED=True` and `PROMETHEUS_METRICS_TOKEN=secret`; call `GET /metrics/` without Authorization header; assert HTTP 403.
+- `test_metrics_endpoint_returns_200_with_valid_token` — same setup; call with `Authorization: Bearer secret`; assert HTTP 200.
+- `test_metrics_startup_fails_if_token_missing_when_enabled` — simulate prod settings with `PROMETHEUS_METRICS_ENABLED=True` and empty `PROMETHEUS_METRICS_TOKEN`; assert `ImproperlyConfigured` is raised at settings load time.
 
 **Production settings check (CI only, not a pytest test):**
 - Run `manage.py check --deploy` in CI as described in Milestone 6.
@@ -1459,12 +1539,18 @@ Phase 10.9 is complete when all of the following are true:
 - [ ] `structlog` is configured in all three Python services (Django, runner, AI). Log output is structured JSON (production) or colored text (development).
 - [ ] `RequestIDMiddleware` generates `X-Request-ID` on every Django request and includes it in the response header.
 - [ ] The same `X-Request-ID` appears in Django logs and AI service logs for a single parse operation. Verified via `make logs`.
-- [ ] Django `GET /health/` tests the database connection and AI service reachability. Returns HTTP 503 when either dependency is down.
-- [ ] Django `GET /health/ready/` returns HTTP 200 when migrations are current.
+- [ ] Django `GET /health/live` returns HTTP 200 unconditionally (process liveness).
+- [ ] Django `GET /health/ready/` checks DB connection and migrations only. Returns HTTP 200 when database is reachable. Returns HTTP 200 even when the AI service is unreachable (ALB-decoupling invariant).
+- [ ] Django `GET /health/` (dependency health) checks DB + AI service. Returns HTTP 503 when either is down. Used by ops dashboards only — never by ALB or docker-compose healthcheck.
+- [ ] `docker-compose.yml` api service healthcheck uses `/health/ready/`, not `/health/`.
+- [ ] Test `test_readiness_returns_200_when_ai_service_down` passes — confirms ALB does not remove API containers from rotation when AI is down.
 - [ ] `GET /metrics/` returns Prometheus-format metrics including `runbook_executions_total`, `runbook_step_duration_seconds`, and standard `django_http_requests_total_*`.
 - [ ] AI service `GET /metrics` returns Prometheus-format metrics.
 - [ ] PgBouncer is running in docker-compose in transaction pooling mode. `pg_stat_activity` shows ≤ `PGBOUNCER_POOL_SIZE` connections from PgBouncer to Postgres when 50 concurrent API requests are in flight.
 - [ ] `apps/api/config/settings/prod.py` includes HSTS, CSP, X-Frame-Options, Referrer-Policy, `SECURE_SSL_REDIRECT = True`, `SESSION_COOKIE_SECURE = True`, `CSRF_COOKIE_SECURE = True`.
+- [ ] `django-csp>=3.7` is in `apps/api/requirements/base.txt` and `csp.middleware.CSPMiddleware` is registered in `MIDDLEWARE`. Verified by `test_csp_header_present_in_response` — response includes `Content-Security-Policy` header.
+- [ ] If `PROMETHEUS_METRICS_ENABLED=True`, Django startup raises `ImproperlyConfigured` when `PROMETHEUS_METRICS_TOKEN` is empty. Metrics endpoint fails-closed, not fails-open.
+- [ ] `GET /metrics/` returns HTTP 403 without a valid `Authorization: Bearer` token when `PROMETHEUS_METRICS_ENABLED=True`.
 - [ ] `manage.py check --deploy` with `DJANGO_SETTINGS_MODULE=config.settings.prod` reports zero issues. Confirmed in CI.
 - [ ] `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS` in `prod.py` are read from environment variables — no hardcoded values.
 - [ ] Startup validation in `prod.py` raises `ImproperlyConfigured` if `DJANGO_SECRET_KEY`, `DATABASE_URL`, or `RUNNER_REGISTRATION_TOKEN` is missing or is `"change-me"`.

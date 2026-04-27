@@ -266,6 +266,30 @@ Phase 10.4 should not expose artifact deletion.
 
 If later phases allow deletion, deletion must be audited and must remove or tombstone storage bytes consistently. Do not design that engine now.
 
+### 5.6 Canonical artifact creation ordering (K-M08)
+
+> **ARCHITECTURE DECISION (K-M08): Storage write BEFORE DB row creation. This is the canonical order. Remove any conflicting language.**
+
+The risk-table entries in §13 contain self-conflicting guidance on storage-write vs. DB-create ordering. This section is the authoritative definition.
+
+**Canonical sequence for `ArtifactService.create_from_runner_upload()`:**
+
+```
+1. Generate artifact UUID and derive storage_key from (organization_id, execution_id, artifact_uuid).
+2. Validate size, mime type, name, and quota (fail fast before any I/O).
+3. Write bytes to storage backend (local or S3).
+   → If storage write fails: raise; no DB row created; no cleanup needed.
+4. Create the Artifact DB row with upload_status="available" inside transaction.atomic().
+   → If DB create fails: attempt best-effort storage delete (log failure if delete fails, but do not raise).
+5. Return the created Artifact row.
+```
+
+**Why storage first:** If the DB row is created first (`upload_status="pending"`) and the storage write then fails, you have a persistent `failed` DB row that requires cleanup and complicates the "available" invariant. Starting with storage avoids the orphan-row problem and keeps `upload_status` values simple (`available` only — `failed` rows should not exist in steady state).
+
+**`upload_status="failed"` is not a normal state.** It exists only as a safety net if the service layer is extended later. In Phase 10.4, the only values created by service code are `"available"`. If the §13 risk table mentions `failed` rows as a routine outcome, that text is incorrect — remove it.
+
+**Quota check ordering:** Size and execution-level quota checks must happen in step 2, BEFORE the storage write. Rejecting after storage write wastes bandwidth and requires storage cleanup.
+
 ---
 
 ## 6. Storage contracts: local dev, production-ready abstraction, storage key format
@@ -356,14 +380,34 @@ Rules:
 
 ### 6.5 File size limits
 
-Start with a hard upload limit of 50 MB per artifact.
+> **ARCHITECTURE DECISION (C-M01): Per-execution total bytes quota is mandatory, not conditional. Runner-level daily bytes limit is also required.**
+>
+> A per-artifact limit without a per-execution total allows a runner to upload 10 artifacts × 50 MB = 500 MB per execution, multiplied by however many executions run concurrently. Pre-auth (Phases 10.1–10.6), runner identity is the only abuse axis. Both per-execution and per-runner-per-day limits must be enforced.
 
-Recommended constants:
+**Mandatory constants (must be in `base.py` and `.env.example`):**
 
-- `ARTIFACT_MAX_UPLOAD_BYTES=52428800`
-- `ARTIFACT_MAX_ARTIFACTS_PER_STEP=10`
-- `ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION=250 MB`, enforced only if simple to implement without expensive aggregation
+- `ARTIFACT_MAX_UPLOAD_BYTES=52428800` (50 MB per artifact)
+- `ARTIFACT_MAX_ARTIFACTS_PER_STEP=10` (per step)
+- `ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION=262144000` (250 MB per execution, **mandatory** — not conditional)
+- `ARTIFACT_DAILY_BYTES_PER_RUNNER=1073741824` (1 GB per runner per calendar day, enforced via Django cache counter)
 - stdout/stderr capture limit per stream: 5 MB by default, with truncation metadata
+
+**Per-execution quota implementation:**
+Before creating the artifact DB row (step 4 of §5.6 canonical sequence), aggregate:
+```python
+existing_bytes = execution.artifacts.filter(upload_status="available").aggregate(
+    total=models.Sum("size_bytes")
+)["total"] or 0
+if existing_bytes + size_bytes > settings.ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION:
+    raise DomainValidationError(
+        code="artifact_execution_quota_exceeded",
+        message=f"Upload would exceed per-execution quota of {settings.ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION} bytes.",
+    )
+```
+This query is a single `SUM` on an indexed column (`execution_id`, `upload_status`) — it is fast.
+
+**Per-runner daily bytes implementation:**
+Use a Django cache key `artifact_daily_bytes_{runner_id}_{date}` (TTL: 48 hours). Increment before each upload; reject if the projected total would exceed `ARTIFACT_DAILY_BYTES_PER_RUNNER`.
 
 Why hard limits matter:
 
@@ -1454,21 +1498,20 @@ Risk: Orphaned object remains in storage.
 
 Mitigations:
 
-- Generate artifact ID and storage key first.
-- Save storage, then create DB row in a transaction.
-- On DB failure, attempt best-effort storage delete.
-- Log cleanup failure.
+- Generate artifact ID and storage key first (see §5.6 canonical ordering).
+- Write storage first, then create DB row in a transaction (see §5.6).
+- On DB failure after storage write, attempt best-effort storage delete and log failure.
 - Do not add background cleanup job in this phase.
 
 ### DB write succeeds but storage write fails
 
 Risk: Artifact metadata points to missing bytes.
 
-Mitigations:
+Mitigation (see §5.6 canonical ordering):
 
-- Prefer storage write before DB create.
-- If status rows are needed, create as `failed` only with explicit service handling.
-- Public listing should show only `available` artifacts.
+- Storage write comes BEFORE DB row creation. If storage fails, no DB row is created and no cleanup is needed.
+- `upload_status="failed"` DB rows should not exist in Phase 10.4. The service only creates `"available"` rows after a confirmed storage write.
+- Public listing filters on `upload_status="available"` as defense-in-depth.
 
 ### Checksum mismatch
 

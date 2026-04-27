@@ -250,7 +250,7 @@ Add operator-facing runbooks under `docs/runbooks/` during implementation:
 | Platform component | AWS target | Network exposure | Notes |
 |---|---|---|---|
 | Web frontend | ECS Fargate service behind public ALB listener, optionally fronted by CloudFront later | Public HTTPS | Serves built static assets. Browser calls Django public API only. |
-| Django API | ECS Fargate service behind public ALB listener | Public HTTPS for `/api/v1/...`, `/health/`; internal access for runner | Control plane, auth, authorization, persistence, orchestration, audit, and state transitions. |
+| Django API | ECS Fargate service behind public ALB listener | Public HTTPS for `/api/v1/...`, `/health/ready/`, `/health/`; `/api/v1/internal/` must not be reachable from internet (see ALB routing, H-01) | Control plane, auth, authorization, persistence, orchestration, audit, and state transitions. |
 | AI service | ECS Fargate service behind internal ALB or service discovery | Private only | Stateless advisory service called by Django only. |
 | Runner | ECS Fargate service, no load balancer | Private outbound to Django internal API | Polls/claims work from Django, one execution per runner process unless app design later changes. |
 | Postgres | Amazon RDS for PostgreSQL, Multi-AZ in production | Private only | Application connects through RDS endpoint or RDS Proxy. No public accessibility. |
@@ -310,16 +310,38 @@ Preferred initial routing:
 - HTTP redirects to HTTPS.
 - Health checks:
   - Web target group: `/health` or static server health endpoint.
-  - API target group: `/health/`.
+  - API target group: `/health/ready/` (**not** `/health/` — the detailed endpoint checks the AI service and would remove API containers from rotation during AI outages; `ready` checks DB only).
   - AI internal target group, if using internal ALB: `/health`.
 
-Do not expose internal runner endpoints publicly if avoidable. If public API and internal API share one Django service, protect `/api/v1/internal/` with Django runner authentication and optionally ALB rules/security restrictions for runner-originating private traffic.
+> **ARCHITECTURE DECISION (H-01): `/api/v1/internal/` endpoints must not be reachable from the public internet.**
+>
+> The runner internal API (`/api/v1/internal/claim-next`, `/api/v1/internal/executions/...`) uses runner-token authentication, but defense-in-depth requires that network controls block public reachability entirely — auth-only is insufficient if credentials are compromised.
+
+Because the Django API service is behind the same public ALB that serves browser traffic, use one of the following mandatory controls (not optional):
+
+**Option A (preferred when feasible):** Deploy a second internal ALB or VPC-private service endpoint that serves only `/api/v1/internal/`. Runner ECS tasks call this internal endpoint. The public ALB has no listener rule for `/api/v1/internal/`. This provides true network isolation.
+
+**Option B (acceptable if two ALBs are operationally too complex):** Same Django service on the public ALB, but add an ALB listener rule that blocks requests to path prefix `/api/v1/internal/` from originating outside the private subnet CIDR. Runner tasks originate from private subnet ENIs. This provides network-layer access control without a second load balancer.
+
+In either case, Django-level runner token authentication remains in place as the authentication layer. Network controls are defense-in-depth, not a replacement.
+
+**Gate requirement:** Before Phase 10.10 is complete, confirm via `curl` from outside the VPC that `GET /api/v1/internal/claim-next` returns a network-level rejection (connection refused, 403, or timeout), not an authentication challenge.
 
 ### ECS services and tasks
 
 API service:
 
-- Desired count production: minimum 2 across AZs.
+> **MANDATORY GATE (B-05): Resolve live-streaming architecture before deploying more than one API task.**
+>
+> Phase 10.8's in-process SSE event bus is process-local. If two API ECS tasks are running, a browser subscribing to an execution event stream may land on a different task than the runner reporting step progress — the browser sees no events. **Sticky sessions on the ALB do NOT fix this** — the runner (a different ECS task) and the browser are different clients and ALB session affinity applies per-client, not per-execution.
+>
+> Before enabling `desired_count ≥ 2` for the API service, make an explicit architectural decision:
+> - **Option A:** Pin API task count at 1 (no horizontal scale for API). Acceptable only for non-critical environments. Document this as a known availability tradeoff.
+> - **Option B:** Externalize the event bus to Redis pub/sub, Postgres `LISTEN/NOTIFY` (requires a non-PgBouncer connection for the NOTIFY side), or AWS EventBridge. All API tasks subscribe to the shared bus; any task can serve any stream subscriber.
+>
+> This gate must be resolved and documented before Phase 10.10 marks the API ECS service as production-ready with `desired_count ≥ 2`.
+
+- Desired count production: minimum 2 across AZs (only after B-05 streaming gate is resolved).
 - Deployment type: ECS rolling update with deployment circuit breaker rollback enabled.
 - Health check grace period tuned to app startup and migration timing.
 - Autoscaling on CPU, memory, and ALB request count per target after production metrics are known.
@@ -908,7 +930,8 @@ RDS restore should normally create a new DB instance from snapshot/PITR, validat
 ALB and ECS health checks:
 
 - Web: static server health endpoint or root returns 200.
-- API: `GET /health/` returns healthy dependency status.
+- API (ALB target): `GET /health/ready/` — DB check only; returns 200 if DB is reachable. AI service outage must NOT cause ALB to mark API containers unhealthy.
+- API (ops/monitoring): `GET /health/` — full dependency check (DB + AI); used by ops dashboards only, never by ALB.
 - AI: `GET /health` returns service status; degraded AI dependency should be visible but should not be confused with container crash.
 - Runner: ECS service desired count equals running count; logs show polling; no ALB health check.
 
@@ -917,7 +940,8 @@ ALB and ECS health checks:
 Run after every staging deployment:
 
 ```bash
-curl -fsS https://staging-api.example.com/health/
+curl -fsS https://staging-api.example.com/health/ready/   # ALB-facing; must return 200
+curl -fsS https://staging-api.example.com/health/          # Ops; shows AI status
 curl -fsS https://staging-app.example.com/
 ```
 

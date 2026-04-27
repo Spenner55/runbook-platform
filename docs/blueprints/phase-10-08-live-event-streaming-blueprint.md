@@ -348,13 +348,21 @@ class ExecutionEventBus:
 
     def emit(self, execution_id: str, event: StreamEvent) -> None:
         """
-        Called from sync Django service code. Posts to the running event loop
-        via call_soon_threadsafe. No-op if no event loop is running (e.g. tests).
+        Called from sync Django service code. Schedules _async_emit on the
+        event loop that was captured at application startup.
+
+        IMPORTANT: Do NOT use asyncio.get_running_loop() here. Sync Django
+        views and services run in uvicorn threadpool workers — there is no
+        running loop in the calling thread. get_running_loop() would silently
+        return without delivering any event (B-04 BLOCKER).
+
+        The correct pattern is to capture the ASGI event loop once at startup
+        (in ExecutionsConfig.ready() after the first ASGI request) and use
+        loop.call_soon_threadsafe() against the captured reference.
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no event loop in sync test context; ignore
+        loop = _get_asgi_event_loop()
+        if loop is None or loop.is_closed():
+            return  # No ASGI loop yet (startup, management commands, tests)
         loop.call_soon_threadsafe(
             lambda: asyncio.ensure_future(self._async_emit(execution_id, event))
         )
@@ -387,8 +395,8 @@ execution_event_bus = ExecutionEventBus()
 **Key design decisions in the bus:**
 
 - The `asyncio.Lock` ensures the subscriber set and buffer are not corrupted by concurrent modifications.
-- `emit()` is the sync-safe entry point: called from Django service code (which runs in sync threadpool workers under uvicorn), it schedules the async `_async_emit` coroutine on the event loop.
-- The bus is a module-level singleton. It is **process-local**: two `uvicorn` processes will not share event state. This is acceptable for Phase 10.8 (single server). Phase 10.9 hardening documents this constraint; Phase 10.10 addresses it with sticky sessions on the ALB or by externalizing the bus to Redis pub/sub.
+- `emit()` is the sync-safe entry point: called from Django service code (which runs in sync threadpool workers under uvicorn), it schedules the async `_async_emit` coroutine on the event loop. **The implementation MUST use a captured ASGI event loop reference, not `asyncio.get_running_loop()`** — sync workers in uvicorn's threadpool have no running loop. The implementation module must expose a `_get_asgi_event_loop() -> asyncio.AbstractEventLoop | None` function that returns a loop reference captured once at application startup (e.g., in `ExecutionsConfig.ready()` via `asyncio.get_event_loop()` on the first ASGI request, or stored explicitly by an ASGI lifespan hook). **An integration test MUST verify:** create an execution, call the Django sync service (`update_execution_step`) through the runner's internal API endpoint, and assert an SSE subscriber on the same process receives the event within 100ms. Without this test the emit bug (silently dropping all events) will recur on every refactor.
+- The bus is a module-level singleton. It is **process-local** and **dev/test only for multi-process deployments**: two `uvicorn` processes will not share event state. This is acceptable for Phase 10.8 (single API process in development and staging). Phase 10.10 must make an explicit decision before enabling live streaming in production. **Sticky sessions on the ALB do NOT solve this problem** — the runner and the browser are different clients and there is no guarantee they land on the same API task. The only production-safe options are (a) fix API task count at 1 (documented availability tradeoff, acceptable only for staging/non-critical), or (b) externalize the bus to Redis pub/sub, Postgres LISTEN/NOTIFY (requires non-transaction-pooling connection), or AWS EventBridge before enabling live streaming across multiple API tasks. See Phase 10.10 release gate for the mandatory decision.
 - Buffer maxlen is 128 events — more than enough for any execution (typical execution has 5–10 steps, each with 2 transitions = ~20 events maximum).
 
 ### 6.3 Service-layer emit points
@@ -671,7 +679,9 @@ export function useExecutionDetail(executionId: string | null) {
 }
 ```
 
-`applyStreamEvent` is a pure function that takes the current cached execution and a `StreamEvent` and returns an updated copy. For `execution.status_changed`, it updates `status`, `started_at`, `finished_at`. For `step.status_changed`, it finds the step by `position` and updates its fields. For `stream.closed` and `execution.heartbeat`, it is a no-op (the query cache is not modified).
+`applyStreamEvent` is a pure function that takes the current cached execution and a `StreamEvent` and returns an updated copy. For `execution.status_changed`, it updates `status`, `started_at`, `finished_at`. For `step.status_changed`, it finds the step by **`step_id`** (UUID) and updates its fields. For `stream.closed` and `execution.heartbeat`, it is a no-op (the query cache is not modified).
+
+> **Do NOT match steps by `position`** — positions can be reordered and are not guaranteed unique if a workflow has duplicate position values. Always match by `step_id`. The `position` field in the event payload is informational only (useful for display ordering). Step IDs are UUIDs and are stable.
 
 ### 8.4 `applyStreamEvent` contract
 
@@ -692,7 +702,7 @@ function applyStreamEvent(
       return {
         ...execution,
         steps: execution.steps.map((step) =>
-          step.position === event.data.position
+          step.id === event.data.step_id   // match by UUID, not position
             ? {
                 ...step,
                 status: event.data.status,
@@ -1195,7 +1205,7 @@ Location: `apps/web/src/features/executions/hooks/`
 
 **Mitigations:**
 - **Phase 10.8:** Run uvicorn with `--workers 1` (single process). This is documented and enforced in the Dockerfile `CMD`. Document the constraint explicitly.
-- **Phase 10.9 / 10.10:** Externalize the bus to Redis pub/sub or add sticky sessions on the ALB so each browser is always routed to the same API process as the runner's API calls. Redis pub/sub is the cleaner long-term solution; document it in the Phase 10.9 hardening blueprint as a required change before multi-process deployment.
+- **Phase 10.10 (MANDATORY GATE):** Before live streaming is enabled in any production environment with multiple API tasks, the Phase 10.10 blueprint must explicitly choose one of: (a) fix API task count at 1 with a documented availability tradeoff, or (b) add an externalized event transport (Redis pub/sub, Postgres LISTEN/NOTIFY without PgBouncer transaction pooling, or AWS EventBridge). **Sticky sessions on the ALB are NOT a valid solution** — the runner and the browser subscriber are separate clients with no shared session to make sticky. Do not document sticky sessions as a mitigation.
 
 **Detection:** Events stop arriving despite the runner successfully updating steps. Occurs only when `--workers > 1`.
 

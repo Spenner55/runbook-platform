@@ -218,12 +218,20 @@ After Phase 10.7, the following fields gain real FK references to `User`:
 
 | Model | Field | Current state | After 10.7 |
 |---|---|---|---|
-| `ApprovalDecision` | `decided_by` | Nullable FK placeholder or null | ForeignKey to `User`, `on_delete=PROTECT` |
-| `AuditEvent` | `actor_id` | UUID string | Keep as UUID string; `actor_label` stores display name at time of event; add `actor_user` nullable FK for queryability |
+| `ApprovalDecision` | `decided_by` | Nullable FK placeholder or null | ForeignKey to `User`, `on_delete=SET_NULL`, null=True — see K-L04 note below |
+| `AuditEvent` | `actor_id` | UUID string | Keep as UUID string; `actor_label` stores display name at time of event; add `actor_user` nullable FK (`on_delete=SET_NULL`, null=True) for queryability — see K-L04 note below |
 | `Integration` | `created_by` | Absent | Add ForeignKey to `User`, `on_delete=SET_NULL`, nullable |
 | `Policy` | `created_by` | Absent | Add ForeignKey to `User`, `on_delete=SET_NULL`, nullable |
 
 Do not retroactively backfill `decided_by` on existing approval decisions — those rows predate the user model. Set `null=True, blank=True` on the FK and document that pre-auth decisions have `decided_by=null`.
+
+> **ARCHITECTURE DECISION (K-L04): Use `on_delete=SET_NULL` (not `PROTECT`) for all User FKs on audit-adjacent models.**
+>
+> Phase 10.3's `AuditEvent.actor_label` is a denormalized snapshot of the actor's display name at the time of the event, specifically so user accounts can be deleted without rewriting audit history. Using `on_delete=PROTECT` on `AuditEvent.actor_user` (or `ApprovalDecision.decided_by`) contradicts this rationale: a user who has ever triggered an audit event or made an approval decision could never be deleted.
+>
+> Rule: `ApprovalDecision.decided_by`, `AuditEvent.actor_user`, `Integration.created_by`, and `Policy.created_by` must all use `on_delete=SET_NULL`. When a user is deleted (soft-deactivation or hard delete), these FKs are set to `null` and the human-readable identity is preserved in the denormalized snapshot fields (`actor_label`, `decided_by_label`).
+>
+> Add a test: `test_user_deletion_leaves_audit_and_approval_rows_readable` — delete a user who has audit events and approval decisions; confirm those rows still exist and `actor_label` / `decided_by_label` are non-null.
 
 ### 5.5 `OrganizationScopedQuerySet` mixin
 
@@ -238,6 +246,18 @@ class OrganizationScopedQuerySet(models.QuerySet):
 Every domain view calls `.for_organization(request.user.current_organization_id)` before any further filtering. This is the primary defense against cross-tenant data leakage. The mixin must be applied to: `Runbook`, `Workflow`, `Execution`, `ExecutionStep`, `ApprovalRequest`, `Policy`, `Artifact`, `Integration`, `AuditEvent`.
 
 **`current_organization_id`** is resolved from the authenticated user via their active `Membership`. In Phase 10.7, a user belongs to exactly one organization per session (the frontend selects which org is active and passes `X-Organization-Id` header, or the JWT encodes the current org). The simplest correct approach: require an `X-Organization-Id` header on authenticated requests. Django resolves the `Membership` for that org and user; if no membership exists, return 403.
+
+> **ARCHITECTURE DECISION (K-M10): `X-Organization-Id` header is the single source of truth for org scope after auth.**
+>
+> Pre-auth endpoints (Phases 10.1–10.6) accepted `organization_id` in request bodies and query parameters. After Phase 10.7 auth is in place, two sources of org identity may coexist: the `X-Organization-Id` header AND body/query `organization_id` fields. Without a service-layer invariant, these can drift.
+
+**Rule:** When both `X-Organization-Id` and a body or query `organization_id` are present on an authenticated request, they MUST match. Mismatch returns HTTP 400:
+```json
+{"error": {"code": "org_id_mismatch", "message": "X-Organization-Id header and body organization_id do not match."}}
+```
+The `X-Organization-Id` header is the source of truth. Body `organization_id` fields are redundant after Phase 10.7 and should be removed in a cleanup pass during Phase 10.7 implementation (or in Phase 10.8 prep).
+
+**Endpoints that do NOT require `X-Organization-Id`:** `POST /api/v1/auth/login/`, `POST /api/v1/auth/refresh/`, `GET /api/v1/auth/me/`, `GET /health/...`, `GET /metrics/`, all internal runner endpoints (`/api/v1/internal/...`). Document this allowlist in `apps/api/apps/common/auth.py` or in a comment on the middleware.
 
 ---
 
@@ -371,6 +391,39 @@ Internal endpoints (`/api/v1/internal/...`) must return consistent errors when t
 | User JWT used on internal endpoint | 403 | `{"detail": "User sessions are not permitted on internal endpoints."}` |
 
 These responses must be machine-readable from the runner. The runner should treat 401 on internal endpoints as a configuration error (wrong token in env) and exit with a non-zero status code rather than retrying.
+
+> **IMPLEMENTATION CONTRACT (M-03): `RunnerTokenAuthentication.authenticate()` must actively distinguish JWT tokens from runner tokens to return 403 (not 401) when a user JWT is used on an internal endpoint.**
+>
+> A naive DRF `authenticate()` implementation that simply checks `token == settings.RUNNER_REGISTRATION_TOKEN` will return `None` (unauthenticated) for any other token, causing DRF to return 401 — not 403. The three-case distinction requires explicit inspection.
+
+Required `RunnerTokenAuthentication.authenticate()` logic:
+```python
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+
+class RunnerTokenAuthentication(BaseAuthentication):
+    def authenticate(self, request):
+        header = request.META.get("HTTP_AUTHORIZATION", "")
+        if not header.startswith("Bearer "):
+            return None  # No auth header; let DRF return 401
+
+        token = header.split(" ", 1)[1].strip()
+        if token == settings.RUNNER_REGISTRATION_TOKEN:
+            return (RUNNER_PSEUDO_USER, token)  # Valid runner token → proceed
+
+        # Check if this looks like a JWT (3 dot-separated base64url segments)
+        # Use PermissionDenied (not AuthenticationFailed) to return 403, not 401.
+        if token.count(".") == 2:
+            raise PermissionDenied(
+                {"detail": "User sessions are not permitted on internal endpoints."}
+            )
+        # Unknown non-JWT token
+        raise AuthenticationFailed({"detail": "Invalid runner token."})
+```
+
+**Why `PermissionDenied` for JWT:** DRF's `AuthenticationFailed` returns 401 (authentication failure). `PermissionDenied` returns 403 (authenticated but not authorized). For a user JWT on an internal endpoint, the semantics are: "we know who you are (user), but users are not permitted here" — which is 403. For a missing or invalid runner token, the semantics are: "we don't know who you are" — which is 401.
+
+Confirm this behavior with tests `test_internal_endpoint_rejects_user_jwt` (→ 403) and `test_internal_endpoint_rejects_invalid_runner_token` (→ 401).
 
 ### 6.4 Standard authenticated request
 
@@ -1092,6 +1145,41 @@ This means Django performs one extra DB query per request (the membership lookup
 **Risk:** Setting `AUTH_USER_MODEL` to `users.User` after other apps have already created migrations that implicitly reference `auth.User` (via Django admin or default FK patterns) can produce inconsistent migration state.
 
 **Mitigation:** Milestone 1 sets `AUTH_USER_MODEL` before creating any FK references to `User`. The existing domain models (`Runbook`, `Workflow`, etc.) reference `Organization` but not `User` directly — this is safe. The `ApprovalDecision.decided_by` FK is added in the same migration wave as the `User` model. If migration dependency ordering fails, the fix is to explicitly declare `dependencies = [("users", "0001_initial")]` in the relevant migrations.
+
+> **MANDATORY PREFLIGHT GATE (H-04): Verify database and migration state before implementing Phase 10.7.**
+>
+> `AUTH_USER_MODEL` cannot be changed after Django has already created an initial migration for the project without complex squashing or data loss. This is manageable in Phase 10.7 because no production user data exists yet — but the gate must be explicit.
+
+**Before starting Milestone 1, verify:**
+
+```bash
+# 1. Confirm no user/auth tables exist in the DB:
+docker compose exec api python manage.py dbshell -- -c "\dt auth_*"
+# Expected: no auth_user table (or "Did not find any relation named auth_user")
+
+# 2. Confirm Django has no applied migrations for auth with user FK references:
+docker compose exec api python manage.py showmigrations auth
+# Acceptable: auth migrations exist but none are FK-dependencies for domain models.
+
+# 3. Confirm no domain migration references auth.User:
+grep -r "auth.User\|auth\.user\|django.contrib.auth.models.User" apps/api/apps/*/migrations/
+# Expected: no matches (domain models use Organization FK, not User FK, in phases 10.1–10.6)
+
+# 4. Confirm no existing users data:
+docker compose exec api python manage.py shell -c "
+from django.db import connection
+try:
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT COUNT(*) FROM auth_user')
+        print(f'auth_user rows: {cursor.fetchone()[0]}')
+except Exception as e:
+    print(f'auth_user table not found (expected): {e}')
+"
+```
+
+**If any of these checks fail** (e.g., domain models reference `auth.User`, or production data exists in `auth_user`), stop and create a separate migration plan before proceeding. The correct fix for an environment with existing data is to create a squash migration that replaces `auth.User` references with `users.User` atomically — that is out of scope for Phase 10.7's blueprint and requires explicit approval.
+
+**For dev/staging environments:** if checks fail due to prior development schema drift, run `make bootstrap` (drops and recreates the DB) and re-apply all migrations from Phase 10.1 through 10.6 before starting Milestone 1. All data in dev is synthetic and can be re-seeded.
 
 ### 12.7 Refresh token cookie not sent cross-origin
 

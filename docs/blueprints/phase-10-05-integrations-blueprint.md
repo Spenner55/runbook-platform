@@ -554,22 +554,40 @@ Five trigger points in Phase 10.5:
 |---|---|---|
 | `ArtifactService.create_from_runner_upload(...)` | `artifact.uploaded` | Only include if there is a product use case for real-time artifact notifications. Defer if not requested. |
 
-**Ordering rule:** The `notify()` call must always occur *after* the state change is committed to the database. Place the `notify()` call after the `transaction.atomic()` block, or at the end of the service function after the DB write succeeds. A notification that references an execution that has not yet been committed to the DB creates a race condition where the external system queries the Django API and sees stale state.
+**Ordering rule:** The `notify()` call must always occur *after* the state change is committed to the database. Use `transaction.on_commit()` so dispatch is guaranteed to run after the `atomic()` block exits, without holding the transaction open:
 
 ```python
-# Correct ordering — after commit
+# Correct ordering — via on_commit so dispatch cannot hold the transaction
 def complete_execution(...):
     with transaction.atomic():
         execution.status = outcome
         execution.save(...)
-    # DB write committed; notify is safe to call now
-    IntegrationService.notify(
-        event_type="execution.failed",
-        context={"execution_id": str(execution.id), ...},
-        organization_id=str(execution.organization_id),
-    )
+        # Capture values before on_commit runs (execution may change)
+        execution_id = str(execution.id)
+        organization_id = str(execution.organization_id)
+        transaction.on_commit(lambda: IntegrationService.notify(
+            event_type="execution.failed",
+            context={"execution_id": execution_id, ...},
+            organization_id=organization_id,
+        ))
     return execution
 ```
+
+> **ARCHITECTURE DECISION (H-06): Synchronous integration dispatch must have a per-trigger budget to bound the latency added to runner request paths.**
+>
+> Even with `transaction.on_commit()`, `notify()` is still called synchronously in the same HTTP request/response cycle (on_commit runs when the outer transaction commits, which is before the response returns to the runner). Multiple enabled integrations running sequentially can add `N × INTEGRATION_DISPATCH_TIMEOUT_SECONDS` latency to the runner's terminal-status call. A runner reporting a step complete should not wait 3 × N seconds for integration webhooks.
+
+Add to `base.py`:
+```python
+INTEGRATION_DISPATCH_BUDGET_SECONDS = env.float("INTEGRATION_DISPATCH_BUDGET_SECONDS", default=6.0)
+INTEGRATION_MAX_PER_TRIGGER = env.int("INTEGRATION_MAX_PER_TRIGGER", default=5)
+```
+
+In `IntegrationService.notify()`:
+1. Limit to `INTEGRATION_MAX_PER_TRIGGER` active integrations per trigger event. If more than this number are enabled, log a warning and skip the excess (choose deterministically by `integration.created_at` ascending).
+2. Dispatch integrations in parallel using `concurrent.futures.ThreadPoolExecutor(max_workers=INTEGRATION_MAX_PER_TRIGGER)` with `as_completed(futures, timeout=INTEGRATION_DISPATCH_BUDGET_SECONDS)`. Any integration that does not return within the budget is cancelled and recorded as `success=False, error_detail="dispatch_budget_exceeded"`.
+
+This keeps integration dispatch predictably bounded regardless of how many integrations an organization enables.
 
 ### 7.5 Timeout and error handling
 
@@ -757,7 +775,44 @@ Validation must occur at two points:
 1. **Creation time**: when `POST /api/v1/integrations/` is called, validate the URL before encrypting and saving.
 2. **Dispatch time**: validate again before each outbound call. This prevents a bypass where a valid URL was submitted but the DNS entry was later changed to point to an internal host (DNS rebinding attack).
 
-DNS rebinding mitigation: resolve the hostname at dispatch time and validate the resolved IP address against the private range blocklist. Use `socket.getaddrinfo` before handing the URL to `httpx`.
+> **ARCHITECTURE DECISION (K-H11): Resolve DNS once and pin the IP for the httpx call. Do not resolve at validation time and then let httpx re-resolve.**
+>
+> The naive approach calls `socket.getaddrinfo()` to validate the IP, then passes the original URL string to `httpx`. httpx calls `socket.getaddrinfo()` again internally — the DNS entry may have changed between the two calls (DNS TOCTOU / DNS rebinding). This is a known SSRF bypass technique.
+
+DNS-TOCTOU-safe dispatch pattern:
+```python
+import socket
+import ipaddress
+from urllib.parse import urlparse
+
+def _resolve_and_validate(url: str) -> tuple[str, str]:
+    """Resolve hostname once; validate resolved IP; return (resolved_ip, original_host).
+    Raises DomainValidationError if IP is private or disallowed."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    results = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+    if not results:
+        raise DomainValidationError(code="integration_invalid_url", message="DNS resolution returned no results.")
+    resolved_ip = results[0][4][0]
+    _validate_ip_not_private(resolved_ip)  # raises DomainValidationError if private
+    return resolved_ip, hostname
+
+def _dispatch_to(url: str, payload: dict, timeout: float) -> requests.Response:
+    resolved_ip, hostname = _resolve_and_validate(url)
+    # Replace hostname with resolved IP; pass original hostname in Host header.
+    # This prevents httpx from re-resolving DNS.
+    parsed = urlparse(url)
+    pinned_url = parsed._replace(netloc=f"{resolved_ip}:{parsed.port or 443}").geturl()
+    with httpx.Client(verify=True) as client:
+        return client.post(
+            pinned_url,
+            json=payload,
+            headers={"Host": hostname},
+            timeout=timeout,
+        )
+```
+Note: this approach pins the resolved IP in the URL and adds the original hostname as the `Host` header. TLS verification still uses the certificate's `CN`/`SAN` fields, which must match the original hostname — `httpx` with `verify=True` handles this correctly when the `Host` header is set.
 
 Test the SSRF validator against: `http://127.0.0.1`, `https://169.254.169.254/latest/meta-data/`, `https://192.168.1.1`, `https://[::1]`, `https://localhost`, `http://example.com` (valid scheme fails), `https://hooks.slack.com/services/...` (should pass).
 

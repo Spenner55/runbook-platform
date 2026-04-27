@@ -94,6 +94,21 @@ Do not introduce Kafka, RabbitMQ, Celery, or any asynchronous task queue before 
 
 ## 4. Expansion Roadmap
 
+> **Canonical expansion label to blueprint file mapping** — use the filename when referencing a phase in implementation prompts. The §4.x labels in this document are sequential outline numbers, not version numbers.
+
+| Roadmap label | Canonical blueprint filename |
+|---|---|
+| 4.1 / Phase 10.1 | `phase-10-01-approvals-blueprint.md` |
+| 4.2 / Phase 10.2 | `phase-10-02-policies-blueprint.md` |
+| 4.3 / Phase 10.3 | `phase-10-03-audit-trail-blueprint.md` |
+| 4.4 / Phase 10.4 | `phase-10-04-artifacts-blueprint.md` |
+| 4.5 / Phase 10.5 | `phase-10-05-integrations-blueprint.md` |
+| 4.6 / Phase 10.6 | `phase-10-06-richer-ai-parsing-blueprint.md` |
+| 4.7 / Phase 10.7 | `phase-10-07-authentication-authorization-blueprint.md` |
+| 4.8 / Phase 10.8 | `phase-10-08-live-event-streaming-blueprint.md` |
+| 4.9 / Phase 10.9 | `phase-10-09-production-hardening-blueprint.md` |
+| 4.10 / Phase 10.10 | `phase-10-10-aws-deployment-workflows-blueprint.md` |
+
 ### 4.1 Approvals
 
 **Purpose**
@@ -195,11 +210,13 @@ Policies are the decision layer on top of approvals. They cannot exist without t
 
 *Condition language*: Do not design a full expression language. Start with a `condition_type` enum (e.g., `RISK_LEVEL`, `STEP_TYPE`, `TIME_WINDOW`) and structured `condition_params` JSON. The service evaluates conditions using plain Python if/else, not a DSL. This keeps the system testable and auditable without introducing a parser.
 
-*Policy evaluation point*: Policy evaluation happens in Django, triggered at step transition time (when the runner reports a step is about to run). If policy evaluation determines approval is required, Django creates the `ApprovalRequest` even if `requiresApproval` is `false` in the workflow definition. Policy overrides the schema.
+*Policy evaluation point*: Policy evaluation happens in Django, triggered at step transition time (when the runner reports a step is about to run). If policy evaluation determines approval is required, Django creates the `ApprovalRequest` even if `requiresApproval` is `false` in the workflow definition. **Policy can escalate to `ApprovalRequired` or `Block` regardless of the workflow schema. Policy cannot remove or waive `requiresApproval: true` — that is a minimum floor that policy may only strengthen, not weaken.**
 
 *Evaluation logging*: Every policy evaluation produces a `PolicyEvaluation` record: `policy_id`, `rule_id`, `step_id`, `outcome`, `evaluated_at`. This is the precursor to the audit trail (4.3) and provides debugging when an execution is unexpectedly gated.
 
-*Conflict resolution*: If two active policies apply to the same step and produce different outcomes, the stricter outcome wins (require approval beats skip approval).
+*Conflict resolution*: When multiple active policies have rules that could apply to the same step, the **first matching rule wins** using the deterministic global sort key `(rule.priority, policy.created_at, policy.id, rule.id)`. Lower priority number evaluates first. Do not implement "stricter outcome wins" — it sounds safe but creates surprising behavior when later rules silently override earlier explicit choices, and it makes policy outcomes non-auditable.
+
+> **ARCHITECTURE DECISION (locked):** `AutoApprove` from a policy MUST NOT waive a workflow step's `requiresApproval: true` declaration. The workflow-level `requiresApproval: true` is a minimum gate (floor). A policy can only escalate to `ApprovalRequired` or `Block` on such steps; it cannot remove the approval requirement. `requiresApproval: false` in the workflow is the only case where policy can choose `AutoApprove`. Tests must cover both paths: (a) policy returns `AutoApprove` on `requiresApproval: false` step → step proceeds without approval; (b) policy returns `AutoApprove` on `requiresApproval: true` step → approval is still required, policy outcome is upgraded to `ApprovalRequired`.
 
 **What NOT to do**
 
@@ -867,12 +884,17 @@ Before moving from one expansion phase to the next, all of the following must be
 - Approval-gated step pauses execution and resumes after approval: verified manually
 - Concurrent approval attempt returns 409: covered by test
 - Approval timeout causes step failure: covered by test
-- Approval audit event written in same transaction: covered by test
+- **Approval decision and approval-state transition occur in the same DB transaction: covered by test**
+- Runner calls a step-start endpoint and receives a normalized `runner_action` field (`run`, `wait_for_approval`, or `blocked`) rather than inferring behavior from workflow JSON: covered by contract test
+- Contract test proves `requiresApproval=false` step + policy that returns `ApprovalRequired` → runner receives `runner_action=wait_for_approval`: covered by test
+- _Note: Audit events for approvals are NOT required at this gate. Audit is Phase 10.3. Approval decisions are persisted in approvals tables only at this stage._
 
 **Gate for moving from policies → audit (10.2 → 10.3):**
-- Policy with matching condition overrides `requiresApproval=false` in schema: verified manually
+- Policy with matching condition creates ApprovalRequest even when `requiresApproval=false` in schema: verified manually
+- `requiresApproval=true` floor is honored: policy `AutoApprove` on a `requiresApproval=true` step still results in `ApprovalRequired`: covered by test
 - Policy evaluation record created for every evaluated step: covered by test
 - Policy evaluation failure does not auto-approve: covered by test
+- Runner contract for policy-driven approval verified end-to-end: verified manually
 
 **Gate for moving from audit → artifacts (10.3 → 10.4):**
 - Audit event written in same DB transaction as triggering action: covered by test

@@ -76,6 +76,7 @@ Phase 10.1 also adds the following design boundaries:
 3. One approval request has at most one terminal decision in Phase 10.1.
 4. Approval routing, delegation, escalation, quorum, and policy-based approver selection are explicitly out of scope.
 5. Approval decisions are persisted in approvals tables only. They do not depend on a future audit app.
+6. **Pre-auth actor labeling is informational only.** The `actor_display_name` field accepted on the decide endpoint is a client-supplied string. It MUST NOT be presented as authoritative attribution in any UI, audit event, or integration payload until Phase 10.7 auth is complete. Any record created with a client-supplied actor label must be stored with `decided_by_label` tagged as unverified (e.g., a separate `decided_by_label_source` field with value `unverified_pre_auth`). Once auth lands (Phase 10.7), the endpoint MUST ignore this field and derive the actor from the authenticated session. Phase 10.3 audit events for approvals in the pre-auth window must use `actor_type="unknown"`, not `actor_type="user"`.
 
 ---
 
@@ -529,18 +530,26 @@ This endpoint is where Django should materialize timeout resolution. If `status 
 
 ## 7. Runner contract and timeout behavior
 
-### 7.1 Runner execution sequence for protected steps
+### 7.1 Runner execution sequence for all steps (normalized contract)
 
-For a claimed step with `requires_approval=true`, the runner flow becomes:
+> **ARCHITECTURE DECISION (required for Phase 10.2 compatibility):** The runner MUST ask Django to start every step, not only steps where `requires_approval=true` in the workflow JSON. Django returns a normalized `runner_action` field. The runner obeys the action. This allows Phase 10.2 policy evaluation to require approval even when `requiresApproval=false` in the workflow definition, without any runner code change.
 
-1. Read the claimed step payload from Django as it already does.
-2. Before marking the step `running`, call the internal approval-request endpoint.
-3. If the endpoint returns `waiting_for_approval`, enter the approval poll loop.
-4. Poll the internal approval-status endpoint using the existing runner identity and claim token.
-5. If Django returns `runner_action=wait`, sleep `poll_after_seconds` and poll again.
-6. If Django returns `runner_action=run`, call the existing step-update endpoint with `status=running` and then execute the command.
-7. If Django returns `runner_action=fail`, call the existing step-update endpoint with `status=failed`, set an approval-derived error message, and then call `complete_execution(..., final_status="failed")`.
-8. Never run the command until Django returns `runner_action=run`.
+For every claimed step, the runner flow is:
+
+1. Call `POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/start/` with the runner identity and claim token. Do NOT inspect the local `requires_approval` field and branch before calling.
+2. Django evaluates all applicable rules (Phase 10.1: workflow flag check; Phase 10.2+: policy evaluation) and returns a response with `runner_action` set to one of: `run`, `wait_for_approval`, or `blocked`.
+3. If `runner_action == "run"`: step is already transitioned to `running` by Django; execute the command.
+4. If `runner_action == "wait_for_approval"`: step is already transitioned to `waiting_for_approval` by Django; enter the approval poll loop.
+5. If `runner_action == "blocked"`: step has been transitioned to `failed` by Django; record failure and complete execution as failed without running the command.
+6. Poll `POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/approval-status/` using the existing runner identity and claim token.
+7. If Django returns `runner_action=wait`, sleep `poll_after_seconds` and poll again.
+8. If Django returns `runner_action=run`, execute the command.
+9. If Django returns `runner_action=fail`, record step as failed and complete execution without running the command.
+10. **Never run the command until Django explicitly returns `runner_action=run`.**
+
+> **Phase 10.1 note:** The start endpoint in Phase 10.1 only needs to handle the workflow-level `requires_approval` flag. The `runner_action` response contract is designed to be forward-compatible with Phase 10.2 policy evaluation behind the same endpoint — Phase 10.2 adds logic to the Django service, not a new runner endpoint.
+
+> **Contract test required at Phase 10.1 gate:** A test must prove that a step with `requiresApproval=false` in the workflow JSON still returns `runner_action=wait_for_approval` if a policy (Phase 10.2+) requires approval. The contract test can use a mock/stub policy hook in Phase 10.1 to verify the runner behavior is correct before policies are implemented.
 
 ### 7.2 Timeout behavior
 
@@ -840,7 +849,7 @@ Each path must verify the operator-facing UI, the execution-detail state, and th
 | Deadlock or long lock waits | Concurrent approvers or timeout resolution race on the same request | Keep transactions short, lock one `ApprovalRequest` row with `select_for_update()`, and avoid locking unrelated execution rows in the same transaction | Under heavy contention, writes can still wait briefly; acceptable in 10.1 |
 | Double approval | Two humans click approve or reject at the same time | `transaction.atomic()`, `select_for_update()`, one-to-one `ApprovalDecision`, `409` on second writer | None if the service is implemented correctly |
 | Runner restart during waiting | Approval loop state was only in memory | Approval state lives in Django; runner can reconstruct next action by asking approval-status again if it still owns the execution | Full claimed-execution recovery remains broader platform work |
-| Timeout never fires | No queue or scheduler exists | Resolve expiration synchronously in Django when approval status is queried or when a human tries to decide an expired request | A dead runner will delay timeout observation until another control-plane read occurs |
+| Timeout never fires | No queue or scheduler exists | Resolve expiration synchronously in Django when approval status is queried or when a human tries to decide an expired request | A dead runner will delay timeout observation until another control-plane read occurs. **Phase 10.9 must add a `recover_expired_approvals()` sweep alongside the stuck-execution watchdog so expired approvals are resolved even when neither the runner nor the UI is actively polling.** |
 | Stale claim ownership | Runner dies after placing a step into waiting state | Do not add a second ownership model; keep using `runner_id + claim_token` and document that general stale-claim reclamation is outside 10.1 | Operational recovery for abandoned claimed executions still needs later hardening |
 | Multi-tenancy leakage | Approval inbox lists requests across organizations | Store `organization_id` on `ApprovalRequest`, require organization scoping on inbox API, and validate request/execution/step organization alignment in services | Public APIs are still pre-auth; Phase 10.7 must add real authorization |
 | Idempotency bug on approval-request creation | Runner retries after an HTTP timeout | One-to-one `step` relationship and idempotent service behavior | None if implemented correctly |

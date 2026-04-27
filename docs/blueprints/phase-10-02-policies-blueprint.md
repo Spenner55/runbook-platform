@@ -762,18 +762,19 @@ Use `select_for_update()` for the execution step when applying a policy-driven t
 
 ### 8.8 Internal runner API contract
 
-The runner should receive policy outcomes only through Django internal execution APIs.
+> **CRITICAL:** The runner MUST call `POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/start/` for **every** step before executing any command. It must NOT inspect the local `requires_approval` workflow field and short-circuit. The step-start endpoint is where Django performs policy evaluation (Phase 10.2+) and returns a normalized `runner_action`.
 
-If Phase 10.1 uses `POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/update/` with status `running`, extend that response to include:
+The step-start response MUST include a `runner_action` field. Policy evaluation in Phase 10.2 is purely additive behind the same endpoint the runner already calls:
 
 ```json
 {
   "execution_id": "uuid",
-  "execution_status": "running",
+  "execution_status": "claimed",
   "step": {
     "id": "uuid",
     "status": "waiting_for_approval"
   },
+  "runner_action": "wait_for_approval",
   "policy_evaluation": {
     "id": "uuid",
     "outcome": "approval_required",
@@ -781,12 +782,24 @@ If Phase 10.1 uses `POST /api/v1/internal/executions/{execution_id}/steps/{step_
   },
   "approval_request": {
     "id": "uuid",
-    "status": "pending"
-  }
+    "status": "pending",
+    "expires_at": "2026-04-23T21:00:00Z"
+  },
+  "poll_after_seconds": 5
 }
 ```
 
-If Phase 10.1 introduced a dedicated start endpoint, such as `POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/start/`, hook policy evaluation there instead. Do not create a second parallel start path.
+`runner_action` values:
+
+| Value | Meaning | Runner behavior |
+|---|---|---|
+| `run` | Step is `running`; proceed to execute command | Execute command |
+| `wait_for_approval` | Step is `waiting_for_approval`; approval request created | Enter approval poll loop (Phase 10.1 contract) |
+| `blocked` | Step is `failed`; policy blocked the step | Do not execute; complete execution as failed |
+
+Do NOT create a second parallel step-start path. Do NOT route through a different endpoint for policy-driven approval vs workflow-flag approval. The same endpoint does both.
+
+**Required contract test:** `POST /start/` with `requiresApproval=false` workflow step + active matching policy → `runner_action=wait_for_approval`. This test must exist before Phase 10.2 implementation is considered complete.
 
 ---
 
@@ -1295,16 +1308,17 @@ Cover:
 
 ### 11.3 Integration with approvals
 
-Cover:
+> **ARCHITECTURE DECISION (locked — no longer a pre-implementation question):** Workflow `requiresApproval: true` is a **minimum floor**. A policy outcome of `AutoApprove` on a step with `requiresApproval: true` MUST be silently upgraded to `ApprovalRequired`. The policy evaluation record still records the matched rule and outcome as `auto_approve` so the evaluation is auditable, but the execution service MUST override it to `ApprovalRequired` before creating the step state transition. There is no configuration option to waive this. The rationale: a workflow author who sets `requiresApproval: true` is making an explicit safety commitment. A policy that accidentally matches and returns `AutoApprove` on that step must not silently bypass the author's intent.
+
+Cover these tests:
 
 - `ApprovalRequired` creates an approval request even when workflow step has `requiresApproval=false`.
 - Existing workflow `requiresApproval=true` still creates approval request when no policy matches.
-- `AutoApprove` from a policy overrides workflow `requiresApproval=true` only if this override is explicitly accepted at the human approval gate.
-- If override is not accepted, change semantics so workflow `requiresApproval=true` is a floor that policies cannot waive.
+- Policy `AutoApprove` on a `requiresApproval=true` step results in `ApprovalRequired` behavior (approval request created; policy evaluation record shows `outcome=auto_approve`, but execution service overrides to approval-required behavior; test must verify no command execution without approval).
+- Policy `AutoApprove` on a `requiresApproval=false` step results in step proceeding without approval.
+- Policy `Block` on any step (regardless of `requiresApproval`) prevents execution.
 - Approval request includes or can be correlated to the policy evaluation.
 - Approval polling behavior from Phase 10.1 remains unchanged.
-
-Decision required before implementation: whether `AutoApprove` may waive a workflow-authored `requiresApproval=true`. The roadmap says policy overrides the schema, but this is operationally sensitive. If approved, test it explicitly. If not approved, document that workflow `requiresApproval=true` is a minimum gate and policy can only strengthen or block it.
 
 ### 11.4 Failure-path tests
 
