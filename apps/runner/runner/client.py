@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -194,7 +195,7 @@ class ApiClient:
             "name": name,
             "mime_type": mime_type,
             "checksum_sha256": checksum_sha256,
-            "metadata": __import__("json").dumps(metadata or {}),
+            "metadata": json.dumps(metadata or {}),
         }
         files = {"file": (name, file_obj, mime_type or "application/octet-stream")}
         timeout = httpx.Timeout(30.0)

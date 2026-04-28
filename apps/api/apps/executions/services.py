@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from django.db import IntegrityError, transaction
@@ -11,7 +12,10 @@ from apps.common.exceptions import (
     InvalidWorkflowDefinitionError,
 )
 from apps.executions.models import Execution, ExecutionStep
+from apps.integrations.services import IntegrationService
 from apps.workflows.models import Workflow
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public service functions
@@ -81,7 +85,16 @@ def create_execution(
                 },
             )
 
-            return execution
+        _safe_notify_integration(
+            event_type="execution.created",
+            organization=execution.organization,
+            context=_execution_context(
+                execution=execution,
+                event_type="execution.created",
+                previous_status="",
+            ),
+        )
+        return execution
     except IntegrityError as exc:
         raise InvalidWorkflowDefinitionError(
             code="execution_step_materialization_failed",
@@ -122,7 +135,16 @@ def cancel_execution(
                 "new_status": execution.status,
             },
         )
-        return execution
+    _safe_notify_integration(
+        event_type="execution.cancelled",
+        organization=execution.organization,
+        context=_execution_context(
+            execution=execution,
+            event_type="execution.cancelled",
+            previous_status=previous_status,
+        ),
+    )
+    return execution
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +321,7 @@ def update_execution_step(
     Also transitions the parent execution from CLAIMED -> RUNNING when the
     first step starts.
     """
+    execution_started = False
     with transaction.atomic():
         execution = Execution.objects.select_for_update().get(pk=execution.pk)
         _validate_runner_ownership(execution, runner_id, claim_token)
@@ -346,6 +369,7 @@ def update_execution_step(
             execution.status == Execution.Status.CLAIMED
             and new_status == ExecutionStep.Status.RUNNING
         ):
+            execution_started = True
             execution.status = Execution.Status.RUNNING
             if not execution.started_at:
                 execution.started_at = step.started_at
@@ -359,7 +383,38 @@ def update_execution_step(
             new_status=new_status,
             error_message=error_message,
         )
-        return step
+    if execution_started:
+        _safe_notify_integration(
+            event_type="execution.started",
+            organization=execution.organization,
+            context=_execution_context(
+                execution=execution,
+                event_type="execution.started",
+                previous_status=Execution.Status.CLAIMED,
+            ),
+        )
+    if new_status in (
+        ExecutionStep.Status.WAITING_FOR_APPROVAL,
+        ExecutionStep.Status.RUNNING,
+        ExecutionStep.Status.FAILED,
+    ):
+        event_type = {
+            ExecutionStep.Status.WAITING_FOR_APPROVAL: "execution_step.waiting_for_approval",
+            ExecutionStep.Status.RUNNING: "execution_step.started",
+            ExecutionStep.Status.FAILED: "execution_step.failed",
+        }[new_status]
+        _safe_notify_integration(
+            event_type=event_type,
+            organization=execution.organization,
+            context=_step_context(
+                execution=execution,
+                step=step,
+                event_type=event_type,
+                previous_status=previous_status,
+                new_status=new_status,
+            ),
+        )
+    return step
 
 
 def complete_execution(
@@ -421,7 +476,21 @@ def complete_execution(
                 else None,
             },
         )
-        return execution
+    event_type = (
+        "execution.completed"
+        if outcome == Execution.Status.SUCCEEDED
+        else "execution.failed"
+    )
+    _safe_notify_integration(
+        event_type=event_type,
+        organization=execution.organization,
+        context=_execution_context(
+            execution=execution,
+            event_type=event_type,
+            previous_status=previous_status,
+        ),
+    )
+    return execution
 
 
 def emit_step_waiting_for_approval_audit(
@@ -484,3 +553,56 @@ def _emit_step_transition_audit(
         object_id=step.id,
         metadata=metadata,
     )
+
+
+def _safe_notify_integration(*, event_type: str, organization, context: dict) -> None:
+    try:
+        IntegrationService.notify(
+            event_type=event_type,
+            organization=organization,
+            context=context,
+        )
+    except Exception:
+        logger.exception("Integration notify failed for %s.", event_type)
+
+
+def _execution_context(
+    *, execution: Execution, event_type: str, previous_status: str = ""
+) -> dict:
+    return {
+        "event_type": event_type,
+        "organization_id": str(execution.organization_id),
+        "execution_id": str(execution.id),
+        "workflow_id": str(execution.workflow_id),
+        "workflow_version": execution.workflow_version,
+        "execution_status": execution.status,
+        "previous_status": previous_status,
+        "started_at": execution.started_at.isoformat() if execution.started_at else None,
+        "finished_at": execution.finished_at.isoformat()
+        if execution.finished_at
+        else None,
+    }
+
+
+def _step_context(
+    *,
+    execution: Execution,
+    step: ExecutionStep,
+    event_type: str,
+    previous_status: str,
+    new_status: str,
+) -> dict:
+    return {
+        "event_type": event_type,
+        "organization_id": str(execution.organization_id),
+        "execution_id": str(execution.id),
+        "workflow_id": str(execution.workflow_id),
+        "step_id": str(step.id),
+        "step_key": step.step_key,
+        "step_position": step.position,
+        "step_type": step.step_type,
+        "risk_level": step.risk_level,
+        "previous_status": previous_status,
+        "new_status": new_status,
+        "exit_code": step.exit_code,
+    }

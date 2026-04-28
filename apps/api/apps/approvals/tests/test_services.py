@@ -7,6 +7,7 @@ and double-decision concurrency guard.
 
 import threading
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.db import connections
@@ -282,6 +283,82 @@ def test_get_approval_status_no_timeout_when_not_expired(pending_approval):
 
     resolved = services.get_approval_status(approval_request=pending_approval)
     assert resolved.status == ApprovalRequest.Status.PENDING
+
+
+# ---------------------------------------------------------------------------
+# Integration notifications
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_approval_requested_triggers_notify(claimed_approval_execution):
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    with patch("apps.approvals.services.IntegrationService.notify") as notify:
+        approval_request, created = services.request_step_approval(
+            execution=execution,
+            step=step,
+            runner_id="runner-1",
+            claim_token=claim_token,
+        )
+
+    assert created is True
+    notify.assert_called_once()
+    kwargs = notify.call_args.kwargs
+    assert kwargs["event_type"] == "approval.requested"
+    assert kwargs["organization"] == execution.organization
+    assert kwargs["context"]["event_type"] == "approval.requested"
+    assert kwargs["context"]["approval_request_id"] == str(approval_request.id)
+    assert kwargs["context"]["execution_id"] == str(execution.id)
+    assert kwargs["context"]["step_id"] == str(step.id)
+
+
+@pytest.mark.django_db
+def test_approval_decision_triggers_notify_and_excludes_notes(pending_approval):
+    with patch("apps.approvals.services.IntegrationService.notify") as notify:
+        decision = services.decide_approval(
+            approval_request=pending_approval,
+            decision="rejected",
+            notes="secret incident details",
+            actor_label="Test Operator",
+        )
+
+    notify.assert_called_once()
+    kwargs = notify.call_args.kwargs
+    assert kwargs["event_type"] == "approval.rejected"
+    assert kwargs["context"]["event_type"] == "approval.rejected"
+    assert kwargs["context"]["approval_request_id"] == str(pending_approval.id)
+    assert kwargs["context"]["approval_decision_id"] == str(decision.id)
+    assert kwargs["context"]["execution_id"] == str(pending_approval.execution_id)
+    assert kwargs["context"]["decision"] == "rejected"
+    assert kwargs["context"]["notes_present"] is True
+    assert "secret incident details" not in str(kwargs["context"])
+
+
+@pytest.mark.django_db
+def test_notify_failure_does_not_fail_approval_action(claimed_approval_execution):
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    with patch(
+        "apps.approvals.services.IntegrationService.notify",
+        side_effect=RuntimeError("dispatch unavailable"),
+    ):
+        approval_request, created = services.request_step_approval(
+            execution=execution,
+            step=step,
+            runner_id="runner-1",
+            claim_token=claim_token,
+        )
+
+    assert created is True
+    approval_request.refresh_from_db()
+    assert approval_request.status == ApprovalRequest.Status.PENDING
 
 
 # ---------------------------------------------------------------------------

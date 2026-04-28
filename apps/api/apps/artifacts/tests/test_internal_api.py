@@ -1,5 +1,6 @@
 """Tests for the internal runner artifact upload API."""
 
+import hashlib
 import io
 
 import pytest
@@ -16,10 +17,12 @@ def _make_multipart(
     kind="stdout",
     name="stdout.txt",
     content=b"output data",
-    checksum_sha256="",
+    checksum_sha256=None,
     metadata="{}",
     file_name="stdout.txt",
 ):
+    if checksum_sha256 is None:
+        checksum_sha256 = hashlib.sha256(content).hexdigest()
     return {
         "runner_id": runner_id,
         "claim_token": str(claim_token),
@@ -116,7 +119,9 @@ def test_upload_checksum_mismatch_returns_400(
     claimed_execution, claim_token, step, artifact_media_root
 ):
     client = Client()
-    data = _make_multipart("runner-test", claim_token, content=b"hello", checksum_sha256="a" * 64)
+    data = _make_multipart(
+        "runner-test", claim_token, content=b"hello", checksum_sha256="a" * 64
+    )
     response = client.post(
         _upload_url(claimed_execution.id, step.id),
         data=data,
@@ -154,3 +159,36 @@ def test_upload_response_omits_storage_key(
     assert response.status_code == 201
     body = response.json()
     assert "storage_key" not in body
+
+
+@pytest.mark.django_db
+def test_upload_invalid_metadata_json_returns_400(
+    claimed_execution, claim_token, step, artifact_media_root
+):
+    client = Client()
+    data = _make_multipart("runner-test", claim_token, metadata="{not-json")
+    response = client.post(
+        _upload_url(claimed_execution.id, step.id),
+        data=data,
+        format="multipart",
+    )
+    assert response.status_code == 400
+    assert response.json()["errors"][0]["attr"] == "metadata"
+
+
+@pytest.mark.django_db
+def test_upload_terminal_execution_returns_409(
+    claimed_execution, claim_token, step, artifact_media_root
+):
+    claimed_execution.status = "succeeded"
+    claimed_execution.save(update_fields=["status"])
+
+    client = Client()
+    data = _make_multipart("runner-test", claim_token)
+    response = client.post(
+        _upload_url(claimed_execution.id, step.id),
+        data=data,
+        format="multipart",
+    )
+    assert response.status_code == 409
+    assert response.json()["errors"][0]["code"] == "artifact_execution_terminal"

@@ -68,10 +68,14 @@ class ArtifactUploader:
         self._max_bytes = max_bytes
         self._stdout_stderr_max = stdout_stderr_max_bytes
 
-    def upload_stdout(self, step_id: UUID, content: bytes) -> ArtifactUploadResponse | None:
+    def upload_stdout(
+        self, step_id: UUID, content: bytes
+    ) -> ArtifactUploadResponse | None:
         return self._upload_stream(step_id, content, kind="stdout", name="stdout.txt")
 
-    def upload_stderr(self, step_id: UUID, content: bytes) -> ArtifactUploadResponse | None:
+    def upload_stderr(
+        self, step_id: UUID, content: bytes
+    ) -> ArtifactUploadResponse | None:
         return self._upload_stream(step_id, content, kind="stderr", name="stderr.txt")
 
     def _upload_stream(
@@ -82,7 +86,9 @@ class ArtifactUploader:
         name: str,
     ) -> ArtifactUploadResponse | None:
         content, metadata = _truncate_output(content, self._stdout_stderr_max)
-        return self._upload_bytes(step_id, content, kind=kind, name=name, metadata=metadata)
+        return self._upload_bytes(
+            step_id, content, kind=kind, name=name, metadata=metadata
+        )
 
     def _upload_bytes(
         self,

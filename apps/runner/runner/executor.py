@@ -89,7 +89,9 @@ class Executor:
         outcome = "succeeded"
         try:
             for step in sorted(execution.steps, key=lambda s: s.position):
-                step_failed = self._run_step(execution_id, claim_token, step, heartbeat, uploader)
+                step_failed = self._run_step(
+                    execution_id, claim_token, step, heartbeat, uploader
+                )
                 if step_failed:
                     outcome = "failed"
                     break
@@ -144,7 +146,9 @@ class Executor:
                 "Step %d '%s': approved to run immediately", step.position, step.name
             )
             heartbeat.set_observed_status("running")
-            return self._execute_command(execution_id, claim_token, step, heartbeat, uploader)
+            return self._execute_command(
+                execution_id, claim_token, step, heartbeat, uploader
+            )
 
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
@@ -211,7 +215,9 @@ class Executor:
                     step.name,
                 )
                 heartbeat.set_observed_status("running")
-                return self._execute_command(execution_id, claim_token, step, heartbeat, uploader)
+                return self._execute_command(
+                    execution_id, claim_token, step, heartbeat, uploader
+                )
 
             # runner_action == "fail"
             logger.info(

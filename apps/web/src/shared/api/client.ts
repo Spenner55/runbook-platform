@@ -21,6 +21,17 @@ function getDetailMessage(data: unknown): string | undefined {
     return undefined
   }
 
+  const errors = (data as ErrorPayload).errors
+  if (Array.isArray(errors) && errors.length > 0) {
+    const first = errors[0]
+    if (first && typeof first === 'object') {
+      const detail = (first as ErrorPayload).detail
+      if (typeof detail === 'string') {
+        return detail
+      }
+    }
+  }
+
   const detail = (data as ErrorPayload).detail
   return typeof detail === 'string' ? detail : undefined
 }

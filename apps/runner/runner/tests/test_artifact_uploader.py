@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import hashlib
 from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
-import pytest
 
 from runner.artifact_uploader import ArtifactUploader, _compute_sha256, _truncate_output
 from runner.schemas import ArtifactUploadResponse
-
 
 EXECUTION_ID = uuid4()
 STEP_ID = uuid4()
@@ -100,7 +98,9 @@ def test_upload_checksum_is_sent():
     client = _make_client()
     uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
     uploader.upload_stdout(STEP_ID, content)
-    assert client.upload_artifact.call_args.kwargs["checksum_sha256"] == expected_checksum
+    assert (
+        client.upload_artifact.call_args.kwargs["checksum_sha256"] == expected_checksum
+    )
 
 
 def test_upload_skips_oversize_file():

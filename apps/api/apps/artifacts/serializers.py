@@ -26,7 +26,9 @@ class ArtifactUploadSerializer(serializers.Serializer):
             try:
                 parsed = json.loads(value)
             except json.JSONDecodeError as exc:
-                raise serializers.ValidationError("metadata must be valid JSON.") from exc
+                raise serializers.ValidationError(
+                    "metadata must be valid JSON."
+                ) from exc
             if not isinstance(parsed, dict):
                 raise serializers.ValidationError("metadata must be a JSON object.")
             return parsed

@@ -7,12 +7,19 @@ const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'claimed', 'running'])
 
 export function useExecutionArtifacts(
   executionId: string | null,
+  organizationId: string | null,
   executionStatus: string | null,
 ) {
   return useQuery({
-    queryKey: queryKeys.executionArtifacts(executionId ?? 'missing'),
-    enabled: Boolean(executionId),
-    queryFn: () => listExecutionArtifacts(executionId ?? ''),
+    queryKey: queryKeys.executionArtifacts(
+      organizationId ?? 'missing',
+      executionId ?? 'missing',
+    ),
+    enabled: Boolean(executionId && organizationId),
+    queryFn: () =>
+      listExecutionArtifacts(executionId ?? '', {
+        organization_id: organizationId ?? '',
+      }),
     refetchInterval: () => {
       if (!executionStatus || !ACTIVE_EXECUTION_STATUSES.has(executionStatus)) {
         return false

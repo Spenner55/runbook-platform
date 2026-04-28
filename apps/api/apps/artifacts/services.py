@@ -6,11 +6,15 @@ and download URL generation live here. Views and serializers delegate here.
 """
 
 import hashlib
+import json
+import logging
 import re
 import uuid
-from datetime import timedelta
+from datetime import UTC, timedelta
+from urllib.parse import urlencode
 
 from django.conf import settings
+from django.core import signing
 from django.core.cache import cache
 from django.db import models, transaction
 from django.utils import timezone
@@ -19,13 +23,27 @@ from apps.artifacts.models import Artifact
 from apps.artifacts.storage import ArtifactStorage
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor, AuditService
-from apps.common.exceptions import DomainValidationError, ExternalDependencyError, PayloadTooLargeError
-from apps.executions.models import Execution, ExecutionStep
+from apps.common.exceptions import (
+    DomainValidationError,
+    ExternalDependencyError,
+    InvalidStateTransitionError,
+    PayloadTooLargeError,
+)
+from apps.executions.models import Execution
 from apps.executions.services import _validate_runner_ownership
+from apps.integrations.services import IntegrationService
+
+logger = logging.getLogger(__name__)
 
 _SAFE_FILENAME_RE = re.compile(r"[^\w.\-]")
 _CHECKSUM_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_SAFE_NAME_LENGTH = 200
+_DOWNLOAD_TOKEN_SALT = "artifacts.download"
+_TERMINAL_EXECUTION_STATUSES = {
+    Execution.Status.SUCCEEDED,
+    Execution.Status.FAILED,
+    Execution.Status.CANCELLED,
+}
 
 
 def _sanitize_filename(name: str) -> str:
@@ -124,6 +142,87 @@ def _normalize_mime_type(kind: str, declared: str) -> str:
     return declared or "application/octet-stream"
 
 
+def _validate_metadata(metadata: dict) -> None:
+    if not isinstance(metadata, dict):
+        raise DomainValidationError(
+            code="artifact_invalid_metadata",
+            detail="Metadata must be a JSON object.",
+        )
+    try:
+        encoded = json.dumps(metadata)
+    except TypeError as exc:
+        raise DomainValidationError(
+            code="artifact_invalid_metadata",
+            detail="Metadata must be JSON serializable.",
+        ) from exc
+    if len(encoded.encode("utf-8")) > settings.ARTIFACT_MAX_METADATA_BYTES:
+        raise PayloadTooLargeError(
+            code="artifact_metadata_too_large",
+            detail=(
+                "Artifact metadata exceeds maximum size of "
+                f"{settings.ARTIFACT_MAX_METADATA_BYTES} bytes."
+            ),
+        )
+
+
+def _validate_mime_type(mime_type: str) -> None:
+    allowed = settings.ARTIFACT_ALLOWED_MIME_TYPES
+    if allowed and mime_type not in allowed:
+        raise DomainValidationError(
+            code="artifact_mime_type_not_allowed",
+            detail=f"Artifact MIME type '{mime_type}' is not allowed.",
+        )
+
+
+def _download_token_payload(artifact: Artifact, expires_at) -> dict:
+    return {
+        "artifact_id": str(artifact.id),
+        "organization_id": str(artifact.organization_id),
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+def create_download_token(*, artifact: Artifact, expires_at) -> str:
+    return signing.dumps(
+        _download_token_payload(artifact, expires_at),
+        salt=_DOWNLOAD_TOKEN_SALT,
+    )
+
+
+def validate_download_token(*, artifact: Artifact, token: str) -> None:
+    try:
+        payload = signing.loads(token, salt=_DOWNLOAD_TOKEN_SALT)
+    except signing.BadSignature as exc:
+        raise DomainValidationError(
+            code="artifact_download_token_invalid",
+            detail="Download token is invalid.",
+        ) from exc
+
+    if payload.get("artifact_id") != str(artifact.id) or payload.get(
+        "organization_id"
+    ) != str(artifact.organization_id):
+        raise DomainValidationError(
+            code="artifact_download_token_invalid",
+            detail="Download token does not match this artifact.",
+        )
+
+    expires_at_raw = payload.get("expires_at")
+    try:
+        expires_at = timezone.datetime.fromisoformat(expires_at_raw)
+    except (TypeError, ValueError) as exc:
+        raise DomainValidationError(
+            code="artifact_download_token_invalid",
+            detail="Download token expiry is invalid.",
+        ) from exc
+    if timezone.is_naive(expires_at):
+        expires_at = timezone.make_aware(expires_at, UTC)
+    if expires_at <= timezone.now():
+        raise DomainValidationError(
+            code="artifact_download_token_expired",
+            detail="Download token has expired.",
+        )
+
+
 def create_from_runner_upload(
     *,
     execution: Execution,
@@ -144,6 +243,12 @@ def create_from_runner_upload(
       3. Create DB row in transaction; on DB failure attempt storage delete
     """
     _validate_runner_ownership(execution, runner_id, claim_token)
+
+    if execution.status in _TERMINAL_EXECUTION_STATUSES:
+        raise InvalidStateTransitionError(
+            code="artifact_execution_terminal",
+            detail="Artifacts cannot be uploaded after execution has reached a terminal state.",
+        )
 
     if step is not None and str(step.execution_id) != str(execution.id):
         raise DomainValidationError(
@@ -179,14 +284,11 @@ def create_from_runner_upload(
 
     if metadata is None:
         metadata = {}
-    if not isinstance(metadata, dict):
-        raise DomainValidationError(
-            code="artifact_invalid_metadata",
-            detail="Metadata must be a JSON object.",
-        )
+    _validate_metadata(metadata)
 
     safe_name = _sanitize_filename(name) or f"{kind}.bin"
     mime_type = _normalize_mime_type(kind, declared_mime_type)
+    _validate_mime_type(mime_type)
 
     artifact_id = uuid.uuid4()
     storage_key = _generate_storage_key(
@@ -198,6 +300,12 @@ def create_from_runner_upload(
     )
 
     computed_checksum = _compute_sha256(file_obj)
+
+    if settings.ARTIFACT_REQUIRE_CHECKSUM and not declared_checksum_sha256:
+        raise DomainValidationError(
+            code="artifact_checksum_required",
+            detail="checksum_sha256 is required for artifact uploads.",
+        )
 
     if declared_checksum_sha256:
         if not _CHECKSUM_RE.match(declared_checksum_sha256):
@@ -241,6 +349,24 @@ def create_from_runner_upload(
                 content_disposition=Artifact.ContentDisposition.ATTACHMENT,
                 metadata=metadata,
             )
+            AuditService.emit(
+                organization_id=execution.organization_id,
+                actor_type=AuditEvent.ActorType.RUNNER,
+                actor_id=runner_id,
+                actor_label=runner_id,
+                event_type="artifact.uploaded",
+                object_type=AuditEvent.ObjectType.ARTIFACT,
+                object_id=artifact.id,
+                metadata={
+                    "execution_id": str(execution.id),
+                    "step_id": str(step.id) if step else None,
+                    "kind": kind,
+                    "name": safe_name,
+                    "mime_type": mime_type,
+                    "size_bytes": size_bytes,
+                    "checksum_sha256": computed_checksum,
+                },
+            )
     except Exception:
         try:
             storage.delete(storage_key)
@@ -248,29 +374,13 @@ def create_from_runner_upload(
             pass
         raise
 
-    try:
-        AuditService.emit(
-            organization_id=execution.organization_id,
-            actor_type=AuditEvent.ActorType.RUNNER,
-            actor_id=runner_id,
-            actor_label=runner_id,
-            event_type="artifact.uploaded",
-            object_type=AuditEvent.ObjectType.ARTIFACT,
-            object_id=artifact.id,
-            metadata={
-                "execution_id": str(execution.id),
-                "step_id": str(step.id) if step else None,
-                "kind": kind,
-                "name": safe_name,
-                "mime_type": mime_type,
-                "size_bytes": size_bytes,
-                "checksum_sha256": computed_checksum,
-            },
-        )
-    except Exception:
-        pass
-
     _increment_runner_daily_quota(runner_id, size_bytes)
+
+    _safe_notify_integration(
+        event_type="artifact.uploaded",
+        organization=artifact.organization,
+        context=_artifact_context(artifact=artifact, event_type="artifact.uploaded"),
+    )
 
     return artifact
 
@@ -306,9 +416,13 @@ def create_download_url(*, artifact: Artifact, actor: AuditActor) -> dict:
     now = timezone.now()
     expires_at = now + timedelta(seconds=ttl)
 
-    download_url = f"/api/v1/artifacts/{artifact.id}/content/"
+    token = create_download_token(artifact=artifact, expires_at=expires_at)
+    query = urlencode(
+        {"organization_id": str(artifact.organization_id), "token": token}
+    )
+    download_url = f"/api/v1/artifacts/{artifact.id}/content/?{query}"
 
-    try:
+    with transaction.atomic():
         AuditService.emit(
             organization_id=artifact.organization_id,
             actor_type=actor.actor_type,
@@ -326,8 +440,6 @@ def create_download_url(*, artifact: Artifact, actor: AuditActor) -> dict:
                 "expires_at": expires_at.isoformat(),
             },
         )
-    except Exception:
-        pass
 
     return {
         "artifact_id": str(artifact.id),
@@ -336,4 +448,34 @@ def create_download_url(*, artifact: Artifact, actor: AuditActor) -> dict:
         "method": "GET",
         "content_disposition": artifact.content_disposition,
         "filename": artifact.name,
+    }
+
+
+def _safe_notify_integration(*, event_type: str, organization, context: dict) -> None:
+    try:
+        IntegrationService.notify(
+            event_type=event_type,
+            organization=organization,
+            context=context,
+        )
+    except Exception:
+        logger.exception("Integration notify failed for %s.", event_type)
+
+
+def _artifact_context(*, artifact: Artifact, event_type: str) -> dict:
+    return {
+        "event_type": event_type,
+        "organization_id": str(artifact.organization_id),
+        "execution_id": str(artifact.execution_id),
+        "step_id": str(artifact.step_id) if artifact.step_id else None,
+        "artifact_id": str(artifact.id),
+        "kind": artifact.kind,
+        "name": artifact.name,
+        "mime_type": artifact.mime_type,
+        "size_bytes": artifact.size_bytes,
+        "checksum_sha256": artifact.checksum_sha256,
+        "upload_status": artifact.upload_status,
+        "uploaded_at": artifact.uploaded_at.isoformat()
+        if artifact.uploaded_at
+        else None,
     }

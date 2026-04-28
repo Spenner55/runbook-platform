@@ -36,6 +36,7 @@ urlpatterns = [
     path("approvals/", include("apps.approvals.urls")),
     path("policies/", include("apps.policies.urls")),
     path("audit/", include("apps.audit.urls")),
+    path("integrations/", include("apps.integrations.urls")),
     *artifact_public_urlpatterns,
     path(
         "executions/<uuid:execution_id>/audit/",

@@ -8,6 +8,7 @@ an active execution through their claim token.
 import logging
 
 from rest_framework import status as http_status
+from rest_framework.generics import get_object_or_404
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -15,7 +16,6 @@ from rest_framework.views import APIView
 from apps.artifacts import services as artifact_services
 from apps.artifacts.serializers import ArtifactSerializer, ArtifactUploadSerializer
 from apps.executions.models import Execution, ExecutionStep
-from rest_framework.generics import get_object_or_404
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,9 @@ class InternalStepArtifactUploadView(APIView):
             metadata=d.get("metadata", {}),
         )
 
-        return Response(ArtifactSerializer(artifact).data, status=http_status.HTTP_201_CREATED)
+        return Response(
+            ArtifactSerializer(artifact).data, status=http_status.HTTP_201_CREATED
+        )
 
 
 class InternalExecutionArtifactUploadView(APIView):
@@ -74,4 +76,6 @@ class InternalExecutionArtifactUploadView(APIView):
             metadata=d.get("metadata", {}),
         )
 
-        return Response(ArtifactSerializer(artifact).data, status=http_status.HTTP_201_CREATED)
+        return Response(
+            ArtifactSerializer(artifact).data, status=http_status.HTTP_201_CREATED
+        )

@@ -487,9 +487,8 @@ describe('ExecutionDetailPage', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('Artifacts')).toBeInTheDocument()
+      expect(screen.getByText('No artifacts uploaded yet.')).toBeInTheDocument()
     })
-    expect(screen.getByText('No artifacts uploaded yet.')).toBeInTheDocument()
   })
 
   it('renders artifact rows with name, kind, and download button', async () => {
@@ -666,16 +665,19 @@ describe('ExecutionDetailPage', () => {
 
     const downloadResponse = {
       artifact_id: 'artifact-1',
-      download_url: '/api/v1/artifacts/artifact-1/content/',
+      download_url:
+        '/api/v1/artifacts/artifact-1/content/?organization_id=org-1&token=signed-token',
       expires_at: '2026-04-15T10:10:00Z',
       method: 'GET',
       content_disposition: 'attachment',
       filename: 'stdout.txt',
     }
 
-    fetchMock.mockImplementation(async (input) => {
+    fetchMock.mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.includes('/artifacts/') && url.includes('/download/')) {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({ organization_id: 'org-1' })
         return createJsonResponse(downloadResponse)
       }
       if (url.includes('/artifacts/')) return createJsonResponse(artifacts)
@@ -696,10 +698,117 @@ describe('ExecutionDetailPage', () => {
 
     await waitFor(() => {
       expect(openSpy).toHaveBeenCalledWith(
-        '/api/v1/artifacts/artifact-1/content/',
+        '/api/v1/artifacts/artifact-1/content/?organization_id=org-1&token=signed-token',
         '_blank',
         'noopener,noreferrer',
       )
+    })
+  })
+
+  it('shows artifact list load errors', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: null,
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) {
+        return createJsonResponse(
+          { errors: [{ code: 'artifact_storage_failed', detail: 'Artifact store unavailable.' }] },
+          { status: 503 },
+        )
+      }
+      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Artifact store unavailable.')).toBeInTheDocument()
+    })
+  })
+
+  it('shows download errors on the artifact row', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: null,
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+    const artifacts = {
+      count: 1,
+      next: null,
+      previous: null,
+      results: [
+        {
+          id: 'artifact-1',
+          execution_id: 'execution-1',
+          step_id: null,
+          kind: 'stdout',
+          name: 'stdout.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: 100,
+          checksum_sha256: 'a'.repeat(64),
+          uploaded_by_runner_id: 'runner-dev',
+          uploaded_at: '2026-04-15T10:01:00Z',
+          metadata: {},
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/') && url.includes('/download/')) {
+        return createJsonResponse(
+          { errors: [{ code: 'audit_unavailable', detail: 'Download audit failed.' }] },
+          { status: 503 },
+        )
+      }
+      if (url.includes('/artifacts/')) return createJsonResponse(artifacts)
+      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Download/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Download/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Download audit failed.')).toBeInTheDocument()
     })
   })
 })

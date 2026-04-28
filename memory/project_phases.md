@@ -4,11 +4,11 @@ description: Which implementation phases have been completed and verified
 type: project
 ---
 
-Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28.
+Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28 after readiness-audit remediation.
 
 **Why:** Phase 10.4 adds Django-controlled artifact storage and retrieval for execution outputs.
 
-**How to apply:** Next phase is Phase 10.5 (Integrations). Do not re-implement artifact infrastructure.
+**How to apply:** Next phase is Phase 10.5 (Integrations). Do not re-implement artifact infrastructure. Use the grant-gated artifact download API and pass `organization_id` on public artifact calls until Phase 10.7 auth replaces explicit tenant scoping.
 
 ## Phase completion summary
 
@@ -28,9 +28,9 @@ Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28.
 
 | Suite | Tests | Notes |
 |---|---|---|
-| Django API | 324 | Includes 37 new artifact tests |
-| Runner | 71 | Includes 10 new artifact uploader tests |
-| Frontend (Vitest) | 49 | Includes 5 new artifact UI tests |
+| Django API | 342 | Includes artifact readiness remediation tests |
+| Runner | 72 | Includes runner multipart artifact upload contract test |
+| Frontend (Vitest) | 51 | Includes artifact list and download error tests |
 
 ## Phase 10.4 key implementation details
 
@@ -38,7 +38,9 @@ Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28.
 - ArtifactStorage wraps local filesystem (ARTIFACT_MEDIA_ROOT), S3-ready abstraction
 - Internal upload: POST /api/v1/internal/executions/{id}/steps/{step_id}/artifacts/
 - Public listing: GET /api/v1/executions/{id}/artifacts/
-- Download URL: POST /api/v1/artifacts/{id}/download/ → /api/v1/artifacts/{id}/content/
+- Download URL: POST /api/v1/artifacts/{id}/download/ with `organization_id` → signed, expiring /api/v1/artifacts/{id}/content/?organization_id=...&token=...
 - Audit events: artifact.uploaded, artifact.download_url_created
 - Runner: ArtifactUploader uploads stdout/stderr before terminal step status
 - Quotas: 50MB/artifact, 250MB/execution, 1GB/runner/day (cache-backed)
+- Public artifact list/download/content APIs require `organization_id` until Phase 10.7 auth.
+- Uploads after terminal execution are rejected.

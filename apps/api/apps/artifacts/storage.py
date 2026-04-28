@@ -6,8 +6,10 @@ any service code, since services depend only on ArtifactStorage.
 """
 
 import os
+from pathlib import Path
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured, SuspiciousFileOperation
 
 
 class ArtifactStorage:
@@ -18,8 +20,20 @@ class ArtifactStorage:
     The storage_key is used directly as a relative path under that root.
     """
 
+    def __init__(self) -> None:
+        if settings.ARTIFACT_STORAGE_BACKEND != "local":
+            raise ImproperlyConfigured(
+                "Only local artifact storage is implemented in Phase 10.4. "
+                "S3 settings are validated for production readiness, but the S3 backend "
+                "is implemented in a later infrastructure phase."
+            )
+
     def _full_path(self, storage_key: str) -> str:
-        return os.path.join(settings.ARTIFACT_MEDIA_ROOT, storage_key)
+        root = Path(settings.ARTIFACT_MEDIA_ROOT).resolve()
+        full_path = (root / storage_key).resolve()
+        if os.path.commonpath([str(root), str(full_path)]) != str(root):
+            raise SuspiciousFileOperation("Artifact storage key escapes media root.")
+        return str(full_path)
 
     def save(self, storage_key: str, file_obj) -> None:
         full_path = self._full_path(storage_key)

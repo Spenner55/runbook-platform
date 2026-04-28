@@ -5,7 +5,15 @@ from apps.artifacts.models import Artifact
 
 @admin.register(Artifact)
 class ArtifactAdmin(admin.ModelAdmin):
-    list_display = ["id", "name", "kind", "upload_status", "size_bytes", "uploaded_at", "execution"]
+    list_display = [
+        "id",
+        "name",
+        "kind",
+        "upload_status",
+        "size_bytes",
+        "uploaded_at",
+        "execution",
+    ]
     list_filter = ["kind", "upload_status"]
     search_fields = ["name", "uploaded_by_runner_id"]
     readonly_fields = [

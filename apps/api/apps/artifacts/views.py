@@ -5,6 +5,7 @@ Never exposes storage_key or claim tokens.
 """
 
 import logging
+from uuid import UUID
 
 from django.http import FileResponse
 from rest_framework import status as http_status
@@ -23,11 +24,32 @@ from apps.executions.models import Execution
 logger = logging.getLogger(__name__)
 
 
+def _require_organization_id(request) -> str:
+    organization_id = request.query_params.get("organization_id") or request.data.get(
+        "organization_id"
+    )
+    if not organization_id:
+        raise DomainValidationError(
+            code="artifact_organization_required",
+            detail="organization_id is required.",
+        )
+    try:
+        return str(UUID(str(organization_id)))
+    except ValueError as exc:
+        raise DomainValidationError(
+            code="artifact_organization_invalid",
+            detail="organization_id must be a UUID.",
+        ) from exc
+
+
 class ExecutionArtifactListView(APIView):
     """GET /api/v1/executions/{execution_id}/artifacts/"""
 
     def get(self, request, execution_id):
-        execution = get_object_or_404(Execution, pk=execution_id)
+        organization_id = _require_organization_id(request)
+        execution = get_object_or_404(
+            Execution, pk=execution_id, organization_id=organization_id
+        )
 
         step_id = request.query_params.get("step_id")
         kind = request.query_params.get("kind")
@@ -69,8 +91,12 @@ class ArtifactDownloadView(APIView):
     """POST /api/v1/artifacts/{artifact_id}/download/"""
 
     def post(self, request, artifact_id):
+        organization_id = _require_organization_id(request)
         artifact = get_object_or_404(
-            Artifact, pk=artifact_id, upload_status=Artifact.UploadStatus.AVAILABLE
+            Artifact,
+            pk=artifact_id,
+            organization_id=organization_id,
+            upload_status=Artifact.UploadStatus.AVAILABLE,
         )
         actor = actor_from_request(request)
         result = artifact_services.create_download_url(artifact=artifact, actor=actor)
@@ -87,13 +113,31 @@ class ArtifactContentView(APIView):
     """
 
     def get(self, request, artifact_id):
+        organization_id = _require_organization_id(request)
+        token = request.query_params.get("token")
+        if not token:
+            raise DomainValidationError(
+                code="artifact_download_token_required",
+                detail="Download token is required.",
+            )
         artifact = get_object_or_404(
-            Artifact, pk=artifact_id, upload_status=Artifact.UploadStatus.AVAILABLE
+            Artifact,
+            pk=artifact_id,
+            organization_id=organization_id,
+            upload_status=Artifact.UploadStatus.AVAILABLE,
         )
+        artifact_services.validate_download_token(artifact=artifact, token=token)
         storage = ArtifactStorage()
         if not storage.exists(artifact.storage_key):
             return Response(
-                {"errors": [{"code": "artifact_not_found", "detail": "Artifact file not found in storage."}]},
+                {
+                    "errors": [
+                        {
+                            "code": "artifact_not_found",
+                            "detail": "Artifact file not found in storage.",
+                        }
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 

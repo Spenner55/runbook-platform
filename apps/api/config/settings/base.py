@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = BASE_DIR
@@ -36,6 +37,7 @@ INSTALLED_APPS = [
     "apps.policies.apps.PoliciesConfig",
     "apps.audit.apps.AuditConfig",
     "apps.artifacts.apps.ArtifactsConfig",
+    "apps.integrations.apps.IntegrationsConfig",
 ]
 
 MIDDLEWARE = [
@@ -103,9 +105,25 @@ CORS_ALLOWED_ORIGINS = [
 # AI service settings
 AI_BASE_URL = env("AI_BASE_URL", default="http://ai:8001")
 
+# Integration settings
+INTEGRATION_FERNET_KEY = env("INTEGRATION_FERNET_KEY", default="")
+INTEGRATION_DISPATCH_TIMEOUT_SECONDS = env.float(
+    "INTEGRATION_DISPATCH_TIMEOUT_SECONDS", default=3.0
+)
+
 # Artifact storage settings
-ARTIFACT_MEDIA_ROOT = env("ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts"))
-ARTIFACT_MAX_UPLOAD_BYTES = env.int("ARTIFACT_MAX_UPLOAD_BYTES", default=52428800)  # 50 MB
+ARTIFACT_STORAGE_BACKEND = env("ARTIFACT_STORAGE_BACKEND", default="local")
+ARTIFACT_MEDIA_ROOT = env(
+    "ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts")
+)
+ARTIFACT_S3_BUCKET = env("ARTIFACT_S3_BUCKET", default="")
+ARTIFACT_S3_REGION = env("ARTIFACT_S3_REGION", default="")
+ARTIFACT_S3_PREFIX = env("ARTIFACT_S3_PREFIX", default="artifacts/")
+ARTIFACT_ALLOWED_MIME_TYPES = env.list("ARTIFACT_ALLOWED_MIME_TYPES", default=[])
+ARTIFACT_REQUIRE_CHECKSUM = env.bool("ARTIFACT_REQUIRE_CHECKSUM", default=True)
+ARTIFACT_MAX_UPLOAD_BYTES = env.int(
+    "ARTIFACT_MAX_UPLOAD_BYTES", default=52428800
+)  # 50 MB
 ARTIFACT_MAX_ARTIFACTS_PER_STEP = env.int("ARTIFACT_MAX_ARTIFACTS_PER_STEP", default=10)
 ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION = env.int(
     "ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION", default=262144000
@@ -113,10 +131,24 @@ ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION = env.int(
 ARTIFACT_DAILY_BYTES_PER_RUNNER = env.int(
     "ARTIFACT_DAILY_BYTES_PER_RUNNER", default=1073741824
 )  # 1 GB
-ARTIFACT_DOWNLOAD_URL_TTL_SECONDS = env.int("ARTIFACT_DOWNLOAD_URL_TTL_SECONDS", default=300)
+ARTIFACT_DOWNLOAD_URL_TTL_SECONDS = env.int(
+    "ARTIFACT_DOWNLOAD_URL_TTL_SECONDS", default=300
+)
+ARTIFACT_MAX_METADATA_BYTES = env.int("ARTIFACT_MAX_METADATA_BYTES", default=8192)
 ARTIFACT_STDOUT_STDERR_MAX_BYTES = env.int(
     "ARTIFACT_STDOUT_STDERR_MAX_BYTES", default=5242880
 )  # 5 MB
+if ARTIFACT_STORAGE_BACKEND not in {"local", "s3"}:
+    raise ImproperlyConfigured(
+        "ARTIFACT_STORAGE_BACKEND must be either 'local' or 's3'."
+    )
+if ARTIFACT_STORAGE_BACKEND == "s3" and (
+    not ARTIFACT_S3_BUCKET or not ARTIFACT_S3_REGION
+):
+    raise ImproperlyConfigured(
+        "ARTIFACT_S3_BUCKET and ARTIFACT_S3_REGION are required when "
+        "ARTIFACT_STORAGE_BACKEND=s3."
+    )
 AI_CONNECT_TIMEOUT_SECONDS = env.float("AI_CONNECT_TIMEOUT_SECONDS", default=1.0)
 AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=20.0)
 AI_WRITE_TIMEOUT_SECONDS = env.float("AI_WRITE_TIMEOUT_SECONDS", default=5.0)

@@ -10,10 +10,10 @@ interface DownloadState {
 export function useArtifactDownload() {
   const [state, setState] = useState<DownloadState>({ isLoading: false, error: null })
 
-  async function download(artifactId: string) {
+  async function download(artifactId: string, organizationId: string) {
     setState({ isLoading: true, error: null })
     try {
-      const result = await createArtifactDownloadUrl(artifactId)
+      const result = await createArtifactDownloadUrl(artifactId, organizationId)
       window.open(result.download_url, '_blank', 'noopener,noreferrer')
       setState({ isLoading: false, error: null })
     } catch (err) {

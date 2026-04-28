@@ -149,7 +149,13 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
-function ArtifactRow({ artifact }: { artifact: Artifact }) {
+function ArtifactRow({
+  artifact,
+  organizationId,
+}: {
+  artifact: Artifact
+  organizationId: string
+}) {
   const { isLoading, error, download } = useArtifactDownload()
   const isTruncated = artifact.metadata?.truncated === true
 
@@ -173,7 +179,7 @@ function ArtifactRow({ artifact }: { artifact: Artifact }) {
           type="button"
           className="button button--sm"
           disabled={isLoading}
-          onClick={() => download(artifact.id)}
+          onClick={() => download(artifact.id, organizationId)}
         >
           {isLoading ? 'Loading…' : 'Download'}
         </button>
@@ -184,10 +190,12 @@ function ArtifactRow({ artifact }: { artifact: Artifact }) {
 
 function ArtifactsPanel({
   artifacts,
+  organizationId,
   isLoading,
   error,
 }: {
   artifacts: Artifact[]
+  organizationId: string
   isLoading: boolean
   error: unknown
 }) {
@@ -202,7 +210,11 @@ function ArtifactsPanel({
       {artifacts.length > 0 ? (
         <ol className="step-list">
           {artifacts.map((artifact) => (
-            <ArtifactRow key={artifact.id} artifact={artifact} />
+            <ArtifactRow
+              key={artifact.id}
+              artifact={artifact}
+              organizationId={organizationId}
+            />
           ))}
         </ol>
       ) : null}
@@ -220,6 +232,7 @@ export function ExecutionDetailPage() {
   })
   const artifactsQuery = useExecutionArtifacts(
     executionId ?? null,
+    executionQuery.data?.organization_id ?? null,
     executionQuery.data?.status ?? null,
   )
 
@@ -315,6 +328,7 @@ export function ExecutionDetailPage() {
 
           <ArtifactsPanel
             artifacts={artifactsQuery.data?.results ?? []}
+            organizationId={executionQuery.data.organization_id}
             isLoading={artifactsQuery.isLoading}
             error={artifactsQuery.error}
           />

@@ -1,6 +1,7 @@
 import io
 
 import pytest
+from django.core.cache import cache
 
 from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
@@ -68,3 +69,11 @@ def small_file():
 def artifact_media_root(tmp_path, settings):
     settings.ARTIFACT_MEDIA_ROOT = str(tmp_path / "artifacts")
     return settings.ARTIFACT_MEDIA_ROOT
+
+
+@pytest.fixture(autouse=True)
+def artifact_test_settings(settings):
+    cache.clear()
+    settings.ARTIFACT_REQUIRE_CHECKSUM = False
+    settings.ARTIFACT_ALLOWED_MIME_TYPES = []
+    settings.ARTIFACT_MAX_METADATA_BYTES = 8192

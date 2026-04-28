@@ -405,8 +405,12 @@ def test_executor_uploads_stdout_before_succeeded_step_update():
     """Artifact upload must happen before update_step(succeeded)."""
     call_order = []
     client = make_client()
-    client.upload_artifact.side_effect = lambda *a, **kw: call_order.append("upload") or MagicMock()
-    client.update_step.side_effect = lambda *a, **kw: call_order.append("update_step") or MagicMock()
+    client.upload_artifact.side_effect = lambda *a, **kw: (
+        call_order.append("upload") or MagicMock()
+    )
+    client.update_step.side_effect = lambda *a, **kw: (
+        call_order.append("update_step") or MagicMock()
+    )
 
     executor = Executor(client)
     execution = make_execution([make_step(1)])
@@ -421,8 +425,12 @@ def test_executor_uploads_stderr_on_failed_step_before_update():
     """Stderr artifact must be uploaded before update_step(failed) for FAIL_STEP."""
     call_order = []
     client = make_client()
-    client.upload_artifact.side_effect = lambda *a, **kw: call_order.append("upload") or MagicMock()
-    client.update_step.side_effect = lambda *a, **kw: call_order.append("update_step") or MagicMock()
+    client.upload_artifact.side_effect = lambda *a, **kw: (
+        call_order.append("upload") or MagicMock()
+    )
+    client.update_step.side_effect = lambda *a, **kw: (
+        call_order.append("update_step") or MagicMock()
+    )
 
     executor = Executor(client)
     execution = make_execution([make_step(1, command="FAIL_STEP")])
@@ -446,7 +454,8 @@ def test_artifact_upload_failure_does_not_affect_step_outcome():
 
     assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
     succeeded_updates = [
-        c for c in client.update_step.call_args_list
+        c
+        for c in client.update_step.call_args_list
         if c.kwargs.get("status") == "succeeded"
     ]
     assert len(succeeded_updates) == 1

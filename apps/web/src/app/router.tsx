@@ -3,6 +3,8 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppLayout } from './AppLayout'
 import { ApprovalsInboxPage } from '../routes/approvals/ApprovalsInboxPage'
 import { ExecutionDetailPage } from '../routes/executions/ExecutionDetailPage'
+import { IntegrationDetailPage } from '../routes/integrations/IntegrationDetailPage'
+import { IntegrationsPage } from '../routes/integrations/IntegrationsPage'
 import { OrganizationsPage } from '../routes/organizations/OrganizationsPage'
 import { PoliciesPage } from '../routes/policies/PoliciesPage'
 import { PolicyDetailPage } from '../routes/policies/PolicyDetailPage'
@@ -24,6 +26,8 @@ export const router = createBrowserRouter([
       { path: 'approvals', element: <ApprovalsInboxPage /> },
       { path: 'policies', element: <PoliciesPage /> },
       { path: 'policies/:policyId', element: <PolicyDetailPage /> },
+      { path: 'integrations', element: <IntegrationsPage /> },
+      { path: 'integrations/:integrationId', element: <IntegrationDetailPage /> },
     ],
   },
 ])
