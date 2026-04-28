@@ -4,10 +4,26 @@ from urllib.parse import urlparse
 
 from django.core.exceptions import ValidationError
 
-UNSAFE_HOSTNAMES = {"localhost", "localhost.localdomain"}
+UNSAFE_HOSTNAMES = {
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+}
 METADATA_IPS = {
     ipaddress.ip_address("169.254.169.254"),
     ipaddress.ip_address("100.100.100.200"),
+}
+UNSAFE_PORTS = {
+    22,  # SSH
+    2375,  # Docker API
+    2376,  # Docker API TLS
+    3306,  # MySQL
+    5432,  # PostgreSQL
+    6379,  # Redis
+    9200,  # Elasticsearch
+    9300,  # Elasticsearch transport
+    11211,  # Memcached
+    27017,  # MongoDB
 }
 
 
@@ -19,9 +35,19 @@ def validate_outbound_url(url: str) -> str:
         raise ValidationError("Integration URL must include a hostname.")
     if parsed.username or parsed.password:
         raise ValidationError("Integration URL must not include user info.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValidationError("Integration URL includes an invalid port.") from exc
+    if port in UNSAFE_PORTS:
+        raise ValidationError("Integration URL must not target internal service ports.")
 
     hostname = parsed.hostname.rstrip(".").lower()
-    if hostname in UNSAFE_HOSTNAMES or hostname.endswith(".localhost"):
+    if (
+        hostname in UNSAFE_HOSTNAMES
+        or hostname.endswith(".localhost")
+        or hostname.endswith(".local")
+    ):
         raise ValidationError("Integration URL must not target localhost.")
 
     addresses = _resolve_host_addresses(hostname)

@@ -180,19 +180,23 @@ def test_cancel_non_queued_execution_raises(published_workflow):
 
 
 @pytest.mark.django_db
-def test_execution_completion_triggers_notify(published_workflow):
+def test_execution_completion_triggers_notify(
+    published_workflow, django_capture_on_commit_callbacks
+):
     services.create_execution(workflow=published_workflow)
     claimed = services.claim_next_execution(runner_id="runner-1")
     execution = claimed["execution"]
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        completed = services.complete_execution(
-            execution=execution,
-            runner_id="runner-1",
-            claim_token=claimed["claim_token"],
-            outcome=Execution.Status.SUCCEEDED,
-        )
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            completed = services.complete_execution(
+                execution=execution,
+                runner_id="runner-1",
+                claim_token=claimed["claim_token"],
+                outcome=Execution.Status.SUCCEEDED,
+            )
 
+    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution.completed"
@@ -200,28 +204,32 @@ def test_execution_completion_triggers_notify(published_workflow):
     assert kwargs["context"]["event_type"] == "execution.completed"
     assert kwargs["context"]["execution_id"] == str(completed.id)
     assert kwargs["context"]["workflow_id"] == str(completed.workflow_id)
+    assert kwargs["context"]["workflow_name"] == completed.workflow_snapshot["name"]
 
 
 @pytest.mark.django_db
 def test_execution_failure_triggers_notify_and_excludes_secrets_and_output(
-    published_workflow,
+    published_workflow, django_capture_on_commit_callbacks
 ):
     services.create_execution(workflow=published_workflow)
     claimed = services.claim_next_execution(runner_id="runner-1")
     execution = claimed["execution"]
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        failed = services.complete_execution(
-            execution=execution,
-            runner_id="runner-1",
-            claim_token=claimed["claim_token"],
-            outcome=Execution.Status.FAILED,
-        )
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            failed = services.complete_execution(
+                execution=execution,
+                runner_id="runner-1",
+                claim_token=claimed["claim_token"],
+                outcome=Execution.Status.FAILED,
+            )
 
+    assert len(callbacks) == 1
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution.failed"
     assert kwargs["context"]["event_type"] == "execution.failed"
     assert kwargs["context"]["execution_id"] == str(failed.id)
+    assert kwargs["context"]["workflow_name"] == failed.workflow_snapshot["name"]
     payload_text = str(kwargs["context"])
     assert str(claimed["claim_token"]) not in payload_text
     assert "raw_output" not in payload_text
@@ -229,7 +237,9 @@ def test_execution_failure_triggers_notify_and_excludes_secrets_and_output(
 
 
 @pytest.mark.django_db
-def test_notify_failure_does_not_fail_execution_completion(published_workflow):
+def test_notify_failure_does_not_fail_execution_completion(
+    published_workflow, django_capture_on_commit_callbacks
+):
     services.create_execution(workflow=published_workflow)
     claimed = services.claim_next_execution(runner_id="runner-1")
     execution = claimed["execution"]
@@ -238,37 +248,44 @@ def test_notify_failure_does_not_fail_execution_completion(published_workflow):
         "apps.executions.services.IntegrationService.notify",
         side_effect=RuntimeError("dispatch unavailable"),
     ):
-        completed = services.complete_execution(
-            execution=execution,
-            runner_id="runner-1",
-            claim_token=claimed["claim_token"],
-            outcome=Execution.Status.SUCCEEDED,
-        )
+        with django_capture_on_commit_callbacks(execute=True):
+            completed = services.complete_execution(
+                execution=execution,
+                runner_id="runner-1",
+                claim_token=claimed["claim_token"],
+                outcome=Execution.Status.SUCCEEDED,
+            )
 
     completed.refresh_from_db()
     assert completed.status == Execution.Status.SUCCEEDED
 
 
 @pytest.mark.django_db
-def test_step_failure_triggers_notify_with_step_identifiers(published_workflow):
+def test_step_failure_triggers_notify_with_step_identifiers(
+    published_workflow, django_capture_on_commit_callbacks
+):
     services.create_execution(workflow=published_workflow)
     claimed = services.claim_next_execution(runner_id="runner-1")
     execution = claimed["execution"]
     step = execution.steps.order_by("position").first()
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        updated = services.update_execution_step(
-            execution=execution,
-            step_id=str(step.id),
-            runner_id="runner-1",
-            claim_token=claimed["claim_token"],
-            new_status=ExecutionStep.Status.FAILED,
-            error_message="raw output should stay out",
-        )
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            updated = services.update_execution_step(
+                execution=execution,
+                step_id=str(step.id),
+                runner_id="runner-1",
+                claim_token=claimed["claim_token"],
+                new_status=ExecutionStep.Status.FAILED,
+                error_message="raw output should stay out",
+            )
 
+    assert len(callbacks) == 1
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution_step.failed"
     assert kwargs["context"]["event_type"] == "execution_step.failed"
     assert kwargs["context"]["execution_id"] == str(execution.id)
     assert kwargs["context"]["step_id"] == str(updated.id)
+    assert kwargs["context"]["step_name"] == updated.name
+    assert kwargs["context"]["step_position"] == updated.position
     assert "raw output should stay out" not in str(kwargs["context"])

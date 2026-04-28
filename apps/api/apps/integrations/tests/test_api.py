@@ -12,7 +12,6 @@ from apps.integrations.models import (
 from apps.integrations.services import EVENT_EXECUTION_FAILED, IntegrationService
 from apps.organizations.models import Organization
 
-
 RAW_WEBHOOK_URL = "https://hooks.example.com/services/raw-secret-token"
 
 

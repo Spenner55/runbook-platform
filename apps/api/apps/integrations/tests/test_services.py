@@ -248,6 +248,83 @@ def test_event_type_filtering_works(
 
 
 @pytest.mark.django_db
+def test_notify_respects_max_per_trigger(
+    org, integration_fernet_key, monkeypatch, disable_ssrf_validation, settings
+):
+    settings.INTEGRATION_MAX_PER_TRIGGER = 1
+    _connection(org=org, integration_fernet_key=integration_fernet_key, name="First")
+    _connection(org=org, integration_fernet_key=integration_fernet_key, name="Second")
+    requests = []
+    monkeypatch.setattr(
+        IntegrationService,
+        "http_client_factory",
+        _mock_client_factory(
+            lambda request: requests.append(request) or httpx.Response(204)
+        ),
+    )
+
+    IntegrationService.notify(
+        event_type=EVENT_EXECUTION_FAILED,
+        organization=org,
+        context={"execution_id": "exec-1"},
+    )
+
+    assert len(requests) == 1
+    assert IntegrationDeliveryAttempt.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_notify_respects_dispatch_budget(
+    org, integration_fernet_key, monkeypatch, disable_ssrf_validation, settings
+):
+    settings.INTEGRATION_DISPATCH_BUDGET_SECONDS = 0
+    _connection(org=org, integration_fernet_key=integration_fernet_key)
+    requests = []
+    monkeypatch.setattr(
+        IntegrationService,
+        "http_client_factory",
+        _mock_client_factory(
+            lambda request: requests.append(request) or httpx.Response(204)
+        ),
+    )
+
+    IntegrationService.notify(
+        event_type=EVENT_EXECUTION_FAILED,
+        organization=org,
+        context={"execution_id": "exec-1"},
+    )
+
+    assert requests == []
+    assert IntegrationDeliveryAttempt.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_notify_continues_after_connection_failure(
+    org, integration_fernet_key, monkeypatch
+):
+    first = _connection(org=org, integration_fernet_key=integration_fernet_key)
+    second = _connection(
+        org=org, integration_fernet_key=integration_fernet_key, name="Second"
+    )
+    notified = []
+
+    def notify_connection(*, connection, event_type, context):
+        notified.append(connection.id)
+        if connection.id == first.id:
+            raise RuntimeError("record attempt failed")
+
+    monkeypatch.setattr(IntegrationService, "_notify_connection", notify_connection)
+
+    IntegrationService.notify(
+        event_type=EVENT_EXECUTION_FAILED,
+        organization=org,
+        context={"execution_id": "exec-1"},
+    )
+
+    assert notified == [first.id, second.id]
+
+
+@pytest.mark.django_db
 def test_credential_decryption_failure_records_failed_attempt(
     org, integration_fernet_key, monkeypatch, disable_ssrf_validation
 ):

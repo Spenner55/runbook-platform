@@ -179,6 +179,9 @@ class IntegrationService:
     ) -> None:
         try:
             organization_id = getattr(organization, "id", organization)
+            started = time.monotonic()
+            notified_count = 0
+            max_per_trigger = cls._max_per_trigger()
             connections = IntegrationConnection.objects.filter(
                 organization_id=organization_id,
                 is_active=True,
@@ -187,11 +190,40 @@ class IntegrationService:
             for connection in connections:
                 if not cls._matches_event_type(connection, event_type):
                     continue
-                cls._notify_connection(
-                    connection=connection,
-                    event_type=event_type,
-                    context=context or {},
-                )
+                if notified_count >= max_per_trigger:
+                    logger.warning(
+                        "Integration notification skipped after max-per-trigger limit.",
+                        extra={
+                            "organization_id": str(organization_id),
+                            "event_type": event_type,
+                            "max_per_trigger": max_per_trigger,
+                        },
+                    )
+                    break
+                if cls._dispatch_budget_exhausted(started):
+                    logger.warning(
+                        "Integration notification skipped after dispatch budget.",
+                        extra={
+                            "organization_id": str(organization_id),
+                            "event_type": event_type,
+                        },
+                    )
+                    break
+                try:
+                    cls._notify_connection(
+                        connection=connection,
+                        event_type=event_type,
+                        context=context or {},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Integration notification failed for one connection.",
+                        extra={
+                            "integration_id": str(connection.id),
+                            "event_type": event_type,
+                        },
+                    )
+                notified_count += 1
         except Exception:
             logger.exception("Integration notification dispatch failed before completion.")
 
@@ -412,6 +444,21 @@ class IntegrationService:
     @staticmethod
     def _timeout_seconds() -> float:
         return float(getattr(settings, "INTEGRATION_DISPATCH_TIMEOUT_SECONDS", 3.0))
+
+    @staticmethod
+    def _dispatch_budget_seconds() -> float:
+        return float(getattr(settings, "INTEGRATION_DISPATCH_BUDGET_SECONDS", 10.0))
+
+    @staticmethod
+    def _max_per_trigger() -> int:
+        return max(0, int(getattr(settings, "INTEGRATION_MAX_PER_TRIGGER", 25)))
+
+    @classmethod
+    def _dispatch_budget_exhausted(cls, started: float) -> bool:
+        budget_seconds = cls._dispatch_budget_seconds()
+        if budget_seconds <= 0:
+            return True
+        return time.monotonic() - started >= budget_seconds
 
     @staticmethod
     def _safe_error_detail(exc: Exception) -> str:

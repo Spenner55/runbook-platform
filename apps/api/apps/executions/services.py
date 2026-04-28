@@ -556,24 +556,28 @@ def _emit_step_transition_audit(
 
 
 def _safe_notify_integration(*, event_type: str, organization, context: dict) -> None:
-    try:
-        IntegrationService.notify(
-            event_type=event_type,
-            organization=organization,
-            context=context,
-        )
-    except Exception:
-        logger.exception("Integration notify failed for %s.", event_type)
+    def notify() -> None:
+        try:
+            IntegrationService.notify(
+                event_type=event_type,
+                organization=organization,
+                context=dict(context),
+            )
+        except Exception:
+            logger.exception("Integration notify failed for %s.", event_type)
+
+    transaction.on_commit(notify)
 
 
 def _execution_context(
     *, execution: Execution, event_type: str, previous_status: str = ""
 ) -> dict:
-    return {
+    context = {
         "event_type": event_type,
         "organization_id": str(execution.organization_id),
         "execution_id": str(execution.id),
         "workflow_id": str(execution.workflow_id),
+        "workflow_name": _workflow_name(execution),
         "workflow_version": execution.workflow_version,
         "execution_status": execution.status,
         "previous_status": previous_status,
@@ -582,6 +586,16 @@ def _execution_context(
         if execution.finished_at
         else None,
     }
+    if event_type == "execution.failed":
+        failed_step = execution.steps.filter(
+            status=ExecutionStep.Status.FAILED
+        ).order_by("position").first()
+        if failed_step:
+            context["failed_step_id"] = str(failed_step.id)
+            context["failed_step_key"] = failed_step.step_key
+            context["failed_step_name"] = failed_step.name
+            context["failed_step_position"] = failed_step.position
+    return context
 
 
 def _step_context(
@@ -599,6 +613,7 @@ def _step_context(
         "workflow_id": str(execution.workflow_id),
         "step_id": str(step.id),
         "step_key": step.step_key,
+        "step_name": step.name,
         "step_position": step.position,
         "step_type": step.step_type,
         "risk_level": step.risk_level,
@@ -606,3 +621,8 @@ def _step_context(
         "new_status": new_status,
         "exit_code": step.exit_code,
     }
+
+
+def _workflow_name(execution: Execution) -> str:
+    name = execution.workflow_snapshot.get("name")
+    return name if isinstance(name, str) and name else ""

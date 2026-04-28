@@ -99,19 +99,26 @@ def test_create_emits_audit_event(
 
 @pytest.mark.django_db
 def test_create_from_runner_upload_triggers_notify(
-    org, claimed_execution, claim_token, step, artifact_media_root
+    org,
+    claimed_execution,
+    claim_token,
+    step,
+    artifact_media_root,
+    django_capture_on_commit_callbacks,
 ):
     with patch("apps.artifacts.services.IntegrationService.notify") as notify:
-        artifact = artifact_services.create_from_runner_upload(
-            execution=claimed_execution,
-            step=step,
-            runner_id="runner-test",
-            claim_token=claim_token,
-            kind="stdout",
-            name="stdout.txt",
-            file_obj=_make_file(b"artifact notify\n"),
-        )
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            artifact = artifact_services.create_from_runner_upload(
+                execution=claimed_execution,
+                step=step,
+                runner_id="runner-test",
+                claim_token=claim_token,
+                kind="stdout",
+                name="stdout.txt",
+                file_obj=_make_file(b"artifact notify\n"),
+            )
 
+    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "artifact.uploaded"
@@ -124,21 +131,27 @@ def test_create_from_runner_upload_triggers_notify(
 
 @pytest.mark.django_db
 def test_notify_failure_does_not_fail_artifact_upload(
-    org, claimed_execution, claim_token, step, artifact_media_root
+    org,
+    claimed_execution,
+    claim_token,
+    step,
+    artifact_media_root,
+    django_capture_on_commit_callbacks,
 ):
     with patch(
         "apps.artifacts.services.IntegrationService.notify",
         side_effect=RuntimeError("dispatch unavailable"),
     ):
-        artifact = artifact_services.create_from_runner_upload(
-            execution=claimed_execution,
-            step=step,
-            runner_id="runner-test",
-            claim_token=claim_token,
-            kind="stdout",
-            name="stdout.txt",
-            file_obj=_make_file(b"artifact notify failure\n"),
-        )
+        with django_capture_on_commit_callbacks(execute=True):
+            artifact = artifact_services.create_from_runner_upload(
+                execution=claimed_execution,
+                step=step,
+                runner_id="runner-test",
+                claim_token=claim_token,
+                kind="stdout",
+                name="stdout.txt",
+                file_obj=_make_file(b"artifact notify failure\n"),
+            )
 
     artifact.refresh_from_db()
     assert artifact.upload_status == Artifact.UploadStatus.AVAILABLE

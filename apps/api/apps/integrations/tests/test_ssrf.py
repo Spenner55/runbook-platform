@@ -17,6 +17,10 @@ from apps.integrations.ssrf import validate_outbound_url
         "https://169.254.169.254/latest/meta-data",
         "https://[::1]/webhook",
         "https://[fe80::1]/webhook",
+        "https://ops.local/webhook",
+        "https://metadata.google.internal/computeMetadata/v1",
+        "https://user:pass@example.com/webhook",
+        "https://example.com:5432/webhook",
     ],
 )
 def test_ssrf_validator_blocks_private_metadata_local_urls(url):

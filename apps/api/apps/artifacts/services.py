@@ -452,14 +452,17 @@ def create_download_url(*, artifact: Artifact, actor: AuditActor) -> dict:
 
 
 def _safe_notify_integration(*, event_type: str, organization, context: dict) -> None:
-    try:
-        IntegrationService.notify(
-            event_type=event_type,
-            organization=organization,
-            context=context,
-        )
-    except Exception:
-        logger.exception("Integration notify failed for %s.", event_type)
+    def notify() -> None:
+        try:
+            IntegrationService.notify(
+                event_type=event_type,
+                organization=organization,
+                context=dict(context),
+            )
+        except Exception:
+            logger.exception("Integration notify failed for %s.", event_type)
+
+    transaction.on_commit(notify)
 
 
 def _artifact_context(*, artifact: Artifact, event_type: str) -> dict:
