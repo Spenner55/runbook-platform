@@ -365,7 +365,9 @@ class ApprovalStatusView(APIView):
                     new_status=ExecutionStep.Status.RUNNING,
                 )
                 execution.refresh_from_db()
-                return Response(_build_approval_status_response(execution, step, ar, "run"))
+                return Response(
+                    _build_approval_status_response(execution, step, ar, "run")
+                )
 
             # Rejected or timed out → fail the step.
             error_msg = (
@@ -382,7 +384,9 @@ class ApprovalStatusView(APIView):
                 error_message=error_msg,
             )
             execution.refresh_from_db()
-            return Response(_build_approval_status_response(execution, step, ar, "fail"))
+            return Response(
+                _build_approval_status_response(execution, step, ar, "fail")
+            )
 
 
 # ---------------------------------------------------------------------------

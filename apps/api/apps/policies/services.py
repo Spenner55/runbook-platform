@@ -233,8 +233,10 @@ def update_rule(
         _validate_outcome(new_outcome)
 
     with transaction.atomic():
-        rule = PolicyRule.objects.select_for_update().select_related("policy").get(
-            pk=rule.pk
+        rule = (
+            PolicyRule.objects.select_for_update()
+            .select_related("policy")
+            .get(pk=rule.pk)
         )
         previous_is_active = rule.is_active
         for field, value in changes.items():

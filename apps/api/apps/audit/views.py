@@ -99,10 +99,9 @@ def execution_audit_queryset(
     occurred_after=None,
     occurred_before=None,
 ):
-    related_event_filter = (
-        Q(object_type=AuditEvent.ObjectType.EXECUTION, object_id=execution_id)
-        | Q(metadata__execution_id=str(execution_id))
-    )
+    related_event_filter = Q(
+        object_type=AuditEvent.ObjectType.EXECUTION, object_id=execution_id
+    ) | Q(metadata__execution_id=str(execution_id))
     qs = AuditEvent.objects.filter(
         organization_id=organization_id,
     ).filter(related_event_filter)

@@ -75,7 +75,9 @@ def test_approval_decision_rolls_back_if_audit_emit_fails(published_workflow):
 
     approval_request.refresh_from_db()
     assert approval_request.status == ApprovalRequest.Status.PENDING
-    assert ApprovalDecision.objects.filter(approval_request=approval_request).count() == 0
+    assert (
+        ApprovalDecision.objects.filter(approval_request=approval_request).count() == 0
+    )
     assert AuditEvent.objects.count() == audit_count
 
 
@@ -209,5 +211,7 @@ def test_approval_timeout_rolls_back_if_audit_emit_fails(published_workflow):
 
     approval_request.refresh_from_db()
     assert approval_request.status == ApprovalRequest.Status.PENDING
-    assert ApprovalDecision.objects.filter(approval_request=approval_request).count() == 0
+    assert (
+        ApprovalDecision.objects.filter(approval_request=approval_request).count() == 0
+    )
     assert AuditEvent.objects.count() == audit_count

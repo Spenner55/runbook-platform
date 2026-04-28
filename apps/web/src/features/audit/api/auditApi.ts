@@ -1,7 +1,11 @@
 import { apiRequest } from '../../../shared/api/client'
 import type { AuditEventListResponse } from '../types'
 
-function appendOptionalParam(params: URLSearchParams, key: string, value: string | number | undefined) {
+function appendOptionalParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined
+) {
   if (value !== undefined && value !== '') {
     params.set(key, String(value))
   }

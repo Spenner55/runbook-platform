@@ -53,9 +53,9 @@ def test_execution_lifecycle_emits_audit_events(published_workflow):
     )
 
     event_types = set(
-        AuditEvent.objects.filter(organization_id=execution.organization_id).values_list(
-            "event_type", flat=True
-        )
+        AuditEvent.objects.filter(
+            organization_id=execution.organization_id
+        ).values_list("event_type", flat=True)
     )
     assert {
         "execution.created",

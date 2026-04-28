@@ -6,7 +6,12 @@ from apps.audit.services import AuditService
 from apps.organizations.models import Organization
 
 
-def _make_event(org, event_type="execution.created", actor_type=AuditEvent.ActorType.SYSTEM, object_id=None):
+def _make_event(
+    org,
+    event_type="execution.created",
+    actor_type=AuditEvent.ActorType.SYSTEM,
+    object_id=None,
+):
     return AuditService.emit(
         organization_id=org.id,
         actor_type=actor_type,

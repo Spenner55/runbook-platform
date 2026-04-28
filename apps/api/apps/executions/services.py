@@ -18,7 +18,9 @@ from apps.workflows.models import Workflow
 # ---------------------------------------------------------------------------
 
 
-def create_execution(*, workflow: Workflow, actor: AuditActor | None = None) -> Execution:
+def create_execution(
+    *, workflow: Workflow, actor: AuditActor | None = None
+) -> Execution:
     """
     Create an immutable execution snapshot from a published workflow,
     expanding workflow steps into ExecutionStep rows atomically.
@@ -92,7 +94,9 @@ def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
     return create_execution(workflow=workflow)
 
 
-def cancel_execution(*, execution: Execution, actor: AuditActor | None = None) -> Execution:
+def cancel_execution(
+    *, execution: Execution, actor: AuditActor | None = None
+) -> Execution:
     """Cancel a queued execution. Only queued executions may be cancelled."""
     with transaction.atomic():
         execution = Execution.objects.select_for_update().get(pk=execution.pk)
@@ -455,7 +459,9 @@ def _emit_step_transition_audit(
     if not event_type:
         return
 
-    safe_error = (error_message or "")[:500] if new_status == ExecutionStep.Status.FAILED else ""
+    safe_error = (
+        (error_message or "")[:500] if new_status == ExecutionStep.Status.FAILED else ""
+    )
     metadata = {
         "execution_id": str(execution.id),
         "step_id": str(step.id),
