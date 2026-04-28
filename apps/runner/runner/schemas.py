@@ -262,3 +262,23 @@ class ExecutionRunSummary(BaseModel):
     error_message: str = ""
 
     model_config = ConfigDict(extra="forbid")
+
+
+# ---------------------------------------------------------------------------
+# Artifact upload
+# ---------------------------------------------------------------------------
+
+
+class ArtifactUploadResponse(BaseModel):
+    id: UUID
+    execution_id: UUID
+    step_id: UUID | None = None
+    kind: str
+    name: str
+    mime_type: str
+    size_bytes: int
+    checksum_sha256: str
+    uploaded_by_runner_id: str
+    uploaded_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")

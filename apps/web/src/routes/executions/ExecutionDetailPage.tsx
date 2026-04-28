@@ -2,6 +2,9 @@ import { useParams } from 'react-router-dom'
 
 import { useExecutionAuditTrail } from '../../features/audit/hooks/useExecutionAuditTrail'
 import type { AuditEvent } from '../../features/audit/types'
+import { useArtifactDownload } from '../../features/artifacts/hooks/useArtifactDownload'
+import { useExecutionArtifacts } from '../../features/artifacts/hooks/useExecutionArtifacts'
+import type { Artifact } from '../../features/artifacts/types'
 import { useExecutionDetail } from '../../features/executions/hooks/useExecutionDetail'
 import type { PolicyEvaluationSummary } from '../../features/policies/types'
 import { getApiErrorMessage } from '../../shared/api/client'
@@ -140,6 +143,73 @@ function AuditTrailPanel({
   )
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
+
+function ArtifactRow({ artifact }: { artifact: Artifact }) {
+  const { isLoading, error, download } = useArtifactDownload()
+  const isTruncated = artifact.metadata?.truncated === true
+
+  return (
+    <li className="step-list__item">
+      <div>
+        <strong>{artifact.name}</strong>
+        <p className="muted">
+          {artifact.kind} · {formatBytes(artifact.size_bytes)} · {formatDateTime(artifact.uploaded_at)}
+        </p>
+        {isTruncated ? (
+          <p className="muted" style={{ fontSize: '0.85em' }}>
+            Output truncated (captured {formatBytes(Number(artifact.metadata.captured_size_bytes ?? 0))})
+          </p>
+        ) : null}
+        {error ? <p className="field__error">{error}</p> : null}
+      </div>
+      <div className="step-list__meta">
+        <span className="pill">{artifact.kind}</span>
+        <button
+          type="button"
+          className="button button--sm"
+          disabled={isLoading}
+          onClick={() => download(artifact.id)}
+        >
+          {isLoading ? 'Loading…' : 'Download'}
+        </button>
+      </div>
+    </li>
+  )
+}
+
+function ArtifactsPanel({
+  artifacts,
+  isLoading,
+  error,
+}: {
+  artifacts: Artifact[]
+  isLoading: boolean
+  error: unknown
+}) {
+  return (
+    <div className="stack-md">
+      <h3>Artifacts</h3>
+      {isLoading ? <p className="muted">Loading artifacts…</p> : null}
+      {error ? <p className="banner banner--error">{getApiErrorMessage(error)}</p> : null}
+      {!isLoading && !error && artifacts.length === 0 ? (
+        <p className="muted">No artifacts uploaded yet.</p>
+      ) : null}
+      {artifacts.length > 0 ? (
+        <ol className="step-list">
+          {artifacts.map((artifact) => (
+            <ArtifactRow key={artifact.id} artifact={artifact} />
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  )
+}
+
 export function ExecutionDetailPage() {
   const { executionId } = useParams()
   const executionQuery = useExecutionDetail(executionId ?? null)
@@ -148,6 +218,10 @@ export function ExecutionDetailPage() {
     organizationId: executionQuery.data?.organization_id ?? null,
     executionStatus: executionQuery.data?.status ?? null,
   })
+  const artifactsQuery = useExecutionArtifacts(
+    executionId ?? null,
+    executionQuery.data?.status ?? null,
+  )
 
   return (
     <section className="panel stack-lg">
@@ -238,6 +312,12 @@ export function ExecutionDetailPage() {
               ))}
             </ol>
           </div>
+
+          <ArtifactsPanel
+            artifacts={artifactsQuery.data?.results ?? []}
+            isLoading={artifactsQuery.isLoading}
+            error={artifactsQuery.error}
+          />
 
           <AuditTrailPanel
             events={auditQuery.data?.results ?? []}

@@ -1,9 +1,12 @@
 import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ExecutionDetailPage } from './ExecutionDetailPage'
 import { createJsonResponse } from '../../test/fetchResponse'
 import { renderRoute } from '../../test/renderRoute'
+
+const emptyArtifacts = { count: 0, next: null, previous: null, results: [] }
 
 describe('ExecutionDetailPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
@@ -71,6 +74,9 @@ describe('ExecutionDetailPage', () => {
       if (url.includes('/audit/')) {
         return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       }
+      if (url.includes('/artifacts/')) {
+        return createJsonResponse(emptyArtifacts)
+      }
       executionFetchCount += 1
       return createJsonResponse(executionFetchCount === 1 ? runningExecution : finishedExecution)
     })
@@ -97,9 +103,10 @@ describe('ExecutionDetailPage', () => {
   })
 
   it('renders the Django error envelope when execution detail fails', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'execution unavailable' }, { status: 503 })
-    )
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      return createJsonResponse({ detail: 'execution unavailable' }, { status: 503 })
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -158,7 +165,11 @@ describe('ExecutionDetailPage', () => {
       ],
     }
 
-    fetchMock.mockResolvedValue(createJsonResponse(execution))
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -221,7 +232,11 @@ describe('ExecutionDetailPage', () => {
       ],
     }
 
-    fetchMock.mockResolvedValue(createJsonResponse(execution))
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -280,7 +295,11 @@ describe('ExecutionDetailPage', () => {
       ],
     }
 
-    fetchMock.mockResolvedValue(createJsonResponse(execution))
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -341,7 +360,11 @@ describe('ExecutionDetailPage', () => {
       ],
     }
 
-    fetchMock.mockResolvedValue(createJsonResponse(execution))
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -375,6 +398,9 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
+      if (url.includes('/artifacts/')) {
+        return createJsonResponse(emptyArtifacts)
+      }
       if (url.includes('/audit/')) {
         return createJsonResponse({
           count: 2,
@@ -429,5 +455,251 @@ describe('ExecutionDetailPage', () => {
     expect(screen.getByText('execution step started')).toBeInTheDocument()
     expect(screen.getByText(/From pending to running/i)).toBeInTheDocument()
     expect(screen.getByText(/Step deploy/i)).toBeInTheDocument()
+  })
+
+  it('renders artifact panel with empty state when no artifacts', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:02:00Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:02:00Z',
+      steps: [],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Artifacts')).toBeInTheDocument()
+    })
+    expect(screen.getByText('No artifacts uploaded yet.')).toBeInTheDocument()
+  })
+
+  it('renders artifact rows with name, kind, and download button', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+
+    const artifacts = {
+      count: 2,
+      next: null,
+      previous: null,
+      results: [
+        {
+          id: 'artifact-1',
+          execution_id: 'execution-1',
+          step_id: 'step-1',
+          kind: 'stdout',
+          name: 'stdout.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: 1024,
+          checksum_sha256: 'a'.repeat(64),
+          uploaded_by_runner_id: 'runner-dev',
+          uploaded_at: '2026-04-15T10:01:00Z',
+          metadata: { truncated: false },
+        },
+        {
+          id: 'artifact-2',
+          execution_id: 'execution-1',
+          step_id: 'step-1',
+          kind: 'stderr',
+          name: 'stderr.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: 256,
+          checksum_sha256: 'b'.repeat(64),
+          uploaded_by_runner_id: 'runner-dev',
+          uploaded_at: '2026-04-15T10:01:01Z',
+          metadata: { truncated: false },
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(artifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('stdout.txt')).toBeInTheDocument()
+    })
+    expect(screen.getByText('stderr.txt')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /Download/i })).toHaveLength(2)
+  })
+
+  it('shows truncated indicator when artifact metadata.truncated is true', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: null,
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+
+    const artifacts = {
+      count: 1,
+      next: null,
+      previous: null,
+      results: [
+        {
+          id: 'artifact-1',
+          execution_id: 'execution-1',
+          step_id: 'step-1',
+          kind: 'stdout',
+          name: 'stdout.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: 5242880,
+          checksum_sha256: 'a'.repeat(64),
+          uploaded_by_runner_id: 'runner-dev',
+          uploaded_at: '2026-04-15T10:01:00Z',
+          metadata: {
+            truncated: true,
+            original_size_bytes: 10485760,
+            captured_size_bytes: 5242880,
+            truncation_reason: 'stream_limit',
+          },
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).includes('/artifacts/')) return createJsonResponse(artifacts)
+      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Output truncated/i)).toBeInTheDocument()
+    })
+  })
+
+  it('download button calls download endpoint and opens URL', async () => {
+    const openSpy = vi.fn()
+    vi.stubGlobal('open', openSpy)
+
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: null,
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+
+    const artifacts = {
+      count: 1,
+      next: null,
+      previous: null,
+      results: [
+        {
+          id: 'artifact-1',
+          execution_id: 'execution-1',
+          step_id: null,
+          kind: 'stdout',
+          name: 'stdout.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: 100,
+          checksum_sha256: 'a'.repeat(64),
+          uploaded_by_runner_id: 'runner-dev',
+          uploaded_at: '2026-04-15T10:01:00Z',
+          metadata: {},
+        },
+      ],
+    }
+
+    const downloadResponse = {
+      artifact_id: 'artifact-1',
+      download_url: '/api/v1/artifacts/artifact-1/content/',
+      expires_at: '2026-04-15T10:10:00Z',
+      method: 'GET',
+      content_disposition: 'attachment',
+      filename: 'stdout.txt',
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/') && url.includes('/download/')) {
+        return createJsonResponse(downloadResponse)
+      }
+      if (url.includes('/artifacts/')) return createJsonResponse(artifacts)
+      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Download/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Download/i }))
+
+    await waitFor(() => {
+      expect(openSpy).toHaveBeenCalledWith(
+        '/api/v1/artifacts/artifact-1/content/',
+        '_blank',
+        'noopener,noreferrer',
+      )
+    })
   })
 })

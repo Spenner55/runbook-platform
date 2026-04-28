@@ -10,6 +10,7 @@ from uuid import UUID
 
 import httpx
 
+from runner.artifact_uploader import ArtifactUploader
 from runner.client import ApiClient
 from runner.schemas import ClaimedExecution, ClaimedStep
 
@@ -68,6 +69,9 @@ class Executor:
     def __init__(self, client: ApiClient) -> None:
         self._client = client
 
+    def _make_uploader(self, execution_id: UUID, claim_token: UUID) -> ArtifactUploader:
+        return ArtifactUploader(self._client, execution_id, claim_token)
+
     def run(self, execution: ClaimedExecution, claim_token: UUID) -> None:
         """Execute all steps of a claimed execution sequentially."""
         execution_id = execution.id
@@ -80,11 +84,12 @@ class Executor:
 
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
         heartbeat.start()
+        uploader = self._make_uploader(execution_id, claim_token)
 
         outcome = "succeeded"
         try:
             for step in sorted(execution.steps, key=lambda s: s.position):
-                step_failed = self._run_step(execution_id, claim_token, step, heartbeat)
+                step_failed = self._run_step(execution_id, claim_token, step, heartbeat, uploader)
                 if step_failed:
                     outcome = "failed"
                     break
@@ -116,6 +121,7 @@ class Executor:
         claim_token: UUID,
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
+        uploader: ArtifactUploader,
     ) -> bool:
         """
         Run a single step. Returns True if the step failed, False if it succeeded.
@@ -138,12 +144,12 @@ class Executor:
                 "Step %d '%s': approved to run immediately", step.position, step.name
             )
             heartbeat.set_observed_status("running")
-            return self._execute_command(execution_id, claim_token, step, heartbeat)
+            return self._execute_command(execution_id, claim_token, step, heartbeat, uploader)
 
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
             return self._wait_for_approval(
-                execution_id, claim_token, step, heartbeat, start_resp
+                execution_id, claim_token, step, heartbeat, start_resp, uploader
             )
 
         # runner_action == "blocked" or unexpected
@@ -162,6 +168,7 @@ class Executor:
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
         start_resp,
+        uploader: ArtifactUploader,
     ) -> bool:
         """Poll Django until the approval is decided. Returns True if step failed."""
         poll_interval = (
@@ -204,7 +211,7 @@ class Executor:
                     step.name,
                 )
                 heartbeat.set_observed_status("running")
-                return self._execute_command(execution_id, claim_token, step, heartbeat)
+                return self._execute_command(execution_id, claim_token, step, heartbeat, uploader)
 
             # runner_action == "fail"
             logger.info(
@@ -221,10 +228,14 @@ class Executor:
         claim_token: UUID,
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
+        uploader: ArtifactUploader,
     ) -> bool:
         """
         Execute the step command. Django has already set the step to running.
         Returns True if the step failed, False if it succeeded.
+
+        Artifacts are uploaded BEFORE the terminal step status is reported so
+        that evidence is preserved even if the runner crashes after uploading.
         """
         started_at = _utcnow()
 
@@ -238,6 +249,10 @@ class Executor:
                 step.name,
             )
             finished_at = _utcnow()
+            stderr_content = b"Intentional failure triggered by FAIL_STEP token.\n"
+            stdout_content = b""
+            # Upload artifacts before reporting terminal status
+            self._upload_step_outputs(uploader, step, stdout_content, stderr_content)
             try:
                 self._client.update_step(
                     execution_id,
@@ -256,6 +271,10 @@ class Executor:
         # Happy path: brief placeholder work, then succeed
         time.sleep(0.5)
         finished_at = _utcnow()
+        stdout_content = f"Step '{step.name}' executed successfully.\n".encode()
+        stderr_content = b""
+        # Upload artifacts before reporting terminal status
+        self._upload_step_outputs(uploader, step, stdout_content, stderr_content)
 
         try:
             self._client.update_step(
@@ -273,3 +292,20 @@ class Executor:
             return True
 
         return False
+
+    def _upload_step_outputs(
+        self,
+        uploader: ArtifactUploader,
+        step: ClaimedStep,
+        stdout: bytes,
+        stderr: bytes,
+    ) -> None:
+        """Upload stdout and stderr artifacts. Failures are logged but do not affect step outcome."""
+        if stdout:
+            result = uploader.upload_stdout(step.id, stdout)
+            if result is None:
+                logger.warning("stdout artifact upload failed for step %s", step.id)
+        if stderr:
+            result = uploader.upload_stderr(step.id, stderr)
+            if result is None:
+                logger.warning("stderr artifact upload failed for step %s", step.id)

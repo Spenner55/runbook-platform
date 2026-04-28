@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.approvals.apps.ApprovalsConfig",
     "apps.policies.apps.PoliciesConfig",
     "apps.audit.apps.AuditConfig",
+    "apps.artifacts.apps.ArtifactsConfig",
 ]
 
 MIDDLEWARE = [
@@ -101,6 +102,21 @@ CORS_ALLOWED_ORIGINS = [
 
 # AI service settings
 AI_BASE_URL = env("AI_BASE_URL", default="http://ai:8001")
+
+# Artifact storage settings
+ARTIFACT_MEDIA_ROOT = env("ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts"))
+ARTIFACT_MAX_UPLOAD_BYTES = env.int("ARTIFACT_MAX_UPLOAD_BYTES", default=52428800)  # 50 MB
+ARTIFACT_MAX_ARTIFACTS_PER_STEP = env.int("ARTIFACT_MAX_ARTIFACTS_PER_STEP", default=10)
+ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION = env.int(
+    "ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION", default=262144000
+)  # 250 MB
+ARTIFACT_DAILY_BYTES_PER_RUNNER = env.int(
+    "ARTIFACT_DAILY_BYTES_PER_RUNNER", default=1073741824
+)  # 1 GB
+ARTIFACT_DOWNLOAD_URL_TTL_SECONDS = env.int("ARTIFACT_DOWNLOAD_URL_TTL_SECONDS", default=300)
+ARTIFACT_STDOUT_STDERR_MAX_BYTES = env.int(
+    "ARTIFACT_STDOUT_STDERR_MAX_BYTES", default=5242880
+)  # 5 MB
 AI_CONNECT_TIMEOUT_SECONDS = env.float("AI_CONNECT_TIMEOUT_SECONDS", default=1.0)
 AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=20.0)
 AI_WRITE_TIMEOUT_SECONDS = env.float("AI_WRITE_TIMEOUT_SECONDS", default=5.0)

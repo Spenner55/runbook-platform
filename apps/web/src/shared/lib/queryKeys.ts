@@ -14,4 +14,6 @@ export const queryKeys = {
   auditTrail: (organizationId: string, objectType: string, objectId: string) =>
     ['audit', organizationId, objectType, objectId] as const,
   executionAuditTrail: (executionId: string) => ['execution', executionId, 'audit'] as const,
+  executionArtifacts: (executionId: string) => ['execution', executionId, 'artifacts'] as const,
+  artifact: (artifactId: string) => ['artifact', artifactId] as const,
 }

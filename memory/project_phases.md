@@ -4,11 +4,11 @@ description: Which implementation phases have been completed and verified
 type: project
 ---
 
-Phase 8 (targeted testing) is complete and verified.
+Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28.
 
-**Why:** Phase 8 goal was to add targeted tests before more feature work.
+**Why:** Phase 10.4 adds Django-controlled artifact storage and retrieval for execution outputs.
 
-**How to apply:** Next phase is Phase 9 or later feature work. Do not re-implement testing infrastructure.
+**How to apply:** Next phase is Phase 10.5 (Integrations). Do not re-implement artifact infrastructure.
 
 ## Phase completion summary
 
@@ -17,22 +17,28 @@ Phase 8 (targeted testing) is complete and verified.
 - Phase 5: Runner real flow (claim/execute/complete)
 - Phase 6: React product slice
 - Phase 7: AI service boundary (Django → FastAPI, workflow creation)
-- Phase 8: Targeted testing — **complete**
+- Phase 8: Targeted testing
+- Phase 9: Makefile, seed_dev, ruff, prettier, pre-commit
+- Phase 10.1: Approvals (step approval flow)
+- Phase 10.2: Policies (policy evaluation, risk floor)
+- Phase 10.3: Audit trail (AuditEvent model, AuditService.emit)
+- Phase 10.4: Artifacts — **complete**
 
-## Phase 8 final test counts (all passing)
+## Phase 10.4 final test counts (all passing)
 
 | Suite | Tests | Notes |
 |---|---|---|
-| Django API | 119 | Includes 6 concurrency tests |
-| Runner | 46 | Pure unit tests, no Docker dependency |
-| AI (FastAPI) | 23 | Contract + parser tests |
-| Frontend (Vitest) | 18 | 5 test files |
+| Django API | 324 | Includes 37 new artifact tests |
+| Runner | 71 | Includes 10 new artifact uploader tests |
+| Frontend (Vitest) | 49 | Includes 5 new artifact UI tests |
 
-## Phase 7 verified
+## Phase 10.4 key implementation details
 
-All Phase 7 boundary rules are enforced and tested:
-- Django calls FastAPI via RunbookAiClient (internal only)
-- Frontend never calls FastAPI
-- Runner never calls FastAPI
-- FastAPI returns candidates only (no DB writes)
-- Django owns mapping, validation, versioning, persistence
+- Artifact model with UUID PK, organization/execution/step FKs, storage_key (unique), checksum_sha256
+- ArtifactStorage wraps local filesystem (ARTIFACT_MEDIA_ROOT), S3-ready abstraction
+- Internal upload: POST /api/v1/internal/executions/{id}/steps/{step_id}/artifacts/
+- Public listing: GET /api/v1/executions/{id}/artifacts/
+- Download URL: POST /api/v1/artifacts/{id}/download/ → /api/v1/artifacts/{id}/content/
+- Audit events: artifact.uploaded, artifact.download_url_created
+- Runner: ArtifactUploader uploads stdout/stderr before terminal step status
+- Quotas: 50MB/artifact, 250MB/execution, 1GB/runner/day (cache-backed)

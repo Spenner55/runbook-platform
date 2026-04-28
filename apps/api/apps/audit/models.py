@@ -31,6 +31,7 @@ class AuditEvent(BaseModel):
         POLICY = "policy", "Policy"
         POLICY_RULE = "policy_rule", "Policy Rule"
         POLICY_EVALUATION = "policy_evaluation", "Policy Evaluation"
+        ARTIFACT = "artifact", "Artifact"
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
