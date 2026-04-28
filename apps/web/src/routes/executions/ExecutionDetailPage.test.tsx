@@ -167,7 +167,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -234,7 +235,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -297,7 +299,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -362,7 +365,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -477,7 +481,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -545,7 +550,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(artifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -607,7 +613,8 @@ describe('ExecutionDetailPage', () => {
 
     fetchMock.mockImplementation(async (input) => {
       if (String(input).includes('/artifacts/')) return createJsonResponse(artifacts)
-      if (String(input).includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (String(input).includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -681,7 +688,8 @@ describe('ExecutionDetailPage', () => {
         return createJsonResponse(downloadResponse)
       }
       if (url.includes('/artifacts/')) return createJsonResponse(artifacts)
-      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -700,7 +708,7 @@ describe('ExecutionDetailPage', () => {
       expect(openSpy).toHaveBeenCalledWith(
         '/api/v1/artifacts/artifact-1/content/?organization_id=org-1&token=signed-token',
         '_blank',
-        'noopener,noreferrer',
+        'noopener,noreferrer'
       )
     })
   })
@@ -728,10 +736,11 @@ describe('ExecutionDetailPage', () => {
       if (url.includes('/artifacts/')) {
         return createJsonResponse(
           { errors: [{ code: 'artifact_storage_failed', detail: 'Artifact store unavailable.' }] },
-          { status: 503 },
+          { status: 503 }
         )
       }
-      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 
@@ -788,11 +797,12 @@ describe('ExecutionDetailPage', () => {
       if (url.includes('/artifacts/') && url.includes('/download/')) {
         return createJsonResponse(
           { errors: [{ code: 'audit_unavailable', detail: 'Download audit failed.' }] },
-          { status: 503 },
+          { status: 503 }
         )
       }
       if (url.includes('/artifacts/')) return createJsonResponse(artifacts)
-      if (url.includes('/audit/')) return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
       return createJsonResponse(execution)
     })
 

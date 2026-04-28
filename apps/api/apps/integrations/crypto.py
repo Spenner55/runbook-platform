@@ -25,7 +25,9 @@ def decrypt_credentials(ciphertext: bytes) -> dict:
         decrypted = _get_fernet().decrypt(bytes(ciphertext))
         value = json.loads(decrypted.decode("utf-8"))
     except (InvalidToken, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise ValidationError("Integration credentials could not be decrypted.") from exc
+        raise ValidationError(
+            "Integration credentials could not be decrypted."
+        ) from exc
 
     if not isinstance(value, dict):
         raise ValidationError("Integration credentials must decrypt to a JSON object.")

@@ -161,7 +161,9 @@ def test_org_a_dispatch_never_sends_to_org_b_connections(
 ):
     other_org = Organization.objects.create(name="Other Corp", slug="other")
     _connection(org=org, integration_fernet_key=integration_fernet_key, name="Org A")
-    _connection(org=other_org, integration_fernet_key=integration_fernet_key, name="Org B")
+    _connection(
+        org=other_org, integration_fernet_key=integration_fernet_key, name="Org B"
+    )
     requests = []
 
     def handler(request):
@@ -244,7 +246,9 @@ def test_event_type_filtering_works(
 
     assert len(requests) == 1
     assert IntegrationDeliveryAttempt.objects.count() == 1
-    assert IntegrationDeliveryAttempt.objects.get().event_type == EVENT_EXECUTION_COMPLETED
+    assert (
+        IntegrationDeliveryAttempt.objects.get().event_type == EVENT_EXECUTION_COMPLETED
+    )
 
 
 @pytest.mark.django_db
@@ -410,7 +414,10 @@ def test_audit_event_emitted_for_create_update_deactivate(
         "integration.updated",
         "integration.deactivated",
     ]
-    assert AuditEvent.objects.filter(
-        object_type=AuditEvent.ObjectType.INTEGRATION_CONNECTION,
-        object_id=connection.id,
-    ).count() == 3
+    assert (
+        AuditEvent.objects.filter(
+            object_type=AuditEvent.ObjectType.INTEGRATION_CONNECTION,
+            object_id=connection.id,
+        ).count()
+        == 3
+    )

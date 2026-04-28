@@ -82,7 +82,9 @@ class IntegrationConnectionListCreateView(APIView):
         return Response(IntegrationConnectionSerializer(qs, many=True).data)
 
     def post(self, request):
-        input_data = _normalise_optional_json_inputs(request.data, include_defaults=True)
+        input_data = _normalise_optional_json_inputs(
+            request.data, include_defaults=True
+        )
         serializer = IntegrationConnectionCreateSerializer(data=input_data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

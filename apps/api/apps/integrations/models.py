@@ -53,7 +53,9 @@ class IntegrationConnection(BaseModel):
         if not self.name or not self.name.strip():
             raise ValidationError({"name": "Integration name is required."})
         if not isinstance(self.config, dict):
-            raise ValidationError({"config": "Integration config must be a JSON object."})
+            raise ValidationError(
+                {"config": "Integration config must be a JSON object."}
+            )
         if not isinstance(self.event_types, list) or not all(
             isinstance(event_type, str) and event_type.strip()
             for event_type in self.event_types
@@ -61,10 +63,14 @@ class IntegrationConnection(BaseModel):
             raise ValidationError(
                 {"event_types": "Integration event types must be a list of strings."}
             )
-        if self.type in {
-            self.Type.SLACK_WEBHOOK,
-            self.Type.GENERIC_WEBHOOK,
-        } and not self.encrypted_credentials:
+        if (
+            self.type
+            in {
+                self.Type.SLACK_WEBHOOK,
+                self.Type.GENERIC_WEBHOOK,
+            }
+            and not self.encrypted_credentials
+        ):
             raise ValidationError(
                 {"encrypted_credentials": "Webhook credentials are required."}
             )

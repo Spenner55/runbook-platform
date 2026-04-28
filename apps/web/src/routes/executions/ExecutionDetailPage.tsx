@@ -149,13 +149,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`
 }
 
-function ArtifactRow({
-  artifact,
-  organizationId,
-}: {
-  artifact: Artifact
-  organizationId: string
-}) {
+function ArtifactRow({ artifact, organizationId }: { artifact: Artifact; organizationId: string }) {
   const { isLoading, error, download } = useArtifactDownload()
   const isTruncated = artifact.metadata?.truncated === true
 
@@ -164,11 +158,13 @@ function ArtifactRow({
       <div>
         <strong>{artifact.name}</strong>
         <p className="muted">
-          {artifact.kind} · {formatBytes(artifact.size_bytes)} · {formatDateTime(artifact.uploaded_at)}
+          {artifact.kind} · {formatBytes(artifact.size_bytes)} ·{' '}
+          {formatDateTime(artifact.uploaded_at)}
         </p>
         {isTruncated ? (
           <p className="muted" style={{ fontSize: '0.85em' }}>
-            Output truncated (captured {formatBytes(Number(artifact.metadata.captured_size_bytes ?? 0))})
+            Output truncated (captured{' '}
+            {formatBytes(Number(artifact.metadata.captured_size_bytes ?? 0))})
           </p>
         ) : null}
         {error ? <p className="field__error">{error}</p> : null}
@@ -210,11 +206,7 @@ function ArtifactsPanel({
       {artifacts.length > 0 ? (
         <ol className="step-list">
           {artifacts.map((artifact) => (
-            <ArtifactRow
-              key={artifact.id}
-              artifact={artifact}
-              organizationId={organizationId}
-            />
+            <ArtifactRow key={artifact.id} artifact={artifact} organizationId={organizationId} />
           ))}
         </ol>
       ) : null}
@@ -233,7 +225,7 @@ export function ExecutionDetailPage() {
   const artifactsQuery = useExecutionArtifacts(
     executionId ?? null,
     executionQuery.data?.organization_id ?? null,
-    executionQuery.data?.status ?? null,
+    executionQuery.data?.status ?? null
   )
 
   return (

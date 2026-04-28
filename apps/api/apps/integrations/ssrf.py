@@ -71,7 +71,9 @@ def _resolve_host_addresses(
     try:
         results = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise ValidationError("Integration URL hostname could not be resolved.") from exc
+        raise ValidationError(
+            "Integration URL hostname could not be resolved."
+        ) from exc
 
     addresses = set()
     for result in results:

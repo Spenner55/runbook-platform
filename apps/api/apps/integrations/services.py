@@ -225,7 +225,9 @@ class IntegrationService:
                     )
                 notified_count += 1
         except Exception:
-            logger.exception("Integration notification dispatch failed before completion.")
+            logger.exception(
+                "Integration notification dispatch failed before completion."
+            )
 
     @classmethod
     def _notify_connection(
@@ -325,7 +327,9 @@ class IntegrationService:
             or context.get("approval_request_id")
             or "unknown"
         )
-        status = context.get("execution_status") or context.get("decision") or event_type
+        status = (
+            context.get("execution_status") or context.get("decision") or event_type
+        )
         workflow_name = context.get("workflow_name") or "Unknown workflow"
         organization_name = (
             context.get("organization_name") or context.get("org_name") or ""

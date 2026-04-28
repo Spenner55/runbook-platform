@@ -581,15 +581,19 @@ def _execution_context(
         "workflow_version": execution.workflow_version,
         "execution_status": execution.status,
         "previous_status": previous_status,
-        "started_at": execution.started_at.isoformat() if execution.started_at else None,
+        "started_at": execution.started_at.isoformat()
+        if execution.started_at
+        else None,
         "finished_at": execution.finished_at.isoformat()
         if execution.finished_at
         else None,
     }
     if event_type == "execution.failed":
-        failed_step = execution.steps.filter(
-            status=ExecutionStep.Status.FAILED
-        ).order_by("position").first()
+        failed_step = (
+            execution.steps.filter(status=ExecutionStep.Status.FAILED)
+            .order_by("position")
+            .first()
+        )
         if failed_step:
             context["failed_step_id"] = str(failed_step.id)
             context["failed_step_key"] = failed_step.step_key

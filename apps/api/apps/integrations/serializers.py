@@ -69,9 +69,7 @@ class IntegrationConnectionCreateSerializer(serializers.Serializer):
 
 
 class IntegrationConnectionUpdateSerializer(serializers.Serializer):
-    name = serializers.CharField(
-        max_length=128, trim_whitespace=True, required=False
-    )
+    name = serializers.CharField(max_length=128, trim_whitespace=True, required=False)
     credentials = serializers.DictField(write_only=True, required=False)
     config = serializers.DictField(required=False)
 
