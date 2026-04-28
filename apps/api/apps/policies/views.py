@@ -3,6 +3,7 @@ from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.audit.services import actor_from_request
 from apps.common.exceptions import DomainConflictError
 from apps.organizations.models import Organization
 from apps.policies import services
@@ -74,6 +75,7 @@ class PolicyListCreateView(APIView):
                 name=d["name"],
                 description=d.get("description", ""),
                 is_active=d.get("is_active", True),
+                actor=actor_from_request(request),
             )
         except DomainConflictError as exc:
             return Response(
@@ -104,7 +106,9 @@ class PolicyRetrieveUpdateView(APIView):
         changes = {k: v for k, v in serializer.validated_data.items()}
 
         try:
-            policy = services.update_policy(policy=policy, **changes)
+            policy = services.update_policy(
+                policy=policy, actor=actor_from_request(request), **changes
+            )
         except DomainConflictError as exc:
             return Response(
                 {"errors": [{"code": exc.code, "detail": exc.detail}]},
@@ -136,6 +140,7 @@ class PolicyRuleCreateView(APIView):
                 condition_params=d["condition_params"],
                 outcome=d["outcome"],
                 reason=d.get("reason", ""),
+                actor=actor_from_request(request),
             )
         except DomainConflictError as exc:
             return Response(
@@ -166,7 +171,9 @@ class PolicyRuleUpdateDeactivateView(APIView):
         changes = {k: v for k, v in serializer.validated_data.items()}
 
         try:
-            rule = services.update_rule(rule=rule, **changes)
+            rule = services.update_rule(
+                rule=rule, actor=actor_from_request(request), **changes
+            )
         except DomainConflictError as exc:
             return Response(
                 {"errors": [{"code": exc.code, "detail": exc.detail}]},
@@ -179,7 +186,6 @@ class PolicyRuleUpdateDeactivateView(APIView):
         rule, error = self._get_rule(request, policy_id, rule_id)
         if error:
             return error
-        # Soft-delete: set is_active=False to preserve evaluation history
-        rule.is_active = False
-        rule.save(update_fields=["is_active", "updated_at"])
+        # Soft-delete: set is_active=False to preserve evaluation history.
+        services.deactivate_rule(rule=rule, actor=actor_from_request(request))
         return Response(status=status.HTTP_204_NO_CONTENT)

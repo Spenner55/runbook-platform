@@ -11,4 +11,7 @@ export const queryKeys = {
   policy: (policyId: string, organizationId?: string) =>
     ['policy', policyId, organizationId ?? 'unknown-org'] as const,
   policyEvaluations: (executionId: string) => ['policy-evaluations', executionId] as const,
+  auditTrail: (organizationId: string, objectType: string, objectId: string) =>
+    ['audit', organizationId, objectType, objectId] as const,
+  executionAuditTrail: (executionId: string) => ['execution', executionId, 'audit'] as const,
 }
