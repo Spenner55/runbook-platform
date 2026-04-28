@@ -9,12 +9,16 @@ from uuid import UUID
 import httpx
 
 from runner.schemas import (
+    ApprovalStatusRequest,
+    ApprovalStatusResponse,
     ClaimNextRequest,
     ClaimNextResponse,
     CompleteExecutionRequest,
     CompleteExecutionResponse,
     HeartbeatRequest,
     HeartbeatResponse,
+    StepStartRequest,
+    StepStartResponse,
     StepUpdateRequest,
     StepUpdateResponse,
 )
@@ -113,6 +117,38 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return StepUpdateResponse.model_validate(data)
+
+    def start_step(
+        self,
+        execution_id: UUID,
+        step_id: UUID,
+        claim_token: UUID,
+    ) -> StepStartResponse:
+        data = self._post(
+            f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/start/",
+            StepStartRequest(
+                runner_id=self._runner_id,
+                claim_token=claim_token,
+                sent_at=_utcnow(),
+            ).model_dump(mode="json"),
+        )
+        return StepStartResponse.model_validate(data)
+
+    def get_step_approval_status(
+        self,
+        execution_id: UUID,
+        step_id: UUID,
+        claim_token: UUID,
+    ) -> ApprovalStatusResponse:
+        data = self._post(
+            f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/approval-status/",
+            ApprovalStatusRequest(
+                runner_id=self._runner_id,
+                claim_token=claim_token,
+                sent_at=_utcnow(),
+            ).model_dump(mode="json"),
+        )
+        return ApprovalStatusResponse.model_validate(data)
 
     def complete_execution(
         self,

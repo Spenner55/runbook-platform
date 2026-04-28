@@ -10,9 +10,11 @@ from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
 from apps.executions.internal_views import (
+    ApprovalStatusView,
     ClaimNextExecutionView,
     ExecutionCompleteView,
     ExecutionHeartbeatView,
+    ExecutionStepStartView,
     ExecutionStepUpdateView,
 )
 from apps.executions.views import ExecutionViewSet
@@ -28,6 +30,8 @@ router.register("executions", ExecutionViewSet, basename="execution")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("approvals/", include("apps.approvals.urls")),
+    path("policies/", include("apps.policies.urls")),
     path(
         "internal/executions/claim-next/",
         ClaimNextExecutionView.as_view(),
@@ -37,6 +41,16 @@ urlpatterns = [
         "internal/executions/<uuid:execution_id>/heartbeat/",
         ExecutionHeartbeatView.as_view(),
         name="internal-execution-heartbeat",
+    ),
+    path(
+        "internal/executions/<uuid:execution_id>/steps/<uuid:step_id>/start/",
+        ExecutionStepStartView.as_view(),
+        name="internal-execution-step-start",
+    ),
+    path(
+        "internal/executions/<uuid:execution_id>/steps/<uuid:step_id>/approval-status/",
+        ApprovalStatusView.as_view(),
+        name="internal-execution-approval-status",
     ),
     path(
         "internal/executions/<uuid:execution_id>/steps/<uuid:step_id>/update/",

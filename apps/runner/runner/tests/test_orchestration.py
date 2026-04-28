@@ -19,6 +19,7 @@ from runner.schemas import (
     ClaimNextResponse,
     CompleteExecutionResponse,
     HeartbeatResponse,
+    StepStartResponse,
     StepUpdateResponse,
     StepUpdateStepDetail,
 )
@@ -37,6 +38,7 @@ class FakeApiClient:
     def __init__(self, claim_response: ClaimNextResponse) -> None:
         self._claim_response = claim_response
         self.heartbeat_calls: list[tuple[UUID, UUID]] = []
+        self.start_step_calls: list[dict[str, Any]] = []
         self.step_update_calls: list[dict[str, Any]] = []
         self.complete_calls: list[dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -50,6 +52,19 @@ class FakeApiClient:
         with self._lock:
             self.heartbeat_calls.append((execution_id, claim_token))
         return HeartbeatResponse(status=observed_status)
+
+    def start_step(
+        self, execution_id: UUID, step_id: UUID, claim_token: UUID
+    ) -> StepStartResponse:
+        with self._lock:
+            self.start_step_calls.append({"step_id": step_id})
+        return StepStartResponse(
+            execution_id=execution_id,
+            execution_status="running",
+            step={"id": str(step_id), "status": "running"},
+            runner_action="run",
+            poll_after_seconds=0,
+        )
 
     def update_step(
         self,
@@ -142,16 +157,14 @@ def test_happy_path_step_order_and_statuses(monkeypatch):
     execution = resp.execution
     executor.run(execution, token)
 
-    # step 1 then step 2, each running then succeeded
+    # Each step is started via start_step (Django marks running), then marked succeeded.
     statuses = _step_statuses(client)
-    assert statuses == ["running", "succeeded", "running", "succeeded"]
+    assert statuses == ["succeeded", "succeeded"]
 
-    # step IDs in position order
+    # Steps must have been started in position order.
     step_by_id = {s.id: s for s in steps}
-    running_ids = [
-        c["step_id"] for c in client.step_update_calls if c["status"] == "running"
-    ]
-    positions = [step_by_id[sid].position for sid in running_ids]
+    started_ids = [c["step_id"] for c in client.start_step_calls]
+    positions = [step_by_id[sid].position for sid in started_ids]
     assert positions == sorted(positions)
 
 
@@ -188,7 +201,9 @@ def test_fail_step_marks_step_failed_then_completes_failed(monkeypatch):
     executor.run(resp.execution, token)
 
     statuses = _step_statuses(client)
-    assert statuses == ["running", "failed"]  # step 1 only; steps 2+3 never touched
+    assert statuses == [
+        "failed"
+    ]  # step 1 only (running is now via start_step); steps 2+3 never touched
 
     assert len(client.complete_calls) == 1
     assert client.complete_calls[0]["final_status"] == "failed"

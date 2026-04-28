@@ -1,3 +1,5 @@
+import type { PolicyEvaluationSummary } from '../policies/types'
+
 export interface ExecutionStep {
   id: string
   position: number
@@ -12,6 +14,7 @@ export interface ExecutionStep {
   finished_at: string | null
   exit_code: number | null
   error_message: string
+  policy_evaluation: PolicyEvaluationSummary | null
 }
 
 export interface ExecutionDetail {

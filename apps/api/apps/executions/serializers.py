@@ -8,6 +8,8 @@ from apps.executions.models import Execution, ExecutionStep
 
 
 class ExecutionStepSerializer(serializers.ModelSerializer):
+    policy_evaluation = serializers.SerializerMethodField()
+
     class Meta:
         model = ExecutionStep
         fields = [
@@ -24,7 +26,26 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "finished_at",
             "exit_code",
             "error_message",
+            "policy_evaluation",
         ]
+
+    def get_policy_evaluation(self, obj):
+        # Expects policy_evaluations to be prefetched with to_attr="latest_policy_evaluation"
+        # Falls back to a DB query if not prefetched
+        if hasattr(obj, "latest_policy_evaluation"):
+            evals = obj.latest_policy_evaluation
+            if not evals:
+                return None
+            evaluation = evals[0]
+        else:
+            evaluation = obj.policy_evaluations.order_by("-evaluated_at").first()
+            if evaluation is None:
+                return None
+
+        # Inline to avoid circular import; import here is safe
+        from apps.policies.serializers import PolicyEvaluationSummarySerializer
+
+        return PolicyEvaluationSummarySerializer(evaluation).data
 
 
 class ExecutionCreateSerializer(serializers.Serializer):

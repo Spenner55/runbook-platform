@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _HEARTBEAT_INTERVAL_SECONDS = 10
 _FAIL_STEP_MARKER = "FAIL_STEP"
+_APPROVAL_POLL_INTERVAL_SECONDS = 5
 
 
 def _utcnow() -> datetime:
@@ -119,25 +120,113 @@ class Executor:
         """
         Run a single step. Returns True if the step failed, False if it succeeded.
 
-        A step with 'FAIL_STEP' in its command is treated as a deliberate failure path.
+        All steps call Django's /start/ endpoint first. Django determines whether
+        the step can run immediately (runner_action="run") or must wait for approval
+        (runner_action="wait_for_approval"). The runner never inspects requires_approval
+        locally and never executes a command before receiving runner_action="run".
         """
         logger.info("Step %d/%s '%s': starting", step.position, step.id, step.name)
-        started_at = _utcnow()
 
-        # Mark step as running
         try:
-            self._client.update_step(
-                execution_id,
-                step.id,
-                claim_token,
-                status="running",
-                started_at=started_at,
-            )
-            # First step starting → execution is now running
-            heartbeat.set_observed_status("running")
+            start_resp = self._client.start_step(execution_id, step.id, claim_token)
         except httpx.HTTPError as exc:
-            logger.error("Failed to mark step %s running: %s", step.id, exc)
-            return True  # treat as failure
+            logger.error("Failed to start step %s: %s", step.id, exc)
+            return True
+
+        if start_resp.runner_action == "run":
+            logger.info(
+                "Step %d '%s': approved to run immediately", step.position, step.name
+            )
+            heartbeat.set_observed_status("running")
+            return self._execute_command(execution_id, claim_token, step, heartbeat)
+
+        if start_resp.runner_action == "wait_for_approval":
+            logger.info("Step %d '%s': waiting for approval", step.position, step.name)
+            return self._wait_for_approval(
+                execution_id, claim_token, step, heartbeat, start_resp
+            )
+
+        # runner_action == "blocked" or unexpected
+        logger.warning(
+            "Step %d '%s': blocked by Django (runner_action=%s)",
+            step.position,
+            step.name,
+            start_resp.runner_action,
+        )
+        return True
+
+    def _wait_for_approval(
+        self,
+        execution_id: UUID,
+        claim_token: UUID,
+        step: ClaimedStep,
+        heartbeat: _HeartbeatThread,
+        start_resp,
+    ) -> bool:
+        """Poll Django until the approval is decided. Returns True if step failed."""
+        poll_interval = (
+            start_resp.poll_after_seconds
+            if start_resp.poll_after_seconds > 0
+            else _APPROVAL_POLL_INTERVAL_SECONDS
+        )
+
+        while True:
+            time.sleep(poll_interval)
+
+            try:
+                status_resp = self._client.get_step_approval_status(
+                    execution_id, step.id, claim_token
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "Approval status poll failed for step %s: %s — retrying",
+                    step.id,
+                    exc,
+                )
+                continue
+
+            poll_interval = (
+                status_resp.poll_after_seconds
+                if status_resp.poll_after_seconds > 0
+                else _APPROVAL_POLL_INTERVAL_SECONDS
+            )
+
+            if status_resp.runner_action == "wait":
+                logger.debug(
+                    "Step %d '%s': approval still pending", step.position, step.name
+                )
+                continue
+
+            if status_resp.runner_action == "run":
+                logger.info(
+                    "Step %d '%s': approval granted — executing",
+                    step.position,
+                    step.name,
+                )
+                heartbeat.set_observed_status("running")
+                return self._execute_command(execution_id, claim_token, step, heartbeat)
+
+            # runner_action == "fail"
+            logger.info(
+                "Step %d '%s': approval denied (action=%s)",
+                step.position,
+                step.name,
+                status_resp.runner_action,
+            )
+            return True
+
+    def _execute_command(
+        self,
+        execution_id: UUID,
+        claim_token: UUID,
+        step: ClaimedStep,
+        heartbeat: _HeartbeatThread,
+    ) -> bool:
+        """
+        Execute the step command. Django has already set the step to running.
+        Returns True if the step failed, False if it succeeded.
+        """
+        started_at = _utcnow()
 
         # Simulate execution — check for deliberate failure marker
         should_fail = _FAIL_STEP_MARKER in (step.command or "")

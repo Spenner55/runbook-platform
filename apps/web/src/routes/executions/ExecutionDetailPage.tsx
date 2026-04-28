@@ -1,9 +1,64 @@
 import { useParams } from 'react-router-dom'
 
 import { useExecutionDetail } from '../../features/executions/hooks/useExecutionDetail'
+import type { PolicyEvaluationSummary } from '../../features/policies/types'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'claimed', 'running'])
+
+function getStepPillClass(status: string) {
+  if (status === 'succeeded') return 'pill pill--success'
+  if (status === 'failed') return 'pill pill--danger'
+  if (status === 'waiting_for_approval') return 'pill pill--warn'
+  if (status === 'running') return 'pill pill--info'
+  return 'pill'
+}
+
+function getPolicyOutcomePillClass(outcome: string) {
+  if (outcome === 'approval_required') return 'pill pill--warn'
+  if (outcome === 'auto_approve') return 'pill pill--success'
+  if (outcome === 'block') return 'pill pill--danger'
+  return 'pill'
+}
+
+function getPolicyOutcomeLabel(outcome: string) {
+  if (outcome === 'approval_required') return 'Approval Required'
+  if (outcome === 'auto_approve') return 'Auto Approved'
+  if (outcome === 'block') return 'Blocked'
+  return outcome
+}
+
+function PolicyEvaluationBadge({ evaluation }: { evaluation: PolicyEvaluationSummary }) {
+  const floorApplied = evaluation.outcome !== evaluation.effective_outcome
+
+  return (
+    <div style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+      <span className={getPolicyOutcomePillClass(evaluation.effective_outcome)}>
+        {getPolicyOutcomeLabel(evaluation.effective_outcome)}
+      </span>{' '}
+      {evaluation.decision_source === 'policy_rule' ? (
+        <span className="muted">
+          via {evaluation.policy_name ?? 'policy'} · rule: {evaluation.rule_name ?? 'unknown'}
+        </span>
+      ) : (
+        <span className="muted">Workflow default</span>
+      )}
+      {evaluation.reason ? (
+        <p className="muted" style={{ marginTop: '0.125rem' }}>
+          {evaluation.reason}
+        </p>
+      ) : null}
+      {floorApplied ? (
+        <p
+          className="banner banner--warn"
+          style={{ marginTop: '0.25rem', padding: '0.25rem 0.5rem' }}
+        >
+          Policy returned Auto Approve but Approval Required floor was applied.
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
 function formatDateTime(value: string | null) {
   if (!value) {
@@ -78,13 +133,28 @@ export function ExecutionDetailPage() {
                     </strong>
                     <p className="muted">
                       {step.step_type} · risk {step.risk_level}
+                      {step.requires_approval ? ' · approval required' : ''}
                     </p>
-                    {step.error_message ? (
+                    {step.status === 'waiting_for_approval' ? (
+                      <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
+                        Awaiting approval before command execution.{' '}
+                        <a href="/approvals">Go to Approvals Inbox</a>
+                      </p>
+                    ) : null}
+                    {step.error_message && step.error_message !== 'policy_blocked' ? (
                       <p className="field__error">{step.error_message}</p>
+                    ) : null}
+                    {step.error_message === 'policy_blocked' ? (
+                      <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
+                        Blocked by policy before command execution.
+                      </p>
+                    ) : null}
+                    {step.policy_evaluation ? (
+                      <PolicyEvaluationBadge evaluation={step.policy_evaluation} />
                     ) : null}
                   </div>
                   <div className="step-list__meta">
-                    <span className="pill">{step.status}</span>
+                    <span className={getStepPillClass(step.status)}>{step.status}</span>
                     <span className="muted">exit {step.exit_code ?? '—'}</span>
                   </div>
                 </li>
