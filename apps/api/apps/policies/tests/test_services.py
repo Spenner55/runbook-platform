@@ -32,7 +32,9 @@ def runbook(org):
 
 @pytest.fixture
 def published_workflow(runbook):
-    wf = wf_services.create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
+    wf = wf_services.create_workflow(
+        runbook=runbook, transform_client=StubWorkflowTransformClient()
+    )
     return wf_services.publish_workflow(workflow=wf)
 
 
@@ -58,7 +60,9 @@ def active_policy(org):
 
 @pytest.mark.django_db
 def test_create_policy_success(org):
-    policy = services.create_policy(organization=org, name="Safety Policy", description="Blocks risky steps.")
+    policy = services.create_policy(
+        organization=org, name="Safety Policy", description="Blocks risky steps."
+    )
     assert policy.id is not None
     assert policy.is_active is True
 
@@ -74,7 +78,9 @@ def test_create_policy_duplicate_active_name_raises(org):
 @pytest.mark.django_db
 def test_create_policy_duplicate_name_allowed_when_first_inactive(org):
     services.create_policy(organization=org, name="Safety Policy", is_active=False)
-    policy = services.create_policy(organization=org, name="Safety Policy", is_active=True)
+    policy = services.create_policy(
+        organization=org, name="Safety Policy", is_active=True
+    )
     assert policy.is_active is True
 
 
@@ -100,14 +106,20 @@ def test_create_rule_risk_level(active_policy):
 @pytest.mark.django_db
 def test_create_rule_duplicate_priority_raises(active_policy):
     services.create_rule(
-        policy=active_policy, name="Rule A", priority=10,
-        condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+        policy=active_policy,
+        name="Rule A",
+        priority=10,
+        condition_type="risk_level",
+        condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
     )
     with pytest.raises(DomainConflictError) as exc_info:
         services.create_rule(
-            policy=active_policy, name="Rule B", priority=10,
-            condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+            policy=active_policy,
+            name="Rule B",
+            priority=10,
+            condition_type="risk_level",
+            condition_params={"operator": "in", "values": ["high"]},
             outcome="block",
         )
     assert exc_info.value.code == "duplicate_rule_priority"
@@ -116,14 +128,20 @@ def test_create_rule_duplicate_priority_raises(active_policy):
 @pytest.mark.django_db
 def test_create_rule_duplicate_name_raises(active_policy):
     services.create_rule(
-        policy=active_policy, name="Rule A", priority=10,
-        condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+        policy=active_policy,
+        name="Rule A",
+        priority=10,
+        condition_type="risk_level",
+        condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
     )
     with pytest.raises(DomainConflictError) as exc_info:
         services.create_rule(
-            policy=active_policy, name="Rule A", priority=20,
-            condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+            policy=active_policy,
+            name="Rule A",
+            priority=20,
+            condition_type="risk_level",
+            condition_params={"operator": "in", "values": ["high"]},
             outcome="block",
         )
     assert exc_info.value.code == "duplicate_rule_name"
@@ -133,8 +151,11 @@ def test_create_rule_duplicate_name_raises(active_policy):
 def test_create_rule_zero_priority_raises(active_policy):
     with pytest.raises(DomainValidationError) as exc_info:
         services.create_rule(
-            policy=active_policy, name="Bad", priority=0,
-            condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+            policy=active_policy,
+            name="Bad",
+            priority=0,
+            condition_type="risk_level",
+            condition_params={"operator": "in", "values": ["high"]},
             outcome="block",
         )
     assert exc_info.value.code == "invalid_rule_priority"
@@ -145,14 +166,17 @@ def test_create_rule_zero_priority_raises(active_policy):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("params,should_raise", [
-    ({"operator": "in", "values": ["high", "critical"]}, False),
-    ({"operator": "equals", "value": "high"}, False),
-    ({"operator": "in", "values": []}, True),
-    ({"operator": "equals"}, True),
-    ({"operator": "bad"}, True),
-    ({"operator": "in", "values": [1, 2]}, True),
-])
+@pytest.mark.parametrize(
+    "params,should_raise",
+    [
+        ({"operator": "in", "values": ["high", "critical"]}, False),
+        ({"operator": "equals", "value": "high"}, False),
+        ({"operator": "in", "values": []}, True),
+        ({"operator": "equals"}, True),
+        ({"operator": "bad"}, True),
+        ({"operator": "in", "values": [1, 2]}, True),
+    ],
+)
 def test_validate_risk_level_condition(params, should_raise):
     if should_raise:
         with pytest.raises(DomainValidationError):
@@ -161,11 +185,14 @@ def test_validate_risk_level_condition(params, should_raise):
         services._validate_condition_params("risk_level", params)
 
 
-@pytest.mark.parametrize("params,should_raise", [
-    ({"operator": "in", "values": ["shell", "deploy"]}, False),
-    ({"operator": "equals", "value": "shell"}, False),
-    ({"operator": "in", "values": []}, True),
-])
+@pytest.mark.parametrize(
+    "params,should_raise",
+    [
+        ({"operator": "in", "values": ["shell", "deploy"]}, False),
+        ({"operator": "equals", "value": "shell"}, False),
+        ({"operator": "in", "values": []}, True),
+    ],
+)
 def test_validate_step_type_condition(params, should_raise):
     if should_raise:
         with pytest.raises(DomainValidationError):
@@ -174,18 +201,71 @@ def test_validate_step_type_condition(params, should_raise):
         services._validate_condition_params("step_type", params)
 
 
-@pytest.mark.parametrize("params,should_raise", [
-    (
-        {"timezone": "America/Edmonton", "days_of_week": ["mon", "fri"],
-         "start_time": "09:00", "end_time": "17:00", "match_when": "inside"},
-        False,
-    ),
-    ({"timezone": "Invalid/Tz", "days_of_week": ["mon"], "start_time": "09:00", "end_time": "17:00", "match_when": "inside"}, True),
-    ({"timezone": "UTC", "days_of_week": [], "start_time": "09:00", "end_time": "17:00", "match_when": "inside"}, True),
-    ({"timezone": "UTC", "days_of_week": ["mon"], "start_time": "17:00", "end_time": "09:00", "match_when": "inside"}, True),
-    ({"timezone": "UTC", "days_of_week": ["mon"], "start_time": "09:00", "end_time": "17:00", "match_when": "bad"}, True),
-    ({"timezone": "UTC", "days_of_week": ["monday"], "start_time": "09:00", "end_time": "17:00", "match_when": "inside"}, True),
-])
+@pytest.mark.parametrize(
+    "params,should_raise",
+    [
+        (
+            {
+                "timezone": "America/Edmonton",
+                "days_of_week": ["mon", "fri"],
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "match_when": "inside",
+            },
+            False,
+        ),
+        (
+            {
+                "timezone": "Invalid/Tz",
+                "days_of_week": ["mon"],
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "match_when": "inside",
+            },
+            True,
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "days_of_week": [],
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "match_when": "inside",
+            },
+            True,
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "days_of_week": ["mon"],
+                "start_time": "17:00",
+                "end_time": "09:00",
+                "match_when": "inside",
+            },
+            True,
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "days_of_week": ["mon"],
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "match_when": "bad",
+            },
+            True,
+        ),
+        (
+            {
+                "timezone": "UTC",
+                "days_of_week": ["monday"],
+                "start_time": "09:00",
+                "end_time": "17:00",
+                "match_when": "inside",
+            },
+            True,
+        ),
+    ],
+)
 def test_validate_time_window_condition(params, should_raise):
     if should_raise:
         with pytest.raises(DomainValidationError):
@@ -214,7 +294,9 @@ def test_evaluate_risk_level_match_returns_approval_required(org, execution_and_
 
     policy = services.create_policy(organization=org, name="Risk Policy")
     services.create_rule(
-        policy=policy, name="High risk", priority=10,
+        policy=policy,
+        name="High risk",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high", "critical"]},
         outcome="approval_required",
@@ -229,7 +311,9 @@ def test_evaluate_risk_level_match_returns_approval_required(org, execution_and_
 
 
 @pytest.mark.django_db
-def test_evaluate_risk_level_no_match_falls_back_to_workflow_default(org, execution_and_step):
+def test_evaluate_risk_level_no_match_falls_back_to_workflow_default(
+    org, execution_and_step
+):
     execution, step, _ = execution_and_step
     step.risk_level = "low"
     step.requires_approval = False
@@ -237,7 +321,9 @@ def test_evaluate_risk_level_no_match_falls_back_to_workflow_default(org, execut
 
     policy = services.create_policy(organization=org, name="Risk Policy")
     services.create_rule(
-        policy=policy, name="High risk", priority=10,
+        policy=policy,
+        name="High risk",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high", "critical"]},
         outcome="approval_required",
@@ -251,7 +337,9 @@ def test_evaluate_risk_level_no_match_falls_back_to_workflow_default(org, execut
 
 
 @pytest.mark.django_db
-def test_evaluate_no_active_policies_falls_back_to_requires_approval(org, execution_and_step):
+def test_evaluate_no_active_policies_falls_back_to_requires_approval(
+    org, execution_and_step
+):
     execution, step, _ = execution_and_step
     step.requires_approval = True
     step.save(update_fields=["requires_approval", "updated_at"])
@@ -279,7 +367,9 @@ def test_evaluate_no_active_policies_no_requires_approval(org, execution_and_ste
 
 
 @pytest.mark.django_db
-def test_auto_approve_rule_on_requires_approval_step_applies_floor(org, execution_and_step):
+def test_auto_approve_rule_on_requires_approval_step_applies_floor(
+    org, execution_and_step
+):
     execution, step, _ = execution_and_step
     step.risk_level = "high"
     step.requires_approval = True
@@ -287,7 +377,9 @@ def test_auto_approve_rule_on_requires_approval_step_applies_floor(org, executio
 
     policy = services.create_policy(organization=org, name="AutoApprove Policy")
     services.create_rule(
-        policy=policy, name="Auto high", priority=10,
+        policy=policy,
+        name="Auto high",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="auto_approve",
@@ -300,7 +392,9 @@ def test_auto_approve_rule_on_requires_approval_step_applies_floor(org, executio
 
 
 @pytest.mark.django_db
-def test_auto_approve_rule_on_non_requires_approval_step_no_floor(org, execution_and_step):
+def test_auto_approve_rule_on_non_requires_approval_step_no_floor(
+    org, execution_and_step
+):
     execution, step, _ = execution_and_step
     step.risk_level = "high"
     step.requires_approval = False
@@ -308,7 +402,9 @@ def test_auto_approve_rule_on_non_requires_approval_step_no_floor(org, execution
 
     policy = services.create_policy(organization=org, name="AutoApprove Policy")
     services.create_rule(
-        policy=policy, name="Auto high", priority=10,
+        policy=policy,
+        name="Auto high",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="auto_approve",
@@ -333,13 +429,17 @@ def test_lower_priority_number_evaluates_first(org, execution_and_step):
 
     policy = services.create_policy(organization=org, name="Ordered Policy")
     services.create_rule(
-        policy=policy, name="First (wins)", priority=5,
+        policy=policy,
+        name="First (wins)",
+        priority=5,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
     )
     services.create_rule(
-        policy=policy, name="Second (ignored)", priority=10,
+        policy=policy,
+        name="Second (ignored)",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="auto_approve",
@@ -356,17 +456,23 @@ def test_first_matching_rule_wins(org, execution_and_step):
     step.risk_level = "high"
     step.step_type = "deploy"
     step.requires_approval = False
-    step.save(update_fields=["risk_level", "step_type", "requires_approval", "updated_at"])
+    step.save(
+        update_fields=["risk_level", "step_type", "requires_approval", "updated_at"]
+    )
 
     policy = services.create_policy(organization=org, name="Multi Rule Policy")
     services.create_rule(
-        policy=policy, name="Block deploys", priority=1,
+        policy=policy,
+        name="Block deploys",
+        priority=1,
         condition_type="step_type",
         condition_params={"operator": "equals", "value": "deploy"},
         outcome="block",
     )
     services.create_rule(
-        policy=policy, name="Approve high risk", priority=2,
+        policy=policy,
+        name="Approve high risk",
+        priority=2,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="approval_required",
@@ -389,9 +495,13 @@ def test_inactive_policy_excluded_from_evaluation(org, execution_and_step):
     step.requires_approval = False
     step.save(update_fields=["risk_level", "requires_approval", "updated_at"])
 
-    policy = services.create_policy(organization=org, name="Inactive Policy", is_active=False)
+    policy = services.create_policy(
+        organization=org, name="Inactive Policy", is_active=False
+    )
     services.create_rule(
-        policy=policy, name="Block high", priority=10,
+        policy=policy,
+        name="Block high",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
@@ -411,7 +521,9 @@ def test_inactive_rule_excluded_from_evaluation(org, execution_and_step):
 
     policy = services.create_policy(organization=org, name="Active Policy")
     services.create_rule(
-        policy=policy, name="Block high", priority=10,
+        policy=policy,
+        name="Block high",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
@@ -436,7 +548,9 @@ def test_evaluate_step_type_match(org, execution_and_step):
 
     policy = services.create_policy(organization=org, name="DB Policy")
     services.create_rule(
-        policy=policy, name="DB block", priority=10,
+        policy=policy,
+        name="DB block",
+        priority=10,
         condition_type="step_type",
         condition_params={"operator": "in", "values": ["database", "deploy"]},
         outcome="block",
@@ -456,13 +570,16 @@ def test_evaluate_step_type_match(org, execution_and_step):
 def test_evaluate_time_window_inside_match(org, execution_and_step):
     from datetime import datetime
     from zoneinfo import ZoneInfo
+
     execution, step, _ = execution_and_step
     step.requires_approval = False
     step.save(update_fields=["requires_approval", "updated_at"])
 
     policy = services.create_policy(organization=org, name="Time Policy")
     services.create_rule(
-        policy=policy, name="Business hours", priority=10,
+        policy=policy,
+        name="Business hours",
+        priority=10,
         condition_type="time_window",
         condition_params={
             "timezone": "UTC",
@@ -487,13 +604,16 @@ def test_evaluate_time_window_inside_match(org, execution_and_step):
 def test_evaluate_time_window_outside_match(org, execution_and_step):
     from datetime import datetime
     from zoneinfo import ZoneInfo
+
     execution, step, _ = execution_and_step
     step.requires_approval = False
     step.save(update_fields=["requires_approval", "updated_at"])
 
     policy = services.create_policy(organization=org, name="Time Policy")
     services.create_rule(
-        policy=policy, name="Weekend block", priority=10,
+        policy=policy,
+        name="Weekend block",
+        priority=10,
         condition_type="time_window",
         condition_params={
             "timezone": "UTC",
@@ -566,7 +686,9 @@ def test_invalid_persisted_condition_params_fails_closed(org, execution_and_step
     policy = services.create_policy(organization=org, name="Bad Params Policy")
     # Create rule directly to bypass service validation
     PolicyRule.objects.create(
-        policy=policy, name="Bad rule", priority=10,
+        policy=policy,
+        name="Bad rule",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "bad_operator"},
         outcome="auto_approve",
@@ -586,7 +708,9 @@ def test_unknown_condition_type_fails_closed(org, execution_and_step):
 
     policy = services.create_policy(organization=org, name="Unknown Type Policy")
     PolicyRule.objects.create(
-        policy=policy, name="Bad type", priority=10,
+        policy=policy,
+        name="Bad type",
+        priority=10,
         condition_type="nonexistent_type",
         condition_params={},
         outcome="auto_approve",
@@ -616,7 +740,9 @@ def test_unexpected_policy_load_error_persists_fail_closed_evaluation(
     assert evaluation.effective_outcome == "block"
     assert evaluation.policy is None
     assert evaluation.rule is None
-    assert PolicyEvaluation.objects.filter(step=step, error_code="policy_evaluation_error").exists()
+    assert PolicyEvaluation.objects.filter(
+        step=step, error_code="policy_evaluation_error"
+    ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +759,9 @@ def test_evaluate_persists_context_snapshot(org, execution_and_step):
 
     policy = services.create_policy(organization=org, name="Snapshot Policy")
     services.create_rule(
-        policy=policy, name="Critical block", priority=10,
+        policy=policy,
+        name="Critical block",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "equals", "value": "critical"},
         outcome="block",
@@ -642,7 +770,10 @@ def test_evaluate_persists_context_snapshot(org, execution_and_step):
     evaluation = services.evaluate_step_policy(execution=execution, step=step)
     assert evaluation.context_snapshot["risk_level"] == "critical"
     assert evaluation.context_snapshot["organization_id"] == str(org.id)
-    assert evaluation.condition_params_snapshot == {"operator": "equals", "value": "critical"}
+    assert evaluation.condition_params_snapshot == {
+        "operator": "equals",
+        "value": "critical",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +785,7 @@ def test_evaluate_persists_context_snapshot(org, execution_and_step):
 def test_cross_policy_priority_deterministic(org, execution_and_step):
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+
     execution, step, _ = execution_and_step
     step.risk_level = "high"
     step.requires_approval = False
@@ -661,26 +793,36 @@ def test_cross_policy_priority_deterministic(org, execution_and_step):
 
     now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=ZoneInfo("UTC"))
     p1 = Policy.objects.create(
-        organization=org, name="Early Policy", is_active=True,
+        organization=org,
+        name="Early Policy",
+        is_active=True,
         created_at=now,
     )
     p2 = Policy.objects.create(
-        organization=org, name="Late Policy", is_active=True,
+        organization=org,
+        name="Late Policy",
+        is_active=True,
         created_at=now + timedelta(seconds=1),
     )
 
     # Both policies have a rule at priority 10 — p1 created_at wins
     PolicyRule.objects.create(
-        policy=p1, name="P1 Rule", priority=10,
+        policy=p1,
+        name="P1 Rule",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
-        outcome="block", is_active=True,
+        outcome="block",
+        is_active=True,
     )
     PolicyRule.objects.create(
-        policy=p2, name="P2 Rule", priority=10,
+        policy=p2,
+        name="P2 Rule",
+        priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
-        outcome="auto_approve", is_active=True,
+        outcome="auto_approve",
+        is_active=True,
     )
 
     evaluation = services.evaluate_step_policy(execution=execution, step=step)

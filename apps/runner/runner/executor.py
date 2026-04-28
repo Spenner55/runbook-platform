@@ -134,13 +134,17 @@ class Executor:
             return True
 
         if start_resp.runner_action == "run":
-            logger.info("Step %d '%s': approved to run immediately", step.position, step.name)
+            logger.info(
+                "Step %d '%s': approved to run immediately", step.position, step.name
+            )
             heartbeat.set_observed_status("running")
             return self._execute_command(execution_id, claim_token, step, heartbeat)
 
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
-            return self._wait_for_approval(execution_id, claim_token, step, heartbeat, start_resp)
+            return self._wait_for_approval(
+                execution_id, claim_token, step, heartbeat, start_resp
+            )
 
         # runner_action == "blocked" or unexpected
         logger.warning(
@@ -188,11 +192,17 @@ class Executor:
             )
 
             if status_resp.runner_action == "wait":
-                logger.debug("Step %d '%s': approval still pending", step.position, step.name)
+                logger.debug(
+                    "Step %d '%s': approval still pending", step.position, step.name
+                )
                 continue
 
             if status_resp.runner_action == "run":
-                logger.info("Step %d '%s': approval granted — executing", step.position, step.name)
+                logger.info(
+                    "Step %d '%s': approval granted — executing",
+                    step.position,
+                    step.name,
+                )
                 heartbeat.set_observed_status("running")
                 return self._execute_command(execution_id, claim_token, step, heartbeat)
 

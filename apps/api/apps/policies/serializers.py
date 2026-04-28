@@ -81,14 +81,18 @@ class PolicyRuleCreateSerializer(serializers.Serializer):
     description = serializers.CharField(required=False, allow_blank=True, default="")
     is_active = serializers.BooleanField(default=True)
     priority = serializers.IntegerField(min_value=1)
-    condition_type = serializers.ChoiceField(choices=[ct.value for ct in PolicyRule.ConditionType])
+    condition_type = serializers.ChoiceField(
+        choices=[ct.value for ct in PolicyRule.ConditionType]
+    )
     condition_params = serializers.JSONField()
     outcome = serializers.ChoiceField(choices=[o.value for o in PolicyRule.Outcome])
     reason = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, data):
         try:
-            services._validate_condition_params(data["condition_type"], data["condition_params"])
+            services._validate_condition_params(
+                data["condition_type"], data["condition_params"]
+            )
         except DomainValidationError as exc:
             raise serializers.ValidationError({"condition_params": exc.detail})
         return data
@@ -103,12 +107,18 @@ class PolicyRuleUpdateSerializer(serializers.Serializer):
         choices=[ct.value for ct in PolicyRule.ConditionType], required=False
     )
     condition_params = serializers.JSONField(required=False)
-    outcome = serializers.ChoiceField(choices=[o.value for o in PolicyRule.Outcome], required=False)
+    outcome = serializers.ChoiceField(
+        choices=[o.value for o in PolicyRule.Outcome], required=False
+    )
     reason = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, data):
-        ct = data.get("condition_type") or getattr(self.context.get("rule"), "condition_type", None)
-        cp = data.get("condition_params") or getattr(self.context.get("rule"), "condition_params", None)
+        ct = data.get("condition_type") or getattr(
+            self.context.get("rule"), "condition_type", None
+        )
+        cp = data.get("condition_params") or getattr(
+            self.context.get("rule"), "condition_params", None
+        )
         if ct and cp is not None:
             try:
                 services._validate_condition_params(ct, cp)
@@ -140,7 +150,10 @@ class PolicyListSerializer(serializers.ModelSerializer):
         ]
 
     def get_rule_count(self, obj):
-        if hasattr(obj, "_prefetched_objects_cache") and "rules" in obj._prefetched_objects_cache:
+        if (
+            hasattr(obj, "_prefetched_objects_cache")
+            and "rules" in obj._prefetched_objects_cache
+        ):
             return obj.rules.count()
         return obj.rules.filter(is_active=True).count()
 

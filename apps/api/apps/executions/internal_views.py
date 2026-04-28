@@ -176,7 +176,9 @@ class ExecutionStepStartView(APIView):
             except Exception as exc:
                 logger.error(
                     "Policy evaluation raised unexpectedly for step %s on execution %s: %s",
-                    step_id, execution_id, str(exc),
+                    step_id,
+                    execution_id,
+                    str(exc),
                 )
                 evaluation = None
                 try:
@@ -234,7 +236,9 @@ class ExecutionStepStartView(APIView):
                 )
                 step.refresh_from_db()
                 execution.refresh_from_db()
-                response_status = http_status.HTTP_201_CREATED if created else http_status.HTTP_200_OK
+                response_status = (
+                    http_status.HTTP_201_CREATED if created else http_status.HTTP_200_OK
+                )
                 return Response(
                     _build_start_approval_response(execution, step, ar),
                     status=response_status,
@@ -305,9 +309,7 @@ class ApprovalStatusView(APIView):
                 ar = step.approval_request
             except ApprovalRequest.DoesNotExist:
                 ar = None
-            return Response(
-                _build_approval_status_response(execution, step, ar, "run")
-            )
+            return Response(_build_approval_status_response(execution, step, ar, "run"))
         if step.status == ExecutionStep.Status.FAILED:
             try:
                 ar = step.approval_request
@@ -334,7 +336,14 @@ class ApprovalStatusView(APIView):
             ar = step.approval_request
         except ApprovalRequest.DoesNotExist:
             return Response(
-                {"errors": [{"code": "approval_request_not_found", "detail": "No approval request for this step."}]},
+                {
+                    "errors": [
+                        {
+                            "code": "approval_request_not_found",
+                            "detail": "No approval request for this step.",
+                        }
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -354,9 +363,7 @@ class ApprovalStatusView(APIView):
                 new_status=ExecutionStep.Status.RUNNING,
             )
             execution.refresh_from_db()
-            return Response(
-                _build_approval_status_response(execution, step, ar, "run")
-            )
+            return Response(_build_approval_status_response(execution, step, ar, "run"))
 
         # Rejected or timed out → fail the step.
         error_msg = (
@@ -373,9 +380,7 @@ class ApprovalStatusView(APIView):
             error_message=error_msg,
         )
         execution.refresh_from_db()
-        return Response(
-            _build_approval_status_response(execution, step, ar, "fail")
-        )
+        return Response(_build_approval_status_response(execution, step, ar, "fail"))
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +425,9 @@ def _build_approval_status_response(execution, step, ar, runner_action):
         "execution_status": execution.status,
         "step_id": str(step.id),
         "step_status": step.status,
-        "approval_request": InternalApprovalRequestSerializer().to_representation(ar) if ar else None,
+        "approval_request": InternalApprovalRequestSerializer().to_representation(ar)
+        if ar
+        else None,
         "runner_action": runner_action,
         "poll_after_seconds": poll,
     }

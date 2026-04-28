@@ -201,7 +201,9 @@ def test_fail_step_marks_step_failed_then_completes_failed(monkeypatch):
     executor.run(resp.execution, token)
 
     statuses = _step_statuses(client)
-    assert statuses == ["failed"]  # step 1 only (running is now via start_step); steps 2+3 never touched
+    assert statuses == [
+        "failed"
+    ]  # step 1 only (running is now via start_step); steps 2+3 never touched
 
     assert len(client.complete_calls) == 1
     assert client.complete_calls[0]["final_status"] == "failed"

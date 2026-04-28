@@ -39,7 +39,9 @@ class ApprovalRequestListView(APIView):
             organization=org, status=status_filter, execution_id=execution_id
         )
         resolved = [services.get_approval_status(approval_request=ar) for ar in qs]
-        return Response({"results": ApprovalRequestSerializer(resolved, many=True).data})
+        return Response(
+            {"results": ApprovalRequestSerializer(resolved, many=True).data}
+        )
 
 
 class ApprovalRequestDetailView(APIView):

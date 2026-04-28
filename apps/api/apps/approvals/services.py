@@ -135,7 +135,11 @@ def decide_approval(
 
         # Resolve timeout before checking decidability.
         now = timezone.now()
-        if locked.status == ApprovalRequest.Status.PENDING and locked.expires_at and locked.expires_at <= now:
+        if (
+            locked.status == ApprovalRequest.Status.PENDING
+            and locked.expires_at
+            and locked.expires_at <= now
+        ):
             locked.status = ApprovalRequest.Status.TIMED_OUT
             locked.resolved_at = now
             locked.save(update_fields=["status", "resolved_at", "updated_at"])
@@ -211,7 +215,9 @@ def _check_step_execution_invariants(execution: Execution, step: ExecutionStep) 
         )
 
 
-def _check_runner_ownership(execution: Execution, runner_id: str, claim_token: str) -> None:
+def _check_runner_ownership(
+    execution: Execution, runner_id: str, claim_token: str
+) -> None:
     if execution.claimed_by_runner_id != runner_id:
         raise InvalidStateTransitionError(
             code="runner_ownership_mismatch",

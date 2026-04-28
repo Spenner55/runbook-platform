@@ -12,14 +12,28 @@ class PolicyAdmin(admin.ModelAdmin):
 
 @admin.register(PolicyRule)
 class PolicyRuleAdmin(admin.ModelAdmin):
-    list_display = ("name", "policy", "priority", "condition_type", "outcome", "is_active")
+    list_display = (
+        "name",
+        "policy",
+        "priority",
+        "condition_type",
+        "outcome",
+        "is_active",
+    )
     list_filter = ("is_active", "condition_type", "outcome")
     search_fields = ("name", "policy__name")
 
 
 @admin.register(PolicyEvaluation)
 class PolicyEvaluationAdmin(admin.ModelAdmin):
-    list_display = ("id", "step", "outcome", "effective_outcome", "decision_source", "evaluated_at")
+    list_display = (
+        "id",
+        "step",
+        "outcome",
+        "effective_outcome",
+        "decision_source",
+        "evaluated_at",
+    )
     list_filter = ("outcome", "effective_outcome", "decision_source")
 
     def get_readonly_fields(self, request, obj=None):
