@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -335,6 +335,26 @@ def test_non_approval_step_never_calls_approval_status():
     run_execution(executor, execution)
 
     assert client.get_step_approval_status.call_count == 0
+
+
+def test_blocked_step_fails_execution_without_running_command():
+    client = MagicMock()
+    client.start_step.return_value = StepStartResponse(
+        execution_id=uuid4(),
+        execution_status="running",
+        step={"id": str(uuid4()), "status": "failed"},
+        runner_action="blocked",
+        poll_after_seconds=0,
+    )
+
+    executor = Executor(client)
+    execution = make_execution([make_step(1)])
+
+    run_execution(executor, execution)
+
+    assert client.update_step.call_count == 0
+    assert client.get_step_approval_status.call_count == 0
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
 
 
 def test_approved_step_followed_by_normal_step_both_succeed():

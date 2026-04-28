@@ -9,8 +9,6 @@ import pytest
 from django.test import Client
 
 from apps.approvals import services
-from apps.approvals.models import ApprovalRequest
-from apps.executions import services as execution_services
 
 
 @pytest.fixture

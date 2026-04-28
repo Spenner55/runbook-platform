@@ -5,16 +5,17 @@ Covers: request creation, idempotency, decision recording, timeout resolution,
 and double-decision concurrency guard.
 """
 
+import threading
 from datetime import timedelta
 
 import pytest
+from django.db import connections
 from django.utils import timezone
 
 from apps.approvals import services
 from apps.approvals.models import ApprovalDecision, ApprovalRequest
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
 from apps.executions.models import ExecutionStep
-
 
 # ---------------------------------------------------------------------------
 # request_step_approval
@@ -104,6 +105,41 @@ def test_request_step_approval_rejects_non_approval_step(claimed_approval_execut
         )
 
     assert exc_info.value.code == "approval_not_required_for_step"
+
+
+@pytest.mark.django_db
+def test_request_step_approval_rejects_step_from_different_execution(claimed_approval_execution, org):
+    """Step belonging to a different execution is rejected before any state change."""
+    from apps.executions import services as execution_services
+    from apps.runbooks import services as runbook_services
+    from apps.workflows import services as workflow_services
+    from apps.workflows.internal_clients import StubWorkflowTransformClient
+
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+
+    # Build a second execution and grab one of its steps.
+    rb = runbook_services.create_runbook(
+        organization=org, title="Other", slug="other-inv", raw_content="Step A"
+    )
+    wf = workflow_services.publish_workflow(
+        workflow=workflow_services.create_workflow(runbook=rb, transform_client=StubWorkflowTransformClient())
+    )
+    other_execution = execution_services.create_execution(workflow=wf)
+    other_step = other_execution.steps.order_by("position").first()
+    other_step.requires_approval = True
+    other_step.save(update_fields=["requires_approval", "updated_at"])
+
+    with pytest.raises(InvalidStateTransitionError) as exc_info:
+        services.request_step_approval(
+            execution=execution,
+            step=other_step,
+            runner_id="runner-1",
+            claim_token=claim_token,
+        )
+
+    assert exc_info.value.code == "step_execution_mismatch"
 
 
 @pytest.mark.django_db
@@ -241,12 +277,12 @@ def test_get_approval_status_no_timeout_when_not_expired(pending_approval):
 
 
 # ---------------------------------------------------------------------------
-# Concurrency guard: double-decision serial test
+# Concurrency guard: double-decision tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db(transaction=True)
-def test_double_decision_only_one_wins(claimed_approval_execution):
+def test_double_decision_serial_only_one_wins(claimed_approval_execution):
     result = claimed_approval_execution
     execution = result["execution"]
     claim_token = result["claim_token"]
@@ -267,3 +303,46 @@ def test_double_decision_only_one_wins(claimed_approval_execution):
     assert ApprovalDecision.objects.filter(approval_request=ar).count() == 1
     ar.refresh_from_db()
     assert ar.status == ApprovalRequest.Status.APPROVED
+
+
+@pytest.mark.django_db(transaction=True)
+def test_double_decision_concurrent_exactly_one_wins(claimed_approval_execution):
+    """Two threads race to decide the same approval; exactly one must succeed."""
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    ar, _ = services.request_step_approval(
+        execution=execution,
+        step=step,
+        runner_id="runner-1",
+        claim_token=claim_token,
+    )
+
+    barrier = threading.Barrier(2)
+    winners = []
+    losers = []
+
+    def try_decide(decision, actor):
+        barrier.wait()
+        try:
+            services.decide_approval(approval_request=ar, decision=decision, actor_label=actor)
+            winners.append(decision)
+        except DomainConflictError:
+            losers.append(decision)
+        finally:
+            connections.close_all()
+
+    t1 = threading.Thread(target=try_decide, args=("approved", "Op A"))
+    t2 = threading.Thread(target=try_decide, args=("rejected", "Op B"))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert len(winners) == 1, f"Expected exactly one winner, got: {winners}"
+    assert len(losers) == 1, f"Expected exactly one loser, got: {losers}"
+    assert ApprovalDecision.objects.filter(approval_request=ar).count() == 1
+    ar.refresh_from_db()
+    assert ar.status in {ApprovalRequest.Status.APPROVED, ApprovalRequest.Status.REJECTED}

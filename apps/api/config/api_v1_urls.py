@@ -31,6 +31,7 @@ router.register("executions", ExecutionViewSet, basename="execution")
 urlpatterns = [
     path("", include(router.urls)),
     path("approvals/", include("apps.approvals.urls")),
+    path("policies/", include("apps.policies.urls")),
     path(
         "internal/executions/claim-next/",
         ClaimNextExecutionView.as_view(),

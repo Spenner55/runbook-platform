@@ -10,9 +10,11 @@ import pytest
 
 from runner.client import ApiClient
 from runner.schemas import (
+    ApprovalStatusResponse,
     ClaimNextResponse,
     CompleteExecutionResponse,
     HeartbeatResponse,
+    StepStartResponse,
     StepUpdateResponse,
 )
 
@@ -237,6 +239,92 @@ def test_update_step_succeeded_includes_exit_code():
 
     assert captured["exit_code"] == 0
     assert captured["status"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# start_step
+# ---------------------------------------------------------------------------
+
+
+def test_start_step_sends_correct_url_and_parses_blocked():
+    captured = {}
+    execution_id = uuid4()
+    step_id = uuid4()
+    body = {
+        "execution_id": str(execution_id),
+        "execution_status": "running",
+        "step": {"id": str(step_id), "status": "failed"},
+        "runner_action": "blocked",
+        "policy_evaluation": {
+            "id": str(uuid4()),
+            "outcome": "block",
+            "effective_outcome": "block",
+            "reason": "Blocked by policy.",
+        },
+        "poll_after_seconds": 0,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    claim_token = uuid4()
+    client = make_client(httpx.MockTransport(handler))
+    resp = client.start_step(execution_id, step_id, claim_token)
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/start/"
+    assert captured["runner_id"] == "test-runner"
+    assert captured["claim_token"] == str(claim_token)
+    assert isinstance(resp, StepStartResponse)
+    assert resp.runner_action == "blocked"
+
+
+# ---------------------------------------------------------------------------
+# get_step_approval_status
+# ---------------------------------------------------------------------------
+
+
+def test_get_step_approval_status_sends_correct_url_and_parses_run():
+    captured = {}
+    execution_id = uuid4()
+    step_id = uuid4()
+    body = {
+        "execution_id": str(execution_id),
+        "execution_status": "running",
+        "step_id": str(step_id),
+        "step_status": "running",
+        "approval_request": None,
+        "runner_action": "run",
+        "poll_after_seconds": 0,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    claim_token = uuid4()
+    client = make_client(httpx.MockTransport(handler))
+    resp = client.get_step_approval_status(execution_id, step_id, claim_token)
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/approval-status/"
+    assert captured["runner_id"] == "test-runner"
+    assert captured["claim_token"] == str(claim_token)
+    assert isinstance(resp, ApprovalStatusResponse)
+    assert resp.runner_action == "run"
 
 
 # ---------------------------------------------------------------------------

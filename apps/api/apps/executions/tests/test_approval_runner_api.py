@@ -13,7 +13,6 @@ from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -40,7 +39,7 @@ def _base_workflow(runbook):
 @pytest.fixture
 def claimed_no_approval(_base_workflow):
     """Execution where no step requires approval."""
-    execution = execution_services.create_execution(workflow=_base_workflow)
+    execution_services.create_execution(workflow=_base_workflow)
     return execution_services.claim_next_execution(runner_id="runner-1")
 
 
@@ -167,6 +166,47 @@ def test_step_start_wrong_runner_returns_409(claimed_with_approval):
 
 
 # ---------------------------------------------------------------------------
+# Phase 10.2 compatibility: policy can force wait_for_approval on any step
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_policy_forced_approval_on_schema_non_approval_step(claimed_no_approval):
+    """
+    A step whose workflow schema has requiresApproval=false can still receive
+    runner_action=wait_for_approval when Django (Phase 10.2 policy engine) sets
+    requires_approval=True on the model. The runner must not branch locally on
+    schema fields — it defers entirely to Django's start response.
+    """
+    result = claimed_no_approval
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    # Confirm schema says no approval required.
+    assert not step.step_snapshot.get("requiresApproval", False)
+
+    # Simulate Phase 10.2 policy engine flagging the step.
+    step.requires_approval = True
+    step.save(update_fields=["requires_approval", "updated_at"])
+
+    client = Client()
+    response = client.post(
+        f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
+        data={"runner_id": "runner-1", "claim_token": claim_token},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["runner_action"] == "wait_for_approval", (
+        "Django must return wait_for_approval even when schema says requiresApproval=false"
+    )
+    assert body["step"]["status"] == "waiting_for_approval"
+    assert body["approval_request"]["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
 # /approval-status/ — polling
 # ---------------------------------------------------------------------------
 
@@ -246,6 +286,7 @@ def test_approval_status_rejected_returns_fail(waiting_step_data):
 @pytest.mark.django_db
 def test_approval_status_timed_out_returns_fail(waiting_step_data):
     from datetime import timedelta
+
     from django.utils import timezone
 
     d = waiting_step_data

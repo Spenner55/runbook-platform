@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "apps.workflows.apps.WorkflowsConfig",
     "apps.executions.apps.ExecutionsConfig",
     "apps.approvals.apps.ApprovalsConfig",
+    "apps.policies.apps.PoliciesConfig",
 ]
 
 MIDDLEWARE = [

@@ -7,7 +7,6 @@ from apps.approvals.models import ApprovalDecision, ApprovalRequest
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
 from apps.executions.models import Execution, ExecutionStep
 
-
 # ---------------------------------------------------------------------------
 # Runner-facing service: create/reuse an approval request for a step
 # ---------------------------------------------------------------------------
@@ -19,6 +18,7 @@ def request_step_approval(
     step: ExecutionStep,
     runner_id: str,
     claim_token: str,
+    policy_driven: bool = False,
 ) -> tuple[ApprovalRequest, bool]:
     """
     Atomically transition the step to waiting_for_approval and create or
@@ -29,6 +29,7 @@ def request_step_approval(
         execution = Execution.objects.select_for_update().get(pk=execution.pk)
         step = ExecutionStep.objects.select_for_update().get(pk=step.pk)
 
+        _check_step_execution_invariants(execution, step)
         _check_runner_ownership(execution, runner_id, claim_token)
 
         # Idempotency: if already in the approval flow, return the existing request.
@@ -48,7 +49,7 @@ def request_step_approval(
                 ),
             )
 
-        if not step.requires_approval:
+        if not step.requires_approval and not policy_driven:
             raise InvalidStateTransitionError(
                 code="approval_not_required_for_step",
                 detail="This step does not require approval.",
@@ -195,6 +196,19 @@ def list_approvals(*, organization, status=None, execution_id=None):
 # ---------------------------------------------------------------------------
 # Internal helper
 # ---------------------------------------------------------------------------
+
+
+def _check_step_execution_invariants(execution: Execution, step: ExecutionStep) -> None:
+    if str(step.execution_id) != str(execution.id):
+        raise InvalidStateTransitionError(
+            code="step_execution_mismatch",
+            detail="Step does not belong to the given execution.",
+        )
+    if str(step.execution.organization_id) != str(execution.organization_id):
+        raise InvalidStateTransitionError(
+            code="organization_mismatch",
+            detail="Step execution organization does not match.",
+        )
 
 
 def _check_runner_ownership(execution: Execution, runner_id: str, claim_token: str) -> None:

@@ -5,7 +5,10 @@ from rest_framework.views import APIView
 
 from apps.approvals import services
 from apps.approvals.models import ApprovalRequest
-from apps.approvals.serializers import ApprovalRequestSerializer, DecideApprovalSerializer
+from apps.approvals.serializers import (
+    ApprovalRequestSerializer,
+    DecideApprovalSerializer,
+)
 from apps.organizations.models import Organization
 
 

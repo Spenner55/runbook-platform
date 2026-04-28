@@ -6,6 +6,9 @@ They accept runner-owned requests only and must not be registered on the
 public router.
 """
 
+import logging
+
+from django.db import transaction
 from rest_framework import status as http_status
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
@@ -26,6 +29,9 @@ from apps.executions.internal_serializers import (
 )
 from apps.executions.models import Execution, ExecutionStep
 from apps.executions.serializers import ExecutionStepSerializer
+from apps.policies import services as policy_services
+
+logger = logging.getLogger(__name__)
 
 
 class ClaimNextExecutionView(APIView):
@@ -132,10 +138,11 @@ class ExecutionStepStartView(APIView):
     """
     POST /api/v1/internal/executions/<execution_id>/steps/<step_id>/start/
 
-    The runner calls this for every step instead of directly calling update/running.
-    Django evaluates whether the step requires approval and returns a runner_action:
+    The runner calls this for every step before executing any command.
+    Django evaluates policies and returns a runner_action:
       - "run"               → step transitioned to running; runner may execute
       - "wait_for_approval" → step transitioned to waiting_for_approval; runner polls
+      - "blocked"           → policy blocked the step; step transitioned to failed; runner must not execute
     """
 
     def post(self, request, execution_id, step_id):
@@ -148,7 +155,7 @@ class ExecutionStepStartView(APIView):
 
         step = get_object_or_404(ExecutionStep, pk=step_id, execution=execution)
 
-        # Idempotent: if step already waiting, return existing approval request.
+        # Idempotent: if step already waiting for approval, return existing state.
         if step.status == ExecutionStep.Status.WAITING_FOR_APPROVAL:
             try:
                 ar = step.approval_request
@@ -160,39 +167,112 @@ class ExecutionStepStartView(APIView):
             except ApprovalRequest.DoesNotExist:
                 pass
 
-        if step.requires_approval:
-            ar, created = approval_services.request_step_approval(
+        with transaction.atomic():
+            try:
+                evaluation = policy_services.evaluate_step_policy(
+                    execution=execution,
+                    step=step,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Policy evaluation raised unexpectedly for step %s on execution %s: %s",
+                    step_id, execution_id, str(exc),
+                )
+                evaluation = None
+                try:
+                    evaluation = policy_services.persist_policy_evaluation_error(
+                        execution=execution,
+                        step=step,
+                        error_code="policy_evaluation_error",
+                        error_message=str(exc),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not persist fail-closed policy evaluation for step %s on execution %s",
+                        step_id,
+                        execution_id,
+                    )
+                step = services.update_execution_step(
+                    execution=execution,
+                    step_id=str(step_id),
+                    runner_id=runner_id,
+                    claim_token=claim_token,
+                    new_status=ExecutionStep.Status.FAILED,
+                    error_message="policy_evaluation_error",
+                )
+                execution.refresh_from_db()
+                return Response(
+                    _build_blocked_response(execution, step, evaluation),
+                    status=http_status.HTTP_200_OK,
+                )
+
+            # Evaluation failed closed — error_code is set
+            if evaluation.error_code:
+                step = services.update_execution_step(
+                    execution=execution,
+                    step_id=str(step_id),
+                    runner_id=runner_id,
+                    claim_token=claim_token,
+                    new_status=ExecutionStep.Status.FAILED,
+                    error_message="policy_evaluation_error",
+                )
+                execution.refresh_from_db()
+                return Response(
+                    _build_blocked_response(execution, step, evaluation),
+                    status=http_status.HTTP_200_OK,
+                )
+
+            effective_outcome = evaluation.effective_outcome
+
+            if effective_outcome == "approval_required":
+                ar, created = approval_services.request_step_approval(
+                    execution=execution,
+                    step=step,
+                    runner_id=runner_id,
+                    claim_token=claim_token,
+                    policy_driven=True,
+                )
+                step.refresh_from_db()
+                execution.refresh_from_db()
+                response_status = http_status.HTTP_201_CREATED if created else http_status.HTTP_200_OK
+                return Response(
+                    _build_start_approval_response(execution, step, ar),
+                    status=response_status,
+                )
+
+            if effective_outcome == "block":
+                step = services.update_execution_step(
+                    execution=execution,
+                    step_id=str(step_id),
+                    runner_id=runner_id,
+                    claim_token=claim_token,
+                    new_status=ExecutionStep.Status.FAILED,
+                    error_message="policy_blocked",
+                )
+                execution.refresh_from_db()
+                return Response(
+                    _build_blocked_response(execution, step, evaluation),
+                    status=http_status.HTTP_200_OK,
+                )
+
+            # auto_approve: transition step to running
+            step = services.update_execution_step(
                 execution=execution,
-                step=step,
+                step_id=str(step_id),
                 runner_id=runner_id,
                 claim_token=claim_token,
+                new_status=ExecutionStep.Status.RUNNING,
             )
-            step.refresh_from_db()
             execution.refresh_from_db()
-            response_status = http_status.HTTP_201_CREATED if created else http_status.HTTP_200_OK
             return Response(
-                _build_start_approval_response(execution, step, ar),
-                status=response_status,
+                {
+                    "execution_id": str(execution.id),
+                    "execution_status": execution.status,
+                    "step": {"id": str(step.id), "status": step.status},
+                    "runner_action": "run",
+                    "poll_after_seconds": 0,
+                }
             )
-
-        # Non-approval path: transition step to running via service.
-        step = services.update_execution_step(
-            execution=execution,
-            step_id=str(step_id),
-            runner_id=runner_id,
-            claim_token=claim_token,
-            new_status=ExecutionStep.Status.RUNNING,
-        )
-        execution.refresh_from_db()
-        return Response(
-            {
-                "execution_id": str(execution.id),
-                "execution_status": execution.status,
-                "step": {"id": str(step.id), "status": step.status},
-                "runner_action": "run",
-                "poll_after_seconds": 0,
-            }
-        )
 
 
 class ApprovalStatusView(APIView):
@@ -311,6 +391,25 @@ def _build_start_approval_response(execution, step, ar):
         "approval_request": InternalApprovalRequestSerializer().to_representation(ar),
         "runner_action": "wait_for_approval",
         "poll_after_seconds": 5,
+    }
+
+
+def _build_blocked_response(execution, step, evaluation):
+    policy_eval_data = None
+    if evaluation is not None:
+        policy_eval_data = {
+            "id": str(evaluation.id),
+            "outcome": evaluation.outcome,
+            "effective_outcome": evaluation.effective_outcome,
+            "reason": evaluation.reason,
+        }
+    return {
+        "execution_id": str(execution.id),
+        "execution_status": execution.status,
+        "step": {"id": str(step.id), "status": step.status},
+        "runner_action": "blocked",
+        "policy_evaluation": policy_eval_data,
+        "poll_after_seconds": 0,
     }
 
 

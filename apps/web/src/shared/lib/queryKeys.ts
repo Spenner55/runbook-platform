@@ -6,4 +6,9 @@ export const queryKeys = {
   execution: (executionId: string) => ['execution', executionId] as const,
   approvals: (organizationId: string, status?: string) =>
     ['approvals', organizationId, status ?? 'pending'] as const,
+  policies: (organizationId: string, isActive?: string) =>
+    ['policies', organizationId, isActive ?? 'true'] as const,
+  policy: (policyId: string, organizationId?: string) =>
+    ['policy', policyId, organizationId ?? 'unknown-org'] as const,
+  policyEvaluations: (executionId: string) => ['policy-evaluations', executionId] as const,
 }
