@@ -48,7 +48,9 @@ function DecideForm({ approval, organizationId, onDone }: DecideFormProps) {
   return (
     <form className="stack-md" onSubmit={handleSubmit}>
       <div className="field">
-        <label className="field__label" htmlFor="decision">Decision</label>
+        <label className="field__label" htmlFor="decision">
+          Decision
+        </label>
         <select
           id="decision"
           className="field__input"
@@ -60,7 +62,9 @@ function DecideForm({ approval, organizationId, onDone }: DecideFormProps) {
         </select>
       </div>
       <div className="field">
-        <label className="field__label" htmlFor="actor">Your name</label>
+        <label className="field__label" htmlFor="actor">
+          Your name
+        </label>
         <input
           id="actor"
           className="field__input"
@@ -72,7 +76,9 @@ function DecideForm({ approval, organizationId, onDone }: DecideFormProps) {
         />
       </div>
       <div className="field">
-        <label className="field__label" htmlFor="notes">Notes (optional)</label>
+        <label className="field__label" htmlFor="notes">
+          Notes (optional)
+        </label>
         <textarea
           id="notes"
           className="field__input"
@@ -104,7 +110,10 @@ function ApprovalRow({ approval, organizationId }: ApprovalRowProps) {
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <li className="step-list__item stack-md" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+    <li
+      className="step-list__item stack-md"
+      style={{ flexDirection: 'column', alignItems: 'flex-start' }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
         <div>
           <strong>{approval.step.name}</strong>
@@ -117,9 +126,7 @@ function ApprovalRow({ approval, organizationId }: ApprovalRowProps) {
           </p>
           <p className="muted">
             Requested {formatDateTime(approval.requested_at)}
-            {approval.expires_at
-              ? ` · expires ${formatDateTime(approval.expires_at)}`
-              : ''}
+            {approval.expires_at ? ` · expires ${formatDateTime(approval.expires_at)}` : ''}
           </p>
         </div>
         <div className="step-list__meta">
@@ -128,10 +135,7 @@ function ApprovalRow({ approval, organizationId }: ApprovalRowProps) {
           </span>
           <span className="pill">{approval.status}</span>
           {approval.status === 'pending' ? (
-            <button
-              className="btn btn--primary"
-              onClick={() => setExpanded((v) => !v)}
-            >
+            <button className="btn btn--primary" onClick={() => setExpanded((v) => !v)}>
               {expanded ? 'Cancel' : 'Decide'}
             </button>
           ) : null}
@@ -169,14 +173,16 @@ export function ApprovalsInboxPage() {
         <p className="eyebrow">Phase 10.1</p>
         <h2>Approvals Inbox</h2>
         <p className="muted">
-          Review and approve or reject steps that are waiting for human authorization
-          before command execution.
+          Review and approve or reject steps that are waiting for human authorization before command
+          execution.
         </p>
       </div>
 
       <div className="stack-md">
         <div className="field">
-          <label className="field__label" htmlFor="org-id">Organization ID</label>
+          <label className="field__label" htmlFor="org-id">
+            Organization ID
+          </label>
           <input
             id="org-id"
             className="field__input"
@@ -187,7 +193,9 @@ export function ApprovalsInboxPage() {
           />
         </div>
         <div className="field">
-          <label className="field__label" htmlFor="status-filter">Status</label>
+          <label className="field__label" htmlFor="status-filter">
+            Status
+          </label>
           <select
             id="status-filter"
             className="field__input"
@@ -203,9 +211,7 @@ export function ApprovalsInboxPage() {
         </div>
       </div>
 
-      {!orgId ? (
-        <p className="muted">Enter an organization ID to load the inbox.</p>
-      ) : null}
+      {!orgId ? <p className="muted">Enter an organization ID to load the inbox.</p> : null}
 
       {query.isLoading ? <p className="muted">Loading approvals…</p> : null}
 

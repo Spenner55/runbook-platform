@@ -71,9 +71,7 @@ class ClaimedStep(BaseModel):
     risk_level: str
     command: str = ""
     requires_approval: bool = False
-    status: Literal[
-        "pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"
-    ]
+    status: Literal["pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"]
 
     model_config = ConfigDict(extra="ignore")
 

@@ -44,7 +44,6 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
 
         # Inline to avoid circular import; import here is safe
         from apps.policies.serializers import PolicyEvaluationSummarySerializer
-
         return PolicyEvaluationSummarySerializer(evaluation).data
 
 

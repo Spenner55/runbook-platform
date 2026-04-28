@@ -23,12 +23,7 @@ def create_policy(
     is_active: bool = True,
     created_by_label: str = "",
 ) -> Policy:
-    if (
-        is_active
-        and Policy.objects.filter(
-            organization=organization, name=name, is_active=True
-        ).exists()
-    ):
+    if is_active and Policy.objects.filter(organization=organization, name=name, is_active=True).exists():
         raise DomainConflictError(
             code="duplicate_active_policy_name",
             detail=f"An active policy named '{name}' already exists for this organization.",
@@ -55,12 +50,8 @@ def update_policy(*, policy: Policy, **changes) -> Policy:
     new_is_active = changes.get("is_active", policy.is_active)
 
     # Guard: reactivating or renaming to an existing active name
-    if new_is_active and (
-        new_name != policy.name or (not policy.is_active and new_is_active)
-    ):
-        qs = Policy.objects.filter(
-            organization=policy.organization, name=new_name, is_active=True
-        )
+    if new_is_active and (new_name != policy.name or (not policy.is_active and new_is_active)):
+        qs = Policy.objects.filter(organization=policy.organization, name=new_name, is_active=True)
         if policy.pk:
             qs = qs.exclude(pk=policy.pk)
         if qs.exists():
@@ -126,14 +117,8 @@ def create_rule(
 
 def update_rule(*, rule: PolicyRule, **changes) -> PolicyRule:
     allowed = {
-        "name",
-        "description",
-        "is_active",
-        "priority",
-        "condition_type",
-        "condition_params",
-        "outcome",
-        "reason",
+        "name", "description", "is_active", "priority",
+        "condition_type", "condition_params", "outcome", "reason",
     }
     unknown = set(changes) - allowed
     if unknown:
@@ -150,26 +135,15 @@ def update_rule(*, rule: PolicyRule, **changes) -> PolicyRule:
 
     if "priority" in changes and new_priority != rule.priority:
         if new_priority <= 0:
-            raise DomainValidationError(
-                code="invalid_rule_priority",
-                detail="Rule priority must be greater than 0.",
-            )
-        if (
-            PolicyRule.objects.filter(policy=rule.policy, priority=new_priority)
-            .exclude(pk=rule.pk)
-            .exists()
-        ):
+            raise DomainValidationError(code="invalid_rule_priority", detail="Rule priority must be greater than 0.")
+        if PolicyRule.objects.filter(policy=rule.policy, priority=new_priority).exclude(pk=rule.pk).exists():
             raise DomainConflictError(
                 code="duplicate_rule_priority",
                 detail=f"A rule with priority {new_priority} already exists in this policy.",
             )
 
     if "name" in changes and new_name != rule.name:
-        if (
-            PolicyRule.objects.filter(policy=rule.policy, name=new_name)
-            .exclude(pk=rule.pk)
-            .exists()
-        ):
+        if PolicyRule.objects.filter(policy=rule.policy, name=new_name).exclude(pk=rule.pk).exists():
             raise DomainConflictError(
                 code="duplicate_rule_name",
                 detail=f"A rule named '{new_name}' already exists in this policy.",
@@ -228,9 +202,7 @@ def evaluate_step_policy(
                     all_active_rules.append((policy, rule))
 
         # Deterministic global sort: (priority, policy.created_at, policy.id, rule.id)
-        all_active_rules.sort(
-            key=lambda pr: (pr[1].priority, pr[0].created_at, pr[0].id, pr[1].id)
-        )
+        all_active_rules.sort(key=lambda pr: (pr[1].priority, pr[0].created_at, pr[0].id, pr[1].id))
 
         for policy, rule in all_active_rules:
             try:
@@ -253,9 +225,7 @@ def evaluate_step_policy(
                 )
 
             try:
-                matched = _evaluate_condition(
-                    rule.condition_type, rule.condition_params, condition_context
-                )
+                matched = _evaluate_condition(rule.condition_type, rule.condition_params, condition_context)
             except Exception as exc:
                 logger.error(
                     "Condition evaluation failed for rule %s: %s",
@@ -317,11 +287,7 @@ def evaluate_step_policy(
         )
 
     except Exception as exc:
-        logger.error(
-            "Unexpected error during policy evaluation for step %s: %s",
-            step.id,
-            str(exc),
-        )
+        logger.error("Unexpected error during policy evaluation for step %s: %s", step.id, str(exc))
         try:
             return persist_policy_evaluation_error(
                 execution=execution,
@@ -332,9 +298,7 @@ def evaluate_step_policy(
                 context=context,
             )
         except Exception:
-            logger.exception(
-                "Could not persist fail-closed policy evaluation for step %s", step.id
-            )
+            logger.exception("Could not persist fail-closed policy evaluation for step %s", step.id)
             raise
 
 
@@ -377,10 +341,7 @@ def _validate_condition_params(condition_type: str, condition_params: dict) -> N
             code="unknown_condition_type",
             detail=f"Unknown condition type: '{condition_type}'.",
         )
-    if condition_type in (
-        PolicyRule.ConditionType.RISK_LEVEL,
-        PolicyRule.ConditionType.STEP_TYPE,
-    ):
+    if condition_type in (PolicyRule.ConditionType.RISK_LEVEL, PolicyRule.ConditionType.STEP_TYPE):
         _validate_enum_condition(condition_params)
     elif condition_type == PolicyRule.ConditionType.TIME_WINDOW:
         _validate_time_window_condition(condition_params)
@@ -417,9 +378,7 @@ def _validate_enum_condition(params: dict) -> None:
 def _validate_time_window_condition(params: dict) -> None:
     tz_name = params.get("timezone")
     if not tz_name:
-        raise DomainValidationError(
-            code="invalid_condition_params", detail="'timezone' is required."
-        )
+        raise DomainValidationError(code="invalid_condition_params", detail="'timezone' is required.")
     try:
         ZoneInfo(tz_name)
     except (ZoneInfoNotFoundError, KeyError):
@@ -494,17 +453,13 @@ def _validate_outcome(outcome: str) -> None:
 _DAY_MAP = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
-def _evaluate_condition(
-    condition_type: str, condition_params: dict, context: dict
-) -> bool:
+def _evaluate_condition(condition_type: str, condition_params: dict, context: dict) -> bool:
     if condition_type == PolicyRule.ConditionType.RISK_LEVEL:
         return _evaluate_enum_condition(condition_params, context.get("risk_level", ""))
     if condition_type == PolicyRule.ConditionType.STEP_TYPE:
         return _evaluate_enum_condition(condition_params, context.get("step_type", ""))
     if condition_type == PolicyRule.ConditionType.TIME_WINDOW:
-        return _evaluate_time_window_condition(
-            condition_params, context.get("evaluated_at")
-        )
+        return _evaluate_time_window_condition(condition_params, context.get("evaluated_at"))
     return False
 
 
@@ -550,9 +505,7 @@ def _apply_requires_approval_floor(outcome: str, step: ExecutionStep) -> str:
     return outcome
 
 
-def _build_evaluation_context(
-    execution: Execution, step: ExecutionStep, evaluated_at
-) -> dict:
+def _build_evaluation_context(execution: Execution, step: ExecutionStep, evaluated_at) -> dict:
     return {
         "organization_id": str(execution.organization_id),
         "execution_id": str(execution.id),
@@ -561,9 +514,7 @@ def _build_evaluation_context(
         "step_type": step.step_type,
         "risk_level": step.risk_level,
         "requires_approval": step.requires_approval,
-        "evaluated_at": evaluated_at.isoformat()
-        if hasattr(evaluated_at, "isoformat")
-        else str(evaluated_at),
+        "evaluated_at": evaluated_at.isoformat() if hasattr(evaluated_at, "isoformat") else str(evaluated_at),
         "workflow_id": str(execution.workflow_id) if execution.workflow_id else None,
     }
 

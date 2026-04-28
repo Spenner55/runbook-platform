@@ -47,9 +47,7 @@ describe('PoliciesPage', () => {
   })
 
   it('fetches and renders policy list after entering org id', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [policy1, policy2] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [policy1, policy2] }))
 
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 
@@ -65,9 +63,7 @@ describe('PoliciesPage', () => {
   })
 
   it('renders active/inactive status pills', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [policy1, policy2] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [policy1, policy2] }))
 
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 
@@ -81,9 +77,7 @@ describe('PoliciesPage', () => {
   })
 
   it('shows create policy form when Create policy button is clicked', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [] }))
 
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 
@@ -101,7 +95,7 @@ describe('PoliciesPage', () => {
   it('submits create policy form and refetches', async () => {
     const newPolicy = { ...policy1, id: 'policy-new', name: 'New Policy', rule_count: 0 }
 
-    fetchMock.mockImplementation((_url, init) => {
+    fetchMock.mockImplementation((url, init) => {
       if (init && (init as RequestInit).method === 'POST') {
         return Promise.resolve(createJsonResponse(newPolicy))
       }
@@ -129,9 +123,7 @@ describe('PoliciesPage', () => {
   })
 
   it('renders error banner on API failure', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ detail: 'Forbidden' }, { status: 403 })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ detail: 'Forbidden' }, { status: 403 }))
 
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 
@@ -143,9 +135,7 @@ describe('PoliciesPage', () => {
   })
 
   it('shows empty state when no policies found', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [] }))
 
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 

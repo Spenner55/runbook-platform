@@ -56,12 +56,8 @@ class PolicyRule(BaseModel):
             models.Index(fields=["condition_type", "outcome"]),
         ]
         constraints = [
-            models.UniqueConstraint(
-                fields=["policy", "priority"], name="unique_policy_rule_priority"
-            ),
-            models.UniqueConstraint(
-                fields=["policy", "name"], name="unique_policy_rule_name"
-            ),
+            models.UniqueConstraint(fields=["policy", "priority"], name="unique_policy_rule_priority"),
+            models.UniqueConstraint(fields=["policy", "name"], name="unique_policy_rule_name"),
         ]
 
     def __str__(self):

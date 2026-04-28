@@ -7,8 +7,7 @@ export function useApprovalsInbox(organizationId: string | null, statusFilter?: 
   return useQuery({
     queryKey: queryKeys.approvals(organizationId ?? '', statusFilter),
     enabled: Boolean(organizationId),
-    queryFn: () =>
-      listApprovals({ organization_id: organizationId ?? '', status: statusFilter }),
+    queryFn: () => listApprovals({ organization_id: organizationId ?? '', status: statusFilter }),
     refetchInterval: 3000,
   })
 }

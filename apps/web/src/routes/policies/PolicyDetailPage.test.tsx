@@ -136,9 +136,7 @@ describe('PolicyDetailPage', () => {
   })
 
   it('renders error banner on API failure', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ detail: 'Not found' }, { status: 404 })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ detail: 'Not found' }, { status: 404 }))
 
     renderRoute(<PolicyDetailPage />, {
       path: '/policies/:policyId',
@@ -201,12 +199,14 @@ describe('PolicyDetailPage', () => {
         return Promise.resolve(createJsonResponse(null, { status: 204 }))
       }
       if (String(url).includes('/api/v1/policies/policy-1/')) {
-        return Promise.resolve(createJsonResponse({
-          ...policyDetail,
-          rules: fetchMock.mock.calls.some(([, callInit]) => callInit?.method === 'DELETE')
-            ? [{ ...ruleHighRisk, is_active: false }]
-            : [ruleHighRisk],
-        }))
+        return Promise.resolve(
+          createJsonResponse({
+            ...policyDetail,
+            rules: fetchMock.mock.calls.some(([, callInit]) => callInit?.method === 'DELETE')
+              ? [{ ...ruleHighRisk, is_active: false }]
+              : [ruleHighRisk],
+          })
+        )
       }
       return Promise.resolve(createJsonResponse(policyDetail))
     })

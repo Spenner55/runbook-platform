@@ -42,9 +42,10 @@ def _build_detail_queryset():
             )
         ),
     )
-    return Execution.objects.select_related(
-        "workflow", "organization"
-    ).prefetch_related(steps_prefetch)
+    return (
+        Execution.objects.select_related("workflow", "organization")
+        .prefetch_related(steps_prefetch)
+    )
 
 
 class ExecutionViewSet(
@@ -115,6 +116,4 @@ class ExecutionViewSet(
             .select_related("policy", "rule", "step")
             .order_by("step__position", "-evaluated_at")
         )
-        return Response(
-            {"results": PolicyEvaluationDetailSerializer(qs, many=True).data}
-        )
+        return Response({"results": PolicyEvaluationDetailSerializer(qs, many=True).data})

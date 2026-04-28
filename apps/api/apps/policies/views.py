@@ -28,9 +28,7 @@ def _query_param_error(attr, detail):
 def _get_scoped_policy_or_response(request, policy_id):
     org_id = request.query_params.get("organization_id")
     if not org_id:
-        return None, _query_param_error(
-            "organization_id", "organization_id is required."
-        )
+        return None, _query_param_error("organization_id", "organization_id is required.")
 
     org = get_object_or_404(Organization, pk=org_id)
     return get_object_or_404(Policy, pk=policy_id, organization=org), None
@@ -47,9 +45,7 @@ class PolicyListCreateView(APIView):
 
         is_active_param = request.query_params.get("is_active", "true")
         if is_active_param not in {"true", "false", "all"}:
-            return _query_param_error(
-                "is_active", "is_active must be one of: true, false, all."
-            )
+            return _query_param_error("is_active", "is_active must be one of: true, false, all.")
 
         qs = Policy.objects.filter(organization=org)
         if is_active_param == "true":
@@ -81,9 +77,7 @@ class PolicyListCreateView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        return Response(
-            PolicyDetailSerializer(policy).data, status=status.HTTP_201_CREATED
-        )
+        return Response(PolicyDetailSerializer(policy).data, status=status.HTTP_201_CREATED)
 
 
 class PolicyRetrieveUpdateView(APIView):
@@ -159,9 +153,7 @@ class PolicyRuleUpdateDeactivateView(APIView):
         rule, error = self._get_rule(request, policy_id, rule_id)
         if error:
             return error
-        serializer = PolicyRuleUpdateSerializer(
-            data=request.data, context={"rule": rule}
-        )
+        serializer = PolicyRuleUpdateSerializer(data=request.data, context={"rule": rule})
         serializer.is_valid(raise_exception=True)
         changes = {k: v for k, v in serializer.validated_data.items()}
 

@@ -35,9 +35,7 @@ def runbook(org):
 
 @pytest.fixture
 def published_workflow(runbook):
-    wf = wf_services.create_workflow(
-        runbook=runbook, transform_client=StubWorkflowTransformClient()
-    )
+    wf = wf_services.create_workflow(runbook=runbook, transform_client=StubWorkflowTransformClient())
     return wf_services.publish_workflow(workflow=wf)
 
 
@@ -89,9 +87,7 @@ def test_auto_approve_policy_returns_run(org, claimed):
 
     policy = policy_services.create_policy(organization=org, name="AutoApprove Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="Auto low",
-        priority=10,
+        policy=policy, name="Auto low", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["low"]},
         outcome="auto_approve",
@@ -127,9 +123,7 @@ def test_no_policy_requires_approval_true_returns_wait(claimed):
 
 
 @pytest.mark.django_db
-def test_approval_required_policy_on_no_requires_approval_step_creates_request(
-    org, claimed
-):
+def test_approval_required_policy_on_no_requires_approval_step_creates_request(org, claimed):
     execution = claimed["execution"]
     claim_token = claimed["claim_token"]
     step = execution.steps.order_by("position").first()
@@ -139,9 +133,7 @@ def test_approval_required_policy_on_no_requires_approval_step_creates_request(
 
     policy = policy_services.create_policy(organization=org, name="Approval Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="High risk gate",
-        priority=10,
+        policy=policy, name="High risk gate", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="approval_required",
@@ -167,9 +159,7 @@ def test_auto_approve_policy_on_requires_approval_true_step_applies_floor(org, c
 
     policy = policy_services.create_policy(organization=org, name="AutoApprove Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="Auto high",
-        priority=10,
+        policy=policy, name="Auto high", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="auto_approve",
@@ -181,9 +171,7 @@ def test_auto_approve_policy_on_requires_approval_true_step_applies_floor(org, c
     step.refresh_from_db()
     assert step.status == ExecutionStep.Status.WAITING_FOR_APPROVAL
 
-    evaluation = (
-        PolicyEvaluation.objects.filter(step=step).order_by("-evaluated_at").first()
-    )
+    evaluation = PolicyEvaluation.objects.filter(step=step).order_by("-evaluated_at").first()
     assert evaluation.outcome == "auto_approve"
     assert evaluation.effective_outcome == "approval_required"
 
@@ -204,9 +192,7 @@ def test_block_policy_transitions_step_to_failed(org, claimed):
 
     policy = policy_services.create_policy(organization=org, name="Block Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="Block critical",
-        priority=10,
+        policy=policy, name="Block critical", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "equals", "value": "critical"},
         outcome="block",
@@ -236,9 +222,7 @@ def test_block_policy_overrides_requires_approval(org, claimed):
 
     policy = policy_services.create_policy(organization=org, name="Block Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="Block all critical",
-        priority=10,
+        policy=policy, name="Block all critical", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "equals", "value": "critical"},
         outcome="block",
@@ -355,17 +339,13 @@ def test_lower_priority_rule_wins_end_to_end(org, claimed):
 
     policy = policy_services.create_policy(organization=org, name="Multi Rule Policy")
     policy_services.create_rule(
-        policy=policy,
-        name="Block first",
-        priority=1,
+        policy=policy, name="Block first", priority=1,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
     )
     policy_services.create_rule(
-        policy=policy,
-        name="Approve second",
-        priority=2,
+        policy=policy, name="Approve second", priority=2,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="auto_approve",
@@ -392,13 +372,9 @@ def test_deactivated_policy_falls_back_to_workflow_default(org, claimed):
     step.requires_approval = False
     step.save(update_fields=["risk_level", "requires_approval", "updated_at"])
 
-    policy = policy_services.create_policy(
-        organization=org, name="Block Policy", is_active=False
-    )
+    policy = policy_services.create_policy(organization=org, name="Block Policy", is_active=False)
     policy_services.create_rule(
-        policy=policy,
-        name="Block high",
-        priority=10,
+        policy=policy, name="Block high", priority=10,
         condition_type="risk_level",
         condition_params={"operator": "in", "values": ["high"]},
         outcome="block",

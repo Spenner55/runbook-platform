@@ -66,9 +66,7 @@ describe('ApprovalsInboxPage', () => {
   })
 
   it('fetches and renders pending approval request', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [pendingApproval] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [pendingApproval] }))
 
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
@@ -87,9 +85,7 @@ describe('ApprovalsInboxPage', () => {
   })
 
   it('renders approve/reject button for pending approvals', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [pendingApproval] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [pendingApproval] }))
 
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
@@ -105,7 +101,7 @@ describe('ApprovalsInboxPage', () => {
   })
 
   it('submits an approval decision successfully', async () => {
-    fetchMock.mockImplementation((_url, init) => {
+    fetchMock.mockImplementation((url, init) => {
       if (init && (init as RequestInit).method === 'POST') {
         return Promise.resolve(createJsonResponse(approvedApproval))
       }
@@ -142,9 +138,7 @@ describe('ApprovalsInboxPage', () => {
   })
 
   it('renders error banner on API failure', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ detail: 'Server failed' }, { status: 500 })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ detail: 'Server failed' }, { status: 500 }))
 
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',

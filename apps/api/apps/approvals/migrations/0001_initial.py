@@ -8,164 +8,70 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+
     initial = True
 
     dependencies = [
-        ("executions", "0006_alter_executionstep_status"),
-        ("organizations", "0002_alter_organization_slug"),
+        ('executions', '0006_alter_executionstep_status'),
+        ('organizations', '0002_alter_organization_slug'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.CreateModel(
-            name="ApprovalRequest",
+            name='ApprovalRequest',
             fields=[
-                (
-                    "id",
-                    models.UUIDField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        primary_key=True,
-                        serialize=False,
-                    ),
-                ),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-                (
-                    "status",
-                    models.CharField(
-                        choices=[
-                            ("pending", "Pending"),
-                            ("approved", "Approved"),
-                            ("rejected", "Rejected"),
-                            ("timed_out", "Timed Out"),
-                        ],
-                        default="pending",
-                        max_length=16,
-                    ),
-                ),
-                ("requested_by_runner_id", models.CharField(max_length=255)),
-                ("requested_at", models.DateTimeField()),
-                ("timeout_seconds", models.PositiveIntegerField(blank=True, null=True)),
-                ("expires_at", models.DateTimeField(blank=True, null=True)),
-                ("resolved_at", models.DateTimeField(blank=True, null=True)),
-                (
-                    "execution",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="approval_requests",
-                        to="executions.execution",
-                    ),
-                ),
-                (
-                    "organization",
-                    models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="approval_requests",
-                        to="organizations.organization",
-                    ),
-                ),
-                (
-                    "step",
-                    models.OneToOneField(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="approval_request",
-                        to="executions.executionstep",
-                    ),
-                ),
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('status', models.CharField(choices=[('pending', 'Pending'), ('approved', 'Approved'), ('rejected', 'Rejected'), ('timed_out', 'Timed Out')], default='pending', max_length=16)),
+                ('requested_by_runner_id', models.CharField(max_length=255)),
+                ('requested_at', models.DateTimeField()),
+                ('timeout_seconds', models.PositiveIntegerField(blank=True, null=True)),
+                ('expires_at', models.DateTimeField(blank=True, null=True)),
+                ('resolved_at', models.DateTimeField(blank=True, null=True)),
+                ('execution', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='approval_requests', to='executions.execution')),
+                ('organization', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='approval_requests', to='organizations.organization')),
+                ('step', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='approval_request', to='executions.executionstep')),
             ],
             options={
-                "ordering": ["-requested_at"],
+                'ordering': ['-requested_at'],
             },
         ),
         migrations.CreateModel(
-            name="ApprovalDecision",
+            name='ApprovalDecision',
             fields=[
-                (
-                    "id",
-                    models.UUIDField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        primary_key=True,
-                        serialize=False,
-                    ),
-                ),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-                (
-                    "decision",
-                    models.CharField(
-                        choices=[
-                            ("approved", "Approved"),
-                            ("rejected", "Rejected"),
-                            ("timed_out", "Timed Out"),
-                        ],
-                        max_length=16,
-                    ),
-                ),
-                (
-                    "source_type",
-                    models.CharField(
-                        choices=[("human", "Human"), ("system", "System")],
-                        max_length=16,
-                    ),
-                ),
-                ("decided_by_label", models.CharField(blank=True, max_length=255)),
-                (
-                    "decided_by_label_source",
-                    models.CharField(default="unverified_pre_auth", max_length=64),
-                ),
-                ("notes", models.TextField(blank=True)),
-                ("decided_at", models.DateTimeField()),
-                (
-                    "decided_by_user",
-                    models.ForeignKey(
-                        blank=True,
-                        null=True,
-                        on_delete=django.db.models.deletion.SET_NULL,
-                        related_name="approval_decisions",
-                        to=settings.AUTH_USER_MODEL,
-                    ),
-                ),
-                (
-                    "approval_request",
-                    models.OneToOneField(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="decision",
-                        to="approvals.approvalrequest",
-                    ),
-                ),
+                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('decision', models.CharField(choices=[('approved', 'Approved'), ('rejected', 'Rejected'), ('timed_out', 'Timed Out')], max_length=16)),
+                ('source_type', models.CharField(choices=[('human', 'Human'), ('system', 'System')], max_length=16)),
+                ('decided_by_label', models.CharField(blank=True, max_length=255)),
+                ('decided_by_label_source', models.CharField(default='unverified_pre_auth', max_length=64)),
+                ('notes', models.TextField(blank=True)),
+                ('decided_at', models.DateTimeField()),
+                ('decided_by_user', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='approval_decisions', to=settings.AUTH_USER_MODEL)),
+                ('approval_request', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='decision', to='approvals.approvalrequest')),
             ],
         ),
         migrations.AddIndex(
-            model_name="approvalrequest",
-            index=models.Index(
-                fields=["organization", "status", "requested_at"],
-                name="approval_req_org_status_idx",
-            ),
+            model_name='approvalrequest',
+            index=models.Index(fields=['organization', 'status', 'requested_at'], name='approval_req_org_status_idx'),
         ),
         migrations.AddIndex(
-            model_name="approvalrequest",
-            index=models.Index(
-                fields=["execution", "status"], name="approval_req_exec_status_idx"
-            ),
+            model_name='approvalrequest',
+            index=models.Index(fields=['execution', 'status'], name='approval_req_exec_status_idx'),
         ),
         migrations.AddIndex(
-            model_name="approvalrequest",
-            index=models.Index(
-                fields=["status", "expires_at"], name="approval_req_expires_idx"
-            ),
+            model_name='approvalrequest',
+            index=models.Index(fields=['status', 'expires_at'], name='approval_req_expires_idx'),
         ),
         migrations.AddIndex(
-            model_name="approvaldecision",
-            index=models.Index(
-                fields=["decision", "decided_at"], name="approval_dec_decision_idx"
-            ),
+            model_name='approvaldecision',
+            index=models.Index(fields=['decision', 'decided_at'], name='approval_dec_decision_idx'),
         ),
         migrations.AddIndex(
-            model_name="approvaldecision",
-            index=models.Index(
-                fields=["decided_by_user", "decided_at"], name="approval_dec_user_idx"
-            ),
+            model_name='approvaldecision',
+            index=models.Index(fields=['decided_by_user', 'decided_at'], name='approval_dec_user_idx'),
         ),
     ]

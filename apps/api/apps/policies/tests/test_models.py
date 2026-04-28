@@ -22,9 +22,7 @@ class TestPolicyModel:
         assert str(policy) == "Safety Policy (active)"
 
     def test_inactive_policy_remains_queryable(self):
-        policy = Policy.objects.create(
-            organization=self.org, name="Old Policy", is_active=False
-        )
+        policy = Policy.objects.create(organization=self.org, name="Old Policy", is_active=False)
         assert Policy.objects.filter(id=policy.id, is_active=False).exists()
 
     def test_cascade_delete_with_org(self):
@@ -53,71 +51,43 @@ class TestPolicyRuleModel:
 
     def test_unique_priority_within_policy(self):
         PolicyRule.objects.create(
-            policy=self.policy,
-            name="Rule A",
-            priority=10,
-            condition_type="risk_level",
-            condition_params={},
-            outcome="block",
+            policy=self.policy, name="Rule A", priority=10,
+            condition_type="risk_level", condition_params={}, outcome="block",
         )
         with pytest.raises(IntegrityError):
             PolicyRule.objects.create(
-                policy=self.policy,
-                name="Rule B",
-                priority=10,
-                condition_type="step_type",
-                condition_params={},
-                outcome="auto_approve",
+                policy=self.policy, name="Rule B", priority=10,
+                condition_type="step_type", condition_params={}, outcome="auto_approve",
             )
 
     def test_unique_name_within_policy(self):
         PolicyRule.objects.create(
-            policy=self.policy,
-            name="Duplicate",
-            priority=10,
-            condition_type="risk_level",
-            condition_params={},
-            outcome="block",
+            policy=self.policy, name="Duplicate", priority=10,
+            condition_type="risk_level", condition_params={}, outcome="block",
         )
         with pytest.raises(IntegrityError):
             PolicyRule.objects.create(
-                policy=self.policy,
-                name="Duplicate",
-                priority=20,
-                condition_type="risk_level",
-                condition_params={},
-                outcome="block",
+                policy=self.policy, name="Duplicate", priority=20,
+                condition_type="risk_level", condition_params={}, outcome="block",
             )
 
     def test_same_priority_allowed_across_policies(self):
         other_policy = Policy.objects.create(organization=self.org, name="Other Policy")
         PolicyRule.objects.create(
-            policy=self.policy,
-            name="Rule A",
-            priority=10,
-            condition_type="risk_level",
-            condition_params={},
-            outcome="block",
+            policy=self.policy, name="Rule A", priority=10,
+            condition_type="risk_level", condition_params={}, outcome="block",
         )
         # Same priority is fine on a different policy
         rule = PolicyRule.objects.create(
-            policy=other_policy,
-            name="Rule B",
-            priority=10,
-            condition_type="risk_level",
-            condition_params={},
-            outcome="block",
+            policy=other_policy, name="Rule B", priority=10,
+            condition_type="risk_level", condition_params={}, outcome="block",
         )
         assert rule.id is not None
 
     def test_inactive_rule_remains_queryable(self):
         rule = PolicyRule.objects.create(
-            policy=self.policy,
-            name="Disabled",
-            priority=5,
-            condition_type="risk_level",
-            condition_params={},
-            outcome="block",
+            policy=self.policy, name="Disabled", priority=5,
+            condition_type="risk_level", condition_params={}, outcome="block",
             is_active=False,
         )
         assert PolicyRule.objects.filter(id=rule.id, is_active=False).exists()

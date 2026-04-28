@@ -35,8 +35,7 @@ function PolicyEvaluationBadge({ evaluation }: { evaluation: PolicyEvaluationSum
     <div style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
       <span className={getPolicyOutcomePillClass(evaluation.effective_outcome)}>
         {getPolicyOutcomeLabel(evaluation.effective_outcome)}
-      </span>
-      {' '}
+      </span>{' '}
       {evaluation.decision_source === 'policy_rule' ? (
         <span className="muted">
           via {evaluation.policy_name ?? 'policy'} · rule: {evaluation.rule_name ?? 'unknown'}
@@ -45,10 +44,15 @@ function PolicyEvaluationBadge({ evaluation }: { evaluation: PolicyEvaluationSum
         <span className="muted">Workflow default</span>
       )}
       {evaluation.reason ? (
-        <p className="muted" style={{ marginTop: '0.125rem' }}>{evaluation.reason}</p>
+        <p className="muted" style={{ marginTop: '0.125rem' }}>
+          {evaluation.reason}
+        </p>
       ) : null}
       {floorApplied ? (
-        <p className="banner banner--warn" style={{ marginTop: '0.25rem', padding: '0.25rem 0.5rem' }}>
+        <p
+          className="banner banner--warn"
+          style={{ marginTop: '0.25rem', padding: '0.25rem 0.5rem' }}
+        >
           Policy returned Auto Approve but Approval Required floor was applied.
         </p>
       ) : null}

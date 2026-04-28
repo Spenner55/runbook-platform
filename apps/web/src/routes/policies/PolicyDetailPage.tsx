@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 
-import { useCreateRule, useDeactivateRule, useUpdateRule } from '../../features/policies/hooks/usePolicyRules'
+import {
+  useCreateRule,
+  useDeactivateRule,
+  useUpdateRule,
+} from '../../features/policies/hooks/usePolicyRules'
 import { usePolicyDetail } from '../../features/policies/hooks/usePolicyDetail'
 import { useUpdatePolicy } from '../../features/policies/hooks/useUpdatePolicy'
 import type { PolicyConditionType, PolicyOutcome, PolicyRule } from '../../features/policies/types'
@@ -65,7 +69,13 @@ function EnumConditionEditor({ params, onChange }: EnumConditionEditorProps) {
             type="text"
             value={values.join(', ')}
             onChange={(e) =>
-              onChange({ operator: 'in', values: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })
+              onChange({
+                operator: 'in',
+                values: e.target.value
+                  .split(',')
+                  .map((v) => v.trim())
+                  .filter(Boolean),
+              })
             }
             placeholder="e.g. high, critical"
           />
@@ -101,7 +111,14 @@ function TimeWindowEditor({ params, onChange }: TimeWindowEditorProps) {
   const matchWhen = (params.match_when as string) || 'inside'
 
   function update(patch: Partial<Record<string, unknown>>) {
-    onChange({ timezone: tz, days_of_week: days, start_time: startTime, end_time: endTime, match_when: matchWhen, ...patch })
+    onChange({
+      timezone: tz,
+      days_of_week: days,
+      start_time: startTime,
+      end_time: endTime,
+      match_when: matchWhen,
+      ...patch,
+    })
   }
 
   return (
@@ -125,9 +142,7 @@ function TimeWindowEditor({ params, onChange }: TimeWindowEditorProps) {
                 type="checkbox"
                 checked={days.includes(day)}
                 onChange={(e) => {
-                  const newDays = e.target.checked
-                    ? [...days, day]
-                    : days.filter((d) => d !== day)
+                  const newDays = e.target.checked ? [...days, day] : days.filter((d) => d !== day)
                   update({ days_of_week: newDays })
                 }}
               />
@@ -139,16 +154,30 @@ function TimeWindowEditor({ params, onChange }: TimeWindowEditorProps) {
       <div style={{ display: 'flex', gap: '1rem' }}>
         <div className="field">
           <label className="field__label">Start time</label>
-          <input className="field__input" type="time" value={startTime} onChange={(e) => update({ start_time: e.target.value })} />
+          <input
+            className="field__input"
+            type="time"
+            value={startTime}
+            onChange={(e) => update({ start_time: e.target.value })}
+          />
         </div>
         <div className="field">
           <label className="field__label">End time</label>
-          <input className="field__input" type="time" value={endTime} onChange={(e) => update({ end_time: e.target.value })} />
+          <input
+            className="field__input"
+            type="time"
+            value={endTime}
+            onChange={(e) => update({ end_time: e.target.value })}
+          />
         </div>
       </div>
       <div className="field">
         <label className="field__label">Match when</label>
-        <select className="field__input" value={matchWhen} onChange={(e) => update({ match_when: e.target.value })}>
+        <select
+          className="field__input"
+          value={matchWhen}
+          onChange={(e) => update({ match_when: e.target.value })}
+        >
           <option value="inside">Inside window</option>
           <option value="outside">Outside window</option>
         </select>
@@ -174,7 +203,9 @@ function RuleForm({ policyId, organizationId, initial, onSaved, onCancel }: Rule
   const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [priority, setPriority] = useState(String(initial?.priority ?? ''))
-  const [conditionType, setConditionType] = useState<PolicyConditionType>(initial?.condition_type ?? 'risk_level')
+  const [conditionType, setConditionType] = useState<PolicyConditionType>(
+    initial?.condition_type ?? 'risk_level'
+  )
   const [conditionParams, setConditionParams] = useState<Record<string, unknown>>(
     initial?.condition_params ?? { operator: 'in', values: [] }
   )
@@ -188,7 +219,13 @@ function RuleForm({ policyId, organizationId, initial, onSaved, onCancel }: Rule
   function handleConditionTypeChange(ct: PolicyConditionType) {
     setConditionType(ct)
     if (ct === 'time_window') {
-      setConditionParams({ timezone: 'UTC', days_of_week: ['mon', 'tue', 'wed', 'thu', 'fri'], start_time: '09:00', end_time: '17:00', match_when: 'inside' })
+      setConditionParams({
+        timezone: 'UTC',
+        days_of_week: ['mon', 'tue', 'wed', 'thu', 'fri'],
+        start_time: '09:00',
+        end_time: '17:00',
+        match_when: 'inside',
+      })
     } else {
       setConditionParams({ operator: 'in', values: [] })
     }
@@ -219,15 +256,33 @@ function RuleForm({ policyId, organizationId, initial, onSaved, onCancel }: Rule
     <form className="stack-md" onSubmit={handleSubmit}>
       <div className="field">
         <label className="field__label">Rule name</label>
-        <input className="field__input" type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+        <input
+          className="field__input"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
       </div>
       <div className="field">
         <label className="field__label">Description</label>
-        <textarea className="field__input" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        <textarea
+          className="field__input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+        />
       </div>
       <div className="field">
         <label className="field__label">Priority (lower = evaluated first)</label>
-        <input className="field__input" type="number" min="1" value={priority} onChange={(e) => setPriority(e.target.value)} required />
+        <input
+          className="field__input"
+          type="number"
+          min="1"
+          value={priority}
+          onChange={(e) => setPriority(e.target.value)}
+          required
+        />
       </div>
       <div className="field">
         <label className="field__label">Condition type</label>
@@ -248,7 +303,11 @@ function RuleForm({ policyId, organizationId, initial, onSaved, onCancel }: Rule
       )}
       <div className="field">
         <label className="field__label">Outcome</label>
-        <select className="field__input" value={outcome} onChange={(e) => setOutcome(e.target.value as PolicyOutcome)}>
+        <select
+          className="field__input"
+          value={outcome}
+          onChange={(e) => setOutcome(e.target.value as PolicyOutcome)}
+        >
           <option value="approval_required">Approval Required</option>
           <option value="auto_approve">Auto Approve</option>
           <option value="block">Block</option>
@@ -256,14 +315,21 @@ function RuleForm({ policyId, organizationId, initial, onSaved, onCancel }: Rule
       </div>
       <div className="field">
         <label className="field__label">Reason (shown in evaluation records)</label>
-        <textarea className="field__input" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
+        <textarea
+          className="field__input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+        />
       </div>
       {errorMsg ? <p className="banner banner--error">{errorMsg}</p> : null}
       <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button type="submit" className="btn btn--primary" disabled={isPending}>
           {isPending ? 'Saving…' : isEdit ? 'Save rule' : 'Add rule'}
         </button>
-        <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn" onClick={onCancel}>
+          Cancel
+        </button>
       </div>
     </form>
   )
@@ -300,7 +366,10 @@ function RuleRow({ rule, policyId, organizationId, onChanged }: RuleRowProps) {
           policyId={policyId}
           organizationId={organizationId}
           initial={rule}
-          onSaved={() => { setEditing(false); onChanged() }}
+          onSaved={() => {
+            setEditing(false)
+            onChanged()
+          }}
           onCancel={() => setEditing(false)}
         />
       </li>
@@ -323,9 +392,15 @@ function RuleRow({ rule, policyId, organizationId, onChanged }: RuleRowProps) {
           <span className={rule.is_active ? 'pill pill--success' : 'pill'}>
             {rule.is_active ? 'active' : 'inactive'}
           </span>
-          <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+          <button className="btn" onClick={() => setEditing(true)}>
+            Edit
+          </button>
           {rule.is_active ? (
-            <button className="btn" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
+            <button
+              className="btn"
+              onClick={handleDeactivate}
+              disabled={deactivateMutation.isPending}
+            >
               Deactivate
             </button>
           ) : null}
@@ -375,17 +450,27 @@ export function PolicyDetailPage() {
   if (!organizationId) {
     return (
       <section className="panel">
-        <p className="banner banner--error">organization_id is required to manage policy details.</p>
+        <p className="banner banner--error">
+          organization_id is required to manage policy details.
+        </p>
       </section>
     )
   }
 
   if (query.isLoading) {
-    return <section className="panel"><p className="muted">Loading policy…</p></section>
+    return (
+      <section className="panel">
+        <p className="muted">Loading policy…</p>
+      </section>
+    )
   }
 
   if (query.error) {
-    return <section className="panel"><p className="banner banner--error">{getApiErrorMessage(query.error)}</p></section>
+    return (
+      <section className="panel">
+        <p className="banner banner--error">{getApiErrorMessage(query.error)}</p>
+      </section>
+    )
   }
 
   const policy = query.data
@@ -400,18 +485,17 @@ export function PolicyDetailPage() {
         <p className="muted">
           <span className={policy.is_active ? 'pill pill--success' : 'pill'}>
             {policy.is_active ? 'active' : 'inactive'}
-          </span>
-          {' '}· updated {formatDateTime(policy.updated_at)}
+          </span>{' '}
+          · updated {formatDateTime(policy.updated_at)}
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <button className="btn" onClick={openEditMeta}>Edit details</button>
+          <button className="btn" onClick={openEditMeta}>
+            Edit details
+          </button>
           <button
             className="btn"
             onClick={() =>
-              updateMutation.mutate(
-                { is_active: !policy.is_active },
-                { onError: () => {} }
-              )
+              updateMutation.mutate({ is_active: !policy.is_active }, { onError: () => {} })
             }
           >
             {policy.is_active ? 'Deactivate policy' : 'Activate policy'}
@@ -422,7 +506,9 @@ export function PolicyDetailPage() {
       {showEditMeta ? (
         <form className="stack-md" onSubmit={handleSaveMeta}>
           <div className="field">
-            <label className="field__label" htmlFor="policy-detail-name">Name</label>
+            <label className="field__label" htmlFor="policy-detail-name">
+              Name
+            </label>
             <input
               id="policy-detail-name"
               className="field__input"
@@ -433,7 +519,9 @@ export function PolicyDetailPage() {
             />
           </div>
           <div className="field">
-            <label className="field__label" htmlFor="policy-detail-description">Description</label>
+            <label className="field__label" htmlFor="policy-detail-description">
+              Description
+            </label>
             <textarea
               id="policy-detail-description"
               className="field__input"
@@ -447,7 +535,9 @@ export function PolicyDetailPage() {
             <button type="submit" className="btn btn--primary" disabled={updateMutation.isPending}>
               {updateMutation.isPending ? 'Saving…' : 'Save'}
             </button>
-            <button type="button" className="btn" onClick={() => setShowEditMeta(false)}>Cancel</button>
+            <button type="button" className="btn" onClick={() => setShowEditMeta(false)}>
+              Cancel
+            </button>
           </div>
         </form>
       ) : null}
@@ -456,7 +546,9 @@ export function PolicyDetailPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>Rules ({policy.rules.length})</h3>
           {!showAddRule ? (
-            <button className="btn btn--primary" onClick={() => setShowAddRule(true)}>Add rule</button>
+            <button className="btn btn--primary" onClick={() => setShowAddRule(true)}>
+              Add rule
+            </button>
           ) : null}
         </div>
 
@@ -465,7 +557,10 @@ export function PolicyDetailPage() {
             <RuleForm
               policyId={policy.id}
               organizationId={organizationId}
-              onSaved={() => { setShowAddRule(false); query.refetch() }}
+              onSaved={() => {
+                setShowAddRule(false)
+                query.refetch()
+              }}
               onCancel={() => setShowAddRule(false)}
             />
           </div>

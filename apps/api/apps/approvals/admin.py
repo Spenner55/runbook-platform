@@ -5,14 +5,7 @@ from apps.approvals.models import ApprovalDecision, ApprovalRequest
 
 @admin.register(ApprovalRequest)
 class ApprovalRequestAdmin(admin.ModelAdmin):
-    list_display = [
-        "id",
-        "status",
-        "execution_id",
-        "requested_by_runner_id",
-        "requested_at",
-        "expires_at",
-    ]
+    list_display = ["id", "status", "execution_id", "requested_by_runner_id", "requested_at", "expires_at"]
     list_filter = ["status"]
     raw_id_fields = ["organization", "execution", "step"]
 

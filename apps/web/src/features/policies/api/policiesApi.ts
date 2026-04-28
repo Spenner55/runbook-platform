@@ -37,28 +37,45 @@ export function createPolicy(input: CreatePolicyInput) {
 }
 
 export function updatePolicy(policyId: string, organizationId: string, input: UpdatePolicyInput) {
-  return apiRequest<PolicyDetail>(withOrganization(`/api/v1/policies/${policyId}/`, organizationId), {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  })
+  return apiRequest<PolicyDetail>(
+    withOrganization(`/api/v1/policies/${policyId}/`, organizationId),
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }
+  )
 }
 
 export function createRule(policyId: string, organizationId: string, input: CreateRuleInput) {
-  return apiRequest<PolicyRule>(withOrganization(`/api/v1/policies/${policyId}/rules/`, organizationId), {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+  return apiRequest<PolicyRule>(
+    withOrganization(`/api/v1/policies/${policyId}/rules/`, organizationId),
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }
+  )
 }
 
-export function updateRule(policyId: string, organizationId: string, ruleId: string, input: UpdateRuleInput) {
-  return apiRequest<PolicyRule>(withOrganization(`/api/v1/policies/${policyId}/rules/${ruleId}/`, organizationId), {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  })
+export function updateRule(
+  policyId: string,
+  organizationId: string,
+  ruleId: string,
+  input: UpdateRuleInput
+) {
+  return apiRequest<PolicyRule>(
+    withOrganization(`/api/v1/policies/${policyId}/rules/${ruleId}/`, organizationId),
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }
+  )
 }
 
 export function deleteRule(policyId: string, organizationId: string, ruleId: string) {
-  return apiRequest<void>(withOrganization(`/api/v1/policies/${policyId}/rules/${ruleId}/`, organizationId), {
-    method: 'DELETE',
-  })
+  return apiRequest<void>(
+    withOrganization(`/api/v1/policies/${policyId}/rules/${ruleId}/`, organizationId),
+    {
+      method: 'DELETE',
+    }
+  )
 }

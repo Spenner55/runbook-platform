@@ -82,9 +82,7 @@ class ApprovalDecision(BaseModel):
         related_name="approval_decisions",
     )
     decided_by_label = models.CharField(max_length=255, blank=True)
-    decided_by_label_source = models.CharField(
-        max_length=64, default="unverified_pre_auth"
-    )
+    decided_by_label_source = models.CharField(max_length=64, default="unverified_pre_auth")
     notes = models.TextField(blank=True)
     decided_at = models.DateTimeField()
 

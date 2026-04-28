@@ -54,11 +54,7 @@ function PolicyRow({ policy, organizationId, onUpdated }: PolicyRowProps) {
           >
             Manage rules
           </button>
-          <button
-            className="btn"
-            disabled={updateMutation.isPending}
-            onClick={handleToggleActive}
-          >
+          <button className="btn" disabled={updateMutation.isPending} onClick={handleToggleActive}>
             {policy.is_active ? 'Deactivate' : 'Activate'}
           </button>
         </div>
@@ -97,7 +93,9 @@ function CreatePolicyForm({ organizationId, onCreated, onCancel }: CreatePolicyF
   return (
     <form className="stack-md" onSubmit={handleSubmit}>
       <div className="field">
-        <label className="field__label" htmlFor="policy-name">Policy name</label>
+        <label className="field__label" htmlFor="policy-name">
+          Policy name
+        </label>
         <input
           id="policy-name"
           className="field__input"
@@ -109,7 +107,9 @@ function CreatePolicyForm({ organizationId, onCreated, onCancel }: CreatePolicyF
         />
       </div>
       <div className="field">
-        <label className="field__label" htmlFor="policy-description">Description (optional)</label>
+        <label className="field__label" htmlFor="policy-description">
+          Description (optional)
+        </label>
         <textarea
           id="policy-description"
           className="field__input"
@@ -145,14 +145,16 @@ export function PoliciesPage() {
         <p className="eyebrow">Phase 10.2</p>
         <h2>Policies</h2>
         <p className="muted">
-          Manage execution policies that determine whether steps require approval,
-          auto-proceed, or are blocked.
+          Manage execution policies that determine whether steps require approval, auto-proceed, or
+          are blocked.
         </p>
       </div>
 
       <div className="stack-md">
         <div className="field">
-          <label className="field__label" htmlFor="org-id">Organization ID</label>
+          <label className="field__label" htmlFor="org-id">
+            Organization ID
+          </label>
           <input
             id="org-id"
             className="field__input"
@@ -163,7 +165,9 @@ export function PoliciesPage() {
           />
         </div>
         <div className="field">
-          <label className="field__label" htmlFor="active-filter">Show</label>
+          <label className="field__label" htmlFor="active-filter">
+            Show
+          </label>
           <select
             id="active-filter"
             className="field__input"
@@ -177,9 +181,7 @@ export function PoliciesPage() {
         </div>
       </div>
 
-      {!orgId ? (
-        <p className="muted">Enter an organization ID to load policies.</p>
-      ) : null}
+      {!orgId ? <p className="muted">Enter an organization ID to load policies.</p> : null}
 
       {orgId && !showCreateForm ? (
         <button
