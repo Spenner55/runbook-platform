@@ -20,7 +20,9 @@ from runner.schemas import (
 # ---------------------------------------------------------------------------
 
 
-def make_step(position: int, command: str = "", requires_approval: bool = False) -> ClaimedStep:
+def make_step(
+    position: int, command: str = "", requires_approval: bool = False
+) -> ClaimedStep:
     return ClaimedStep(
         id=uuid4(),
         position=position,
@@ -211,7 +213,11 @@ def test_approval_step_waits_before_executing():
     assert client.start_step.called
     assert client.get_step_approval_status.called
     # Step ends succeeded
-    succeeded = [c for c in client.update_step.call_args_list if c.kwargs.get("status") == "succeeded"]
+    succeeded = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "succeeded"
+    ]
     assert len(succeeded) == 1
     client.complete_execution.assert_called_once()
     assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"

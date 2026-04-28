@@ -101,7 +101,7 @@ describe('PoliciesPage', () => {
   it('submits create policy form and refetches', async () => {
     const newPolicy = { ...policy1, id: 'policy-new', name: 'New Policy', rule_count: 0 }
 
-    fetchMock.mockImplementation((url, init) => {
+    fetchMock.mockImplementation((_url, init) => {
       if (init && (init as RequestInit).method === 'POST') {
         return Promise.resolve(createJsonResponse(newPolicy))
       }

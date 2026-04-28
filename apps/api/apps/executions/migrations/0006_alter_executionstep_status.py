@@ -4,15 +4,25 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0005_alter_execution_claim_token_unique'),
+        ("executions", "0005_alter_execution_claim_token_unique"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='executionstep',
-            name='status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('waiting_for_approval', 'Waiting for Approval'), ('running', 'Running'), ('succeeded', 'Succeeded'), ('failed', 'Failed'), ('skipped', 'Skipped')], default='pending', max_length=24),
+            model_name="executionstep",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("pending", "Pending"),
+                    ("waiting_for_approval", "Waiting for Approval"),
+                    ("running", "Running"),
+                    ("succeeded", "Succeeded"),
+                    ("failed", "Failed"),
+                    ("skipped", "Skipped"),
+                ],
+                default="pending",
+                max_length=24,
+            ),
         ),
     ]

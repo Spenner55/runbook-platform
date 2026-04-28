@@ -279,7 +279,10 @@ def test_start_step_sends_correct_url_and_parses_blocked():
     resp = client.start_step(execution_id, step_id, claim_token)
 
     assert captured["method"] == "POST"
-    assert captured["path"] == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/start/"
+    assert (
+        captured["path"]
+        == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/start/"
+    )
     assert captured["runner_id"] == "test-runner"
     assert captured["claim_token"] == str(claim_token)
     assert isinstance(resp, StepStartResponse)
@@ -320,7 +323,10 @@ def test_get_step_approval_status_sends_correct_url_and_parses_run():
     resp = client.get_step_approval_status(execution_id, step_id, claim_token)
 
     assert captured["method"] == "POST"
-    assert captured["path"] == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/approval-status/"
+    assert (
+        captured["path"]
+        == f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/approval-status/"
+    )
     assert captured["runner_id"] == "test-runner"
     assert captured["claim_token"] == str(claim_token)
     assert isinstance(resp, ApprovalStatusResponse)

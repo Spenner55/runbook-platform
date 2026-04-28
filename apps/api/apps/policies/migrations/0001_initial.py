@@ -7,112 +7,247 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
-        ('executions', '0006_alter_executionstep_status'),
-        ('organizations', '0002_alter_organization_slug'),
+        ("executions", "0006_alter_executionstep_status"),
+        ("organizations", "0002_alter_organization_slug"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Policy',
+            name="Policy",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('name', models.CharField(max_length=255)),
-                ('description', models.TextField(blank=True)),
-                ('is_active', models.BooleanField(default=True)),
-                ('created_by_label', models.CharField(blank=True, max_length=255)),
-                ('updated_by_label', models.CharField(blank=True, max_length=255)),
-                ('organization', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='policies', to='organizations.organization')),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True)),
+                ("is_active", models.BooleanField(default=True)),
+                ("created_by_label", models.CharField(blank=True, max_length=255)),
+                ("updated_by_label", models.CharField(blank=True, max_length=255)),
+                (
+                    "organization",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="policies",
+                        to="organizations.organization",
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='PolicyRule',
+            name="PolicyRule",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('name', models.CharField(max_length=255)),
-                ('description', models.TextField(blank=True)),
-                ('is_active', models.BooleanField(default=True)),
-                ('priority', models.PositiveIntegerField()),
-                ('condition_type', models.CharField(choices=[('risk_level', 'Risk Level'), ('step_type', 'Step Type'), ('time_window', 'Time Window')], max_length=32)),
-                ('condition_params', models.JSONField(default=dict)),
-                ('outcome', models.CharField(choices=[('approval_required', 'Approval Required'), ('auto_approve', 'Auto Approve'), ('block', 'Block')], max_length=32)),
-                ('reason', models.TextField(blank=True)),
-                ('policy', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='rules', to='policies.policy')),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("name", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True)),
+                ("is_active", models.BooleanField(default=True)),
+                ("priority", models.PositiveIntegerField()),
+                (
+                    "condition_type",
+                    models.CharField(
+                        choices=[
+                            ("risk_level", "Risk Level"),
+                            ("step_type", "Step Type"),
+                            ("time_window", "Time Window"),
+                        ],
+                        max_length=32,
+                    ),
+                ),
+                ("condition_params", models.JSONField(default=dict)),
+                (
+                    "outcome",
+                    models.CharField(
+                        choices=[
+                            ("approval_required", "Approval Required"),
+                            ("auto_approve", "Auto Approve"),
+                            ("block", "Block"),
+                        ],
+                        max_length=32,
+                    ),
+                ),
+                ("reason", models.TextField(blank=True)),
+                (
+                    "policy",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="rules",
+                        to="policies.policy",
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='PolicyEvaluation',
+            name="PolicyEvaluation",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('matched', models.BooleanField()),
-                ('outcome', models.CharField(max_length=32)),
-                ('effective_outcome', models.CharField(max_length=32)),
-                ('decision_source', models.CharField(choices=[('policy_rule', 'Policy Rule'), ('workflow_default', 'Workflow Default')], max_length=32)),
-                ('condition_type', models.CharField(blank=True, max_length=32)),
-                ('condition_params_snapshot', models.JSONField(default=dict)),
-                ('context_snapshot', models.JSONField(default=dict)),
-                ('reason', models.TextField(blank=True)),
-                ('error_code', models.CharField(blank=True, max_length=64)),
-                ('error_message', models.TextField(blank=True)),
-                ('evaluated_at', models.DateTimeField()),
-                ('execution', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='policy_evaluations', to='executions.execution')),
-                ('organization', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='policy_evaluations', to='organizations.organization')),
-                ('policy', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='evaluations', to='policies.policy')),
-                ('step', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='policy_evaluations', to='executions.executionstep')),
-                ('rule', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='evaluations', to='policies.policyrule')),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("matched", models.BooleanField()),
+                ("outcome", models.CharField(max_length=32)),
+                ("effective_outcome", models.CharField(max_length=32)),
+                (
+                    "decision_source",
+                    models.CharField(
+                        choices=[
+                            ("policy_rule", "Policy Rule"),
+                            ("workflow_default", "Workflow Default"),
+                        ],
+                        max_length=32,
+                    ),
+                ),
+                ("condition_type", models.CharField(blank=True, max_length=32)),
+                ("condition_params_snapshot", models.JSONField(default=dict)),
+                ("context_snapshot", models.JSONField(default=dict)),
+                ("reason", models.TextField(blank=True)),
+                ("error_code", models.CharField(blank=True, max_length=64)),
+                ("error_message", models.TextField(blank=True)),
+                ("evaluated_at", models.DateTimeField()),
+                (
+                    "execution",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="policy_evaluations",
+                        to="executions.execution",
+                    ),
+                ),
+                (
+                    "organization",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="policy_evaluations",
+                        to="organizations.organization",
+                    ),
+                ),
+                (
+                    "policy",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="evaluations",
+                        to="policies.policy",
+                    ),
+                ),
+                (
+                    "step",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="policy_evaluations",
+                        to="executions.executionstep",
+                    ),
+                ),
+                (
+                    "rule",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="evaluations",
+                        to="policies.policyrule",
+                    ),
+                ),
             ],
         ),
         migrations.AddIndex(
-            model_name='policy',
-            index=models.Index(fields=['organization', 'is_active', 'name'], name='policies_po_organiz_fbdccf_idx'),
+            model_name="policy",
+            index=models.Index(
+                fields=["organization", "is_active", "name"],
+                name="policies_po_organiz_fbdccf_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policy',
-            index=models.Index(fields=['organization', 'created_at'], name='policies_po_organiz_34fd5f_idx'),
+            model_name="policy",
+            index=models.Index(
+                fields=["organization", "created_at"],
+                name="policies_po_organiz_34fd5f_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyrule',
-            index=models.Index(fields=['policy', 'is_active', 'priority'], name='policies_po_policy__1ca2c3_idx'),
+            model_name="policyrule",
+            index=models.Index(
+                fields=["policy", "is_active", "priority"],
+                name="policies_po_policy__1ca2c3_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyrule',
-            index=models.Index(fields=['condition_type', 'outcome'], name='policies_po_conditi_9aec39_idx'),
+            model_name="policyrule",
+            index=models.Index(
+                fields=["condition_type", "outcome"],
+                name="policies_po_conditi_9aec39_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='policyrule',
-            constraint=models.UniqueConstraint(fields=('policy', 'priority'), name='unique_policy_rule_priority'),
+            model_name="policyrule",
+            constraint=models.UniqueConstraint(
+                fields=("policy", "priority"), name="unique_policy_rule_priority"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='policyrule',
-            constraint=models.UniqueConstraint(fields=('policy', 'name'), name='unique_policy_rule_name'),
+            model_name="policyrule",
+            constraint=models.UniqueConstraint(
+                fields=("policy", "name"), name="unique_policy_rule_name"
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyevaluation',
-            index=models.Index(fields=['organization', 'evaluated_at'], name='policies_po_organiz_429649_idx'),
+            model_name="policyevaluation",
+            index=models.Index(
+                fields=["organization", "evaluated_at"],
+                name="policies_po_organiz_429649_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyevaluation',
-            index=models.Index(fields=['execution', 'evaluated_at'], name='policies_po_executi_53c6d9_idx'),
+            model_name="policyevaluation",
+            index=models.Index(
+                fields=["execution", "evaluated_at"],
+                name="policies_po_executi_53c6d9_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyevaluation',
-            index=models.Index(fields=['step', 'evaluated_at'], name='policies_po_step_id_8a5c20_idx'),
+            model_name="policyevaluation",
+            index=models.Index(
+                fields=["step", "evaluated_at"], name="policies_po_step_id_8a5c20_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyevaluation',
-            index=models.Index(fields=['policy', 'rule', 'evaluated_at'], name='policies_po_policy__72879b_idx'),
+            model_name="policyevaluation",
+            index=models.Index(
+                fields=["policy", "rule", "evaluated_at"],
+                name="policies_po_policy__72879b_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='policyevaluation',
-            index=models.Index(fields=['outcome', 'evaluated_at'], name='policies_po_outcome_84b471_idx'),
+            model_name="policyevaluation",
+            index=models.Index(
+                fields=["outcome", "evaluated_at"],
+                name="policies_po_outcome_84b471_idx",
+            ),
         ),
     ]

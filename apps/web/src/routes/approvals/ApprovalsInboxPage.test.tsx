@@ -105,7 +105,7 @@ describe('ApprovalsInboxPage', () => {
   })
 
   it('submits an approval decision successfully', async () => {
-    fetchMock.mockImplementation((url, init) => {
+    fetchMock.mockImplementation((_url, init) => {
       if (init && (init as RequestInit).method === 'POST') {
         return Promise.resolve(createJsonResponse(approvedApproval))
       }

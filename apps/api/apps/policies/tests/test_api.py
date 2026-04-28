@@ -23,7 +23,9 @@ def org2(db):
 
 @pytest.fixture
 def policy(org):
-    return policy_services.create_policy(organization=org, name="Test Policy", description="Desc")
+    return policy_services.create_policy(
+        organization=org, name="Test Policy", description="Desc"
+    )
 
 
 @pytest.fixture
@@ -162,13 +164,19 @@ def test_get_policy_detail_includes_rules(client, org, policy, rule):
 @pytest.mark.django_db
 def test_get_policy_detail_rules_ordered_by_priority(client, org, policy):
     policy_services.create_rule(
-        policy=policy, name="Rule B", priority=20,
-        condition_type="risk_level", condition_params={"operator": "in", "values": ["high"]},
+        policy=policy,
+        name="Rule B",
+        priority=20,
+        condition_type="risk_level",
+        condition_params={"operator": "in", "values": ["high"]},
         outcome="block",
     )
     policy_services.create_rule(
-        policy=policy, name="Rule A", priority=5,
-        condition_type="risk_level", condition_params={"operator": "in", "values": ["low"]},
+        policy=policy,
+        name="Rule A",
+        priority=5,
+        condition_type="risk_level",
+        condition_params={"operator": "in", "values": ["low"]},
         outcome="auto_approve",
     )
     resp = client.get(_policy_url(policy))
@@ -344,8 +352,11 @@ def test_patch_rule_deactivate(client, policy, rule):
 @pytest.mark.django_db
 def test_patch_rule_duplicate_priority_returns_409(client, policy, rule):
     rule2 = policy_services.create_rule(
-        policy=policy, name="Rule 2", priority=20,
-        condition_type="risk_level", condition_params={"operator": "in", "values": ["low"]},
+        policy=policy,
+        name="Rule 2",
+        priority=20,
+        condition_type="risk_level",
+        condition_params={"operator": "in", "values": ["low"]},
         outcome="auto_approve",
     )
     resp = client.patch(

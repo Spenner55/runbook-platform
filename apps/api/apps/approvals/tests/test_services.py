@@ -108,7 +108,9 @@ def test_request_step_approval_rejects_non_approval_step(claimed_approval_execut
 
 
 @pytest.mark.django_db
-def test_request_step_approval_rejects_step_from_different_execution(claimed_approval_execution, org):
+def test_request_step_approval_rejects_step_from_different_execution(
+    claimed_approval_execution, org
+):
     """Step belonging to a different execution is rejected before any state change."""
     from apps.executions import services as execution_services
     from apps.runbooks import services as runbook_services
@@ -124,7 +126,9 @@ def test_request_step_approval_rejects_step_from_different_execution(claimed_app
         organization=org, title="Other", slug="other-inv", raw_content="Step A"
     )
     wf = workflow_services.publish_workflow(
-        workflow=workflow_services.create_workflow(runbook=rb, transform_client=StubWorkflowTransformClient())
+        workflow=workflow_services.create_workflow(
+            runbook=rb, transform_client=StubWorkflowTransformClient()
+        )
     )
     other_execution = execution_services.create_execution(workflow=wf)
     other_step = other_execution.steps.order_by("position").first()
@@ -232,7 +236,9 @@ def test_decide_approval_second_decision_raises_conflict(pending_approval):
         )
 
     assert exc_info.value.code == "approval_request_not_pending"
-    assert ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    assert (
+        ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +270,9 @@ def test_get_approval_status_does_not_double_timeout(pending_approval):
     services.get_approval_status(approval_request=pending_approval)
     services.get_approval_status(approval_request=pending_approval)
 
-    assert ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    assert (
+        ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    )
 
 
 @pytest.mark.django_db
@@ -295,10 +303,14 @@ def test_double_decision_serial_only_one_wins(claimed_approval_execution):
         claim_token=claim_token,
     )
 
-    services.decide_approval(approval_request=ar, decision="approved", actor_label="Op A")
+    services.decide_approval(
+        approval_request=ar, decision="approved", actor_label="Op A"
+    )
 
     with pytest.raises(DomainConflictError):
-        services.decide_approval(approval_request=ar, decision="rejected", actor_label="Op B")
+        services.decide_approval(
+            approval_request=ar, decision="rejected", actor_label="Op B"
+        )
 
     assert ApprovalDecision.objects.filter(approval_request=ar).count() == 1
     ar.refresh_from_db()
@@ -327,7 +339,9 @@ def test_double_decision_concurrent_exactly_one_wins(claimed_approval_execution)
     def try_decide(decision, actor):
         barrier.wait()
         try:
-            services.decide_approval(approval_request=ar, decision=decision, actor_label=actor)
+            services.decide_approval(
+                approval_request=ar, decision=decision, actor_label=actor
+            )
             winners.append(decision)
         except DomainConflictError:
             losers.append(decision)
@@ -345,4 +359,7 @@ def test_double_decision_concurrent_exactly_one_wins(claimed_approval_execution)
     assert len(losers) == 1, f"Expected exactly one loser, got: {losers}"
     assert ApprovalDecision.objects.filter(approval_request=ar).count() == 1
     ar.refresh_from_db()
-    assert ar.status in {ApprovalRequest.Status.APPROVED, ApprovalRequest.Status.REJECTED}
+    assert ar.status in {
+        ApprovalRequest.Status.APPROVED,
+        ApprovalRequest.Status.REJECTED,
+    }
