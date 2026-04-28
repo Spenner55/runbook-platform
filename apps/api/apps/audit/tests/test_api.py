@@ -1,6 +1,5 @@
 import pytest
 from django.test import Client
-from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditService
@@ -142,7 +141,6 @@ def test_audit_list_filters_by_actor_type(org):
 
 @pytest.mark.django_db
 def test_audit_list_filters_by_occurred_after(org):
-    past = timezone.now().replace(microsecond=0)
     early = _make_event(org)
     early_event = AuditEvent.objects.get(pk=early.id)
     early_event_time = early_event.occurred_at
@@ -170,7 +168,7 @@ def test_audit_list_filters_by_occurred_after(org):
 
 @pytest.mark.django_db
 def test_audit_list_filters_by_occurred_before(org):
-    early = _make_event(org, event_type="execution.created")
+    _make_event(org, event_type="execution.created")
 
     response = Client().get(
         "/api/v1/audit/",
@@ -186,9 +184,9 @@ def test_audit_list_filters_by_occurred_before(org):
 
 @pytest.mark.django_db
 def test_audit_list_limit_and_offset(org):
-    other = Organization.objects.create(name="Other", slug="other-2")
+    Organization.objects.create(name="Other", slug="other-2")
     for i in range(5):
-        _make_event(org, event_type=f"execution.created")
+        _make_event(org, event_type="execution.created")
 
     response_page1 = Client().get(
         "/api/v1/audit/",
