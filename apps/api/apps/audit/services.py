@@ -17,19 +17,29 @@ class AuditActor:
 
 FORBIDDEN_METADATA_KEYS = {
     "api_key",
+    "api_token",
+    "apikey",
+    "apitoken",
+    "auth",
+    "auth_header",
     "authorization",
     "bearer",
+    "bearer_token",
     "claim_token",
     "command",
     "cookie",
     "headers",
     "password",
+    "private_key",
     "raw_command_output",
     "request_body",
     "secret",
+    "session",
+    "session_token",
     "token",
     "webhook_url",
     "workflow_snapshot",
+    "x_api_key",
 }
 
 MAX_METADATA_BYTES = 16 * 1024
@@ -130,8 +140,16 @@ def _scrub_metadata(metadata: dict) -> dict:
         key_text = str(key)
         if key_text.lower() in FORBIDDEN_METADATA_KEYS:
             continue
-        safe[key_text] = value
+        safe[key_text] = _scrub_value(value)
     return safe
+
+
+def _scrub_value(value):
+    if isinstance(value, dict):
+        return _scrub_metadata(value)
+    if isinstance(value, list):
+        return [_scrub_value(item) for item in value]
+    return value
 
 
 def _validate_metadata_size(metadata: dict) -> None:

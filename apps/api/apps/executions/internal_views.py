@@ -348,40 +348,41 @@ class ApprovalStatusView(APIView):
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
-        ar = approval_services.get_approval_status(approval_request=ar)
+        with transaction.atomic():
+            ar = approval_services.get_approval_status(approval_request=ar)
 
-        if ar.status == ApprovalRequest.Status.PENDING:
-            return Response(
-                _build_approval_status_response(execution, step, ar, "wait")
+            if ar.status == ApprovalRequest.Status.PENDING:
+                return Response(
+                    _build_approval_status_response(execution, step, ar, "wait")
+                )
+
+            if ar.status == ApprovalRequest.Status.APPROVED:
+                step = services.update_execution_step(
+                    execution=execution,
+                    step_id=str(step_id),
+                    runner_id=runner_id,
+                    claim_token=claim_token,
+                    new_status=ExecutionStep.Status.RUNNING,
+                )
+                execution.refresh_from_db()
+                return Response(_build_approval_status_response(execution, step, ar, "run"))
+
+            # Rejected or timed out → fail the step.
+            error_msg = (
+                "Approval rejected."
+                if ar.status == ApprovalRequest.Status.REJECTED
+                else "Approval timed out."
             )
-
-        if ar.status == ApprovalRequest.Status.APPROVED:
             step = services.update_execution_step(
                 execution=execution,
                 step_id=str(step_id),
                 runner_id=runner_id,
                 claim_token=claim_token,
-                new_status=ExecutionStep.Status.RUNNING,
+                new_status=ExecutionStep.Status.FAILED,
+                error_message=error_msg,
             )
             execution.refresh_from_db()
-            return Response(_build_approval_status_response(execution, step, ar, "run"))
-
-        # Rejected or timed out → fail the step.
-        error_msg = (
-            "Approval rejected."
-            if ar.status == ApprovalRequest.Status.REJECTED
-            else "Approval timed out."
-        )
-        step = services.update_execution_step(
-            execution=execution,
-            step_id=str(step_id),
-            runner_id=runner_id,
-            claim_token=claim_token,
-            new_status=ExecutionStep.Status.FAILED,
-            error_message=error_msg,
-        )
-        execution.refresh_from_db()
-        return Response(_build_approval_status_response(execution, step, ar, "fail"))
+            return Response(_build_approval_status_response(execution, step, ar, "fail"))
 
 
 # ---------------------------------------------------------------------------

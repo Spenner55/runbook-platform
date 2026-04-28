@@ -8,6 +8,9 @@ class AuditEventQuerySet(models.QuerySet):
     def delete(self):
         raise ValidationError("Audit events are append-only and cannot be deleted.")
 
+    def update(self, **kwargs):
+        raise ValidationError("Audit events are append-only and cannot be updated.")
+
 
 class AuditEvent(BaseModel):
     class ActorType(models.TextChoices):

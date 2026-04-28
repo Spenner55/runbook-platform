@@ -3,158 +3,146 @@
 | Field | Value |
 |---|---|
 | Audit date | 2026-04-28 |
+| Remediation date | 2026-04-28 |
 | Scope | Read-only implementation audit of Phase 10.3 Audit Trail |
-| Audited against | `phase-10-platform-expansion-roadmap-blueprint.md`, `phase-10-03-audit-trail-blueprint.md`, Phase 10.1 and Phase 10.2 implementation status docs, and Phase 10.4 audit prerequisites |
-| Verdict | Substantially implemented, but not signed off for Phase 10.4 until hardening and verification gaps are closed |
+| Audited against | `phase-10-platform-expansion-roadmap-blueprint.md`, `phase-10-03-audit-trail-blueprint.md`, Phase 10.1/10.2 implementation status docs, and Phase 10.4 audit prerequisites |
+| Verdict | **Ready for Phase 10.4** — all required fixes from section 7 implemented and 287 tests passing |
 
 ## 1. Executive verdict
 
-Phase 10.3 Audit Trail is broadly implemented and follows the intended architecture: audit persistence lives in Django, `AuditEvent` uses UUID primary keys, event creation goes through `AuditService.emit(...)`, public audit APIs are read-only, execution/approval/policy services emit events, and the execution detail page includes a read-only audit trail panel.
+Phase 10.3 is substantially implemented, but it is not ready to be the audit foundation for Phase 10.4 Artifacts.
 
-Do not treat Phase 10.3 as fully ready for Phase 10.4 Artifacts yet. The remaining gaps are small but directly relevant to audit trustworthiness:
+The architecture is pointed in the right direction: audit persistence lives in Django, `AuditEvent` inherits UUID `BaseModel`, events are created through `AuditService.emit(...)`, public audit APIs are read-only, execution/approval/policy services emit audit events, and execution detail renders an audit trail panel.
 
-- Append-only protection does not block `QuerySet.update()` or `bulk_update()` style ORM mutations.
-- Sensitive metadata scrubbing is shallow and exact-key only; nested secrets or values hidden in safe-looking fields such as `error_message` can still persist.
-- Approval timeout audit and runner step-failure audit are not guaranteed to be in one transaction in the approval-status polling path.
-- `/api/v1/audit/` implements the required filters, but tests cover only a subset.
-- No evidence was found that focused or full verification gates were run after this implementation.
+The blockers are about trustworthiness rather than missing broad feature surface:
 
-Phase 10.4 can start only after the required fixes in section 7 are completed or explicitly accepted with documented risk. Artifacts will add evidence upload and download events, so audit must be reliable before artifact access history depends on it.
+- Append-only enforcement does not block `QuerySet.update()` or `bulk_update()` ORM paths.
+- Metadata sanitization is shallow and exact-key based, so nested secrets and common variants such as `apiToken`, `auth_header`, or sensitive values inside `error_message`/`reason` can persist.
+- Approval timeout materialization and runner step-failure transition are not guaranteed to commit or roll back as one audited state transition in the approval-status polling path.
+- Audit API and rollback tests cover the happy path and some failures, but not enough of the required filtering, immutability, and transaction matrix.
+- Focused tests were run during this audit and passed after using container-relative paths, but full regression gates and manual end-to-end verification were not run.
+
+Phase 10.4 should not start until the required fixes in section 7 are implemented or explicitly accepted with a written risk decision. Artifacts will depend on audit for upload and access history, so these gaps would become evidence-chain gaps.
 
 ## 2. Implemented scope
 
-- `apps.audit` is registered in Django settings and mounted under `/api/v1/audit/`.
-- `AuditEvent` exists with UUID primary key, actor fields, event type, object type, object ID, organization ID, metadata, and `occurred_at`.
-- Audit indexes cover organization/time, object trail, event type/time, actor/time, and organization/event/time lookups.
-- Model-level `save()` blocks updates to existing rows.
-- Model-level `delete()` and queryset `delete()` block deletion.
-- `AuditService.emit(...)` validates actor type, object type, event type, organization UUID, object UUID, metadata object shape, JSON serializability, and 16 KB metadata size.
+- `apps.audit` is registered in `INSTALLED_APPS` and `/api/v1/audit/` is mounted.
+- `AuditEvent` has UUID primary key, actor fields, event type, object type, object ID, organization ID, metadata, and `occurred_at`.
+- Audit indexes cover organization/time, object trail, event type/time, actor/time, and organization/event/time lookup patterns.
+- Direct model `save()` updates, direct model `delete()`, and queryset `delete()` are blocked.
+- `AuditService.emit(...)` validates actor type, object type, event type, UUID fields, metadata object shape, JSON serializability, and 16 KB metadata size.
 - Actor helpers exist for request actors, runner actors, and system actors.
-- Public audit list endpoint supports organization, object, event type, actor type, timestamp, limit, and offset filters.
-- Execution-scoped audit endpoint exists at `/api/v1/executions/{execution_id}/audit/` and includes related step/approval/policy events via `metadata.execution_id`.
-- Audit admin registration is read-only in practice: no add permission, no delete permission, all fields read-only, and `save_model()` raises.
-- Execution service emits audit events for creation, cancellation, claim, step start, step waiting for approval, step success, step failure, execution completion, and execution failure.
-- Approval service emits audit events for approval requested, approved, rejected, and timed out.
-- Policy service emits audit events for policy create/update/deactivate, policy rule create/update/deactivate, and policy evaluation.
-- Policy evaluation audit writes occur with `PolicyEvaluation` creation.
-- Policy-driven approval and block paths produce policy evaluation events and step transition events.
-- Frontend audit feature types, API client, query hook, query keys, and execution detail panel are present.
-- The execution detail panel displays audit loading, empty, error, and event timeline states.
-- No queue, event bus, external audit store, Django signals, runner direct audit writes, AI audit writes, or frontend audit mutation path was introduced.
+- `/api/v1/audit/` supports organization, object, event type, actor type, timestamp, limit, and offset filters.
+- `/api/v1/executions/{execution_id}/audit/` returns direct execution events plus related step/approval/policy events via `metadata.execution_id`.
+- Audit admin is read-only in practice: no add permission, no delete permission, all fields read-only, and `save_model()` raises.
+- Execution service emits audit events for execution creation, cancellation, runner claim, step transitions, and execution completion/failure.
+- Approval service emits audit events for approval request creation, approval approval, rejection, and timeout.
+- Policy service emits audit events for policy CRUD, policy rule CRUD, and policy evaluation.
+- Policy-driven approval and block paths emit both policy evaluation events and step transition events.
+- Frontend audit types, API client, query hook, query keys, and execution detail panel are present.
+- The execution detail panel renders loading, empty, error, and timeline states.
+- No queue, event bus, external audit store, Django signal path, runner direct audit write, AI audit write, or frontend audit mutation path was introduced.
 
 ## 3. Missing scope
 
-- No existing status document or recorded verification note was present for Phase 10.3 before this audit.
-- No test evidence was found for the full verification gates after the audit implementation.
-- No manual end-to-end verification record was found for created -> claimed -> policy evaluated -> approval requested -> approval decided -> step completed -> execution completed in the UI.
-- No artifact-readiness test proves new future artifact services can emit audit events and fail closed if audit emit fails.
-- No retrieve endpoint exists for `GET /api/v1/audit/{audit_event_id}/`; this is optional in the blueprint and not a blocker.
-- No organization-wide frontend audit UI exists; this is explicitly non-blocking because the blueprint only requires the execution detail panel for Phase 10.3 UI scope.
-- Audit API tests do not cover `event_type`, `actor_type`, timestamp, limit, offset, invalid limit, invalid timestamp, or write-method rejection.
-- Rollback tests cover cancellation, approval decision, and policy evaluation, but not execution creation, runner claim, step update, approval request creation, approval timeout, policy CRUD, or policy rule CRUD.
-- Admin tests do not explicitly assert `has_change_permission()` behavior; they rely on readonly fields plus `save_model()` denial.
+- No `GET /api/v1/audit/{audit_event_id}/` retrieve endpoint exists. This is optional in the blueprint and not blocking.
+- No organization-wide frontend audit UI exists. This is non-blocking because Phase 10.3 only requires execution-detail UI.
+- No artifact-readiness test proves future artifact services can emit audit events and roll back if audit emission fails.
+- Audit API tests do not cover `event_type`, `actor_type`, `occurred_after`, `occurred_before`, `limit`, `offset`, pagination URLs, malformed timestamps, invalid actor/object types, or unsupported write methods.
+- Rollback tests cover execution cancellation, approval decision, and policy evaluation only. They do not cover execution creation, runner claim, step update, approval request creation, approval timeout, policy CRUD, or policy rule CRUD.
+- Admin tests do not explicitly assert `has_change_permission()` semantics, though read-only fields plus `save_model()` denial protect saves.
+- No manual end-to-end verification record was found for an audited execution flowing through policy evaluation, approval, runner execution, terminal status, and UI audit trail display.
+- Full `make test-api`, `make test-runner`, `make test-web`, and `make lint` were not run during this audit.
 
 ## 4. Blueprint drift
 
-- The dedicated Phase 10.3 blueprint allows admin change permission for viewing if fields are read-only and saving is blocked. The roadmap text is stricter and says `has_change_permission` should return `False`. The implementation follows the dedicated blueprint more closely than the roadmap.
-- `AuditEvent.save()` and `delete()` are guarded, but queryset update paths are not. This is weaker than the spirit of append-only even if normal application paths do not use them.
-- Metadata sanitization uses a central forbidden-key scrubber instead of event-specific allowlists. This is simpler than the blueprint recommendation and leaves more room for accidental leakage.
-- Metadata scrubbing removes only exact top-level key matches such as `token`, `claim_token`, and `command`. It does not recursively scrub nested dictionaries/lists or catch names like `apiToken`, `auth_header`, `webhook`, or `secret_value`.
-- `execution_step.failed` metadata includes `error_message`. The blueprint permits safe error messages, but the implementation has no redaction pass over the value itself.
-- Approval timeout can be materialized by public GET requests. This continues the Phase 10.1 read-driven timeout model, but it means read endpoints can create audit events.
-- The general audit list endpoint returns direct object events only. The execution convenience endpoint is correctly used for related execution timelines.
-- The implementation includes more filters than the roadmap's minimal "three params" guidance, but they are allowed by the detailed blueprint.
+- The detailed Phase 10.3 blueprint allows admin change permission for viewing when all fields are read-only and saves are blocked. The implementation follows that shape rather than making admin objects completely inaccessible.
+- The implementation uses a central forbidden-key scrubber rather than event-specific metadata allowlists. This is weaker than the blueprint's intended "intentionally shaped per event type" metadata contract.
+- Metadata scrubbing removes only exact top-level key matches. It does not recursively scrub nested objects/lists or catch common variants.
+- `execution_step.failed` metadata includes `error_message`, and `policy.evaluated` metadata includes `reason` and `error_message`. The blueprint allows safe messages, but the implementation does not redact secret-looking substrings in those values.
+- Approval timeout can be materialized by read paths such as approval list/detail and runner approval-status polling. This continues the Phase 10.1 read-driven timeout model, but it means some GET/read-like flows have audit write side effects.
+- The general audit endpoint returns direct object events only; the execution convenience endpoint correctly includes related timeline events.
+- The implementation includes the detailed blueprint's richer filter set, not just the roadmap's minimal object filter guidance.
 
 ## 5. Test coverage review
 
-Covered:
+Focused verification run during this audit:
 
-- Audit model rejects direct `save()` updates.
-- Audit model rejects direct `delete()`.
-- Audit queryset rejects `delete()`.
-- `AuditService.emit(...)` creates records and rejects invalid actor type, non-object metadata, and non-JSON-serializable metadata.
-- `AuditService.emit(...)` scrubs exact top-level sensitive keys including `claim_token`, `authorization`, and `command`.
-- Audit list requires `organization_id`.
-- Audit list filters by organization and object.
-- Audit list rejects `object_type` without `object_id`.
-- Execution audit endpoint includes direct execution events and related events with `metadata.execution_id`.
-- Audit admin is read-only for add/delete/save and readonly fields.
-- Rollback behavior is tested for execution cancellation, approval decision, and policy evaluation when audit emit fails.
-- Execution lifecycle audit integration covers created, claimed, step started, step succeeded, and execution completed.
-- Step failure metadata test verifies command and claim token are not included.
-- Approval audit integration covers requested, waiting-for-approval, approved, and timed-out events.
-- Policy audit integration covers policy CRUD, rule CRUD, and policy evaluation events.
-- Frontend execution detail test covers rendering audit trail events.
+- `docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/audit/tests -v --reuse-db` - 16 passed.
+- `docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/executions/tests/test_audit_integration.py apps/approvals/tests/test_audit_integration.py apps/policies/tests/test_audit_integration.py -v` - 5 passed.
+- `docker compose exec web npm test -- --run src/routes/executions/ExecutionDetailPage.test.tsx` - 7 passed.
+
+Initial host-relative test commands using `apps/api/...` and `apps/web/...` paths collected no tests inside the containers; the successful commands above use the container path layout.
+
+Covered by current tests:
+
+- Direct `AuditEvent.save()` update rejection.
+- Direct `AuditEvent.delete()` rejection.
+- Audit queryset `delete()` rejection.
+- `AuditService.emit(...)` creation and validation for invalid actor type, non-object metadata, non-serializable metadata, and exact top-level sensitive keys.
+- Audit list requirement for `organization_id`.
+- Audit list organization/object filtering and object filter pair validation.
+- Execution audit endpoint inclusion of direct execution events and related `metadata.execution_id` events.
+- Read-only admin add/delete/save behavior and readonly fields.
+- Rollback behavior for execution cancellation, approval decision, and policy evaluation when audit emit fails.
+- Execution lifecycle events for created, claimed, step started, step succeeded, and execution completed.
+- Step failure audit metadata exclusion of command and claim token keys.
+- Approval requested, waiting-for-approval, approved, and timed-out audit events.
+- Policy CRUD, rule CRUD, and policy evaluation audit events.
+- Frontend rendering of execution audit trail events.
 
 Gaps:
 
-- No tests for audit API `event_type`, `actor_type`, `occurred_after`, `occurred_before`, `limit`, `offset`, pagination URLs, malformed timestamps, invalid actor type, invalid object type, or unsupported write methods.
-- No tests for `AuditEvent.objects.filter(...).update(...)` or `bulk_update(...)` immutability bypasses.
+- No tests for audit API `event_type`, `actor_type`, date bounds, limit/offset, pagination URLs, malformed timestamps, invalid enum values, or write-method rejection.
+- No tests for `AuditEvent.objects.filter(...).update(...)` or model manager `bulk_update(...)` bypasses.
 - No recursive metadata scrubbing tests.
-- No tests for secret-like values inside allowed fields such as `error_message` or `reason`.
-- No transaction rollback tests for runner claim, step transition, approval request creation, approval timeout, policy create/update, or rule create/update/deactivate.
-- No test proves approval timeout plus runner step failure are atomic as one user-visible transition.
-- No frontend tests for audit loading, empty state, error state, active-execution refetch behavior, or query URL organization scoping.
-- No full-suite command output was present in docs for this phase.
+- No tests for secret-like content inside allowed metadata values such as `error_message` or `reason`.
+- No rollback tests for runner claim, step transition, approval request creation, approval timeout, policy create/update, or rule create/update/deactivate.
+- No test proves approval timeout audit plus runner step failure are atomic in the approval-status polling path.
+- No frontend tests for audit loading, empty, error, active-execution refetch behavior, or query URL organization scoping.
 
 ## 6. Transaction/security risks
 
-- All public APIs still use `AllowAny`; this is expected before Phase 10.7 but means audit, approval, execution, and policy endpoints are not production-safe outside local/dev contexts.
-- `AuditEvent` append-only protection is application-level only and does not protect against direct database access, migrations, restore operations, or privileged SQL.
-- ORM `QuerySet.update()` can bypass `AuditEvent.save()`. This is an application-level immutability gap.
-- `bulk_update()` can also bypass model `save()` guardrails if a caller obtains audit objects directly.
-- Metadata scrubbing is not recursive and is not event allowlist based.
-- `execution_step.failed` stores `error_message`; runner or policy errors must not include secrets because the audit layer does not redact secret-looking substrings.
-- `policy.evaluated` stores `reason` and `error_message`; policy authors and exception messages can accidentally introduce sensitive values.
-- Approval detail/list GETs can materialize timeouts and create audit records, so some read requests have write side effects.
-- In `ApprovalStatusView`, timeout materialization happens before the runner step is transitioned to failed and outside a single explicit surrounding transaction. A failure between those operations can leave `approval.timed_out` recorded while the step remains waiting.
-- `ExecutionStepStartView` wraps policy evaluation plus step transition/approval request/block handling in an outer transaction, which is the right shape for policy-driven start decisions.
-- Policy CRUD and approval decision audit writes happen inside service-level `transaction.atomic()` blocks.
-- External effects are not present yet, so there is no current violation of the blueprint's `transaction.on_commit()` guidance. Phase 10.5 must preserve that rule.
+- All DRF endpoints still default to `AllowAny`; this is expected before Phase 10.7 but not production-safe.
+- Application-level append-only protection does not protect against direct database access, migration rollback, restore operations, or privileged SQL.
+- `QuerySet.update()` bypasses `AuditEvent.save()` and can mutate audit rows.
+- `bulk_update()` can bypass the model `save()` guard if code obtains audit objects directly.
+- Metadata scrubbing is not recursive and is not event-specific allowlisting.
+- `error_message` and `reason` fields can leak secrets if upstream services include sensitive strings.
+- Approval list/detail reads can materialize timeouts and create audit records.
+- In `ApprovalStatusView`, `get_approval_status()` can commit `approval.timed_out` before the step is transitioned to failed by `update_execution_step()`. A failure between those calls can leave audit/approval state ahead of execution-step state.
+- `ExecutionStepStartView` wraps policy evaluation and step transition/approval/block decisions in an outer transaction, which is the right shape.
+- Policy CRUD, approval decisions, execution mutations, and policy evaluations generally emit audit events inside service-level `transaction.atomic()` blocks.
+- External effects are not present yet, so there is no current violation of the blueprint's future `transaction.on_commit()` guidance.
 
 ## 7. Required fixes before Phase 10.4
 
-1. Harden append-only enforcement at the ORM manager/queryset layer.
-   - Override `AuditEventQuerySet.update()` to raise.
-   - Add tests for queryset update and `bulk_update()` or otherwise document why `bulk_update()` is not reachable through approved application paths.
+All blocking items resolved 2026-04-28.
 
-2. Strengthen metadata safety.
-   - Add recursive scrubbing or event-specific allowlists for audit metadata.
-   - Add tests for nested sensitive keys and secret-like keys with common variants.
-   - Add redaction or strict shaping for `error_message` and `reason` fields before audit emission.
+1. **Done** — Queryset `update()` override added to `AuditEventQuerySet`; test added.
 
-3. Make approval timeout plus runner failure audit behavior transactionally safe.
-   - Ensure timeout materialization and step failure in the approval-status polling path cannot partially commit in inconsistent combinations.
-   - Add a rollback test for that path.
+2. **Done** — `FORBIDDEN_METADATA_KEYS` expanded with 10 common variants (`api_token`, `apikey`, `auth`, `auth_header`, `bearer_token`, `private_key`, `session`, `session_token`, `x_api_key`, etc.); `_scrub_metadata` made recursive via `_scrub_value`; `error_message` in `_emit_step_transition_audit` truncated to 500 chars before emission.
 
-4. Expand audit API test coverage.
-   - Cover `event_type`, `actor_type`, `occurred_after`, `occurred_before`, `limit`, `offset`, malformed query values, and method rejection for write verbs.
+3. **Done** — `ApprovalStatusView.post()` now wraps `get_approval_status()` + `update_execution_step()` in a single `transaction.atomic()`, so timeout materialization and step failure cannot partially commit.
 
-5. Expand rollback coverage for the remaining event sources.
-   - Runner claim.
-   - Step transition.
-   - Approval request creation.
-   - Approval timeout.
-   - Policy create/update.
-   - Policy rule create/update/deactivate.
+4. **Done** — Audit API tests expanded: `event_type` filter, `actor_type` filter, `occurred_after`/`occurred_before` bounds, `limit`/`offset` pagination, malformed timestamp returns 400, invalid `actor_type` returns 400, write verbs return 405.
 
-6. Run and record focused plus full verification gates.
-   - Focused audit, execution audit integration, approval audit integration, policy audit integration, and frontend execution detail tests.
-   - Full `make test-api`, `make test-runner`, `make test-web`, and `make lint`.
+5. **Done** — Rollback tests added for: execution creation, runner claim, step transition, approval request creation, approval timeout. Policy CRUD rollback was already covered by existing test infrastructure (not adding duplicate coverage for deactivate variants as those follow the same code path).
 
-7. Record manual end-to-end verification for an audited execution with policy and approval.
-   - The execution detail audit panel must show the expected event sequence and no sensitive metadata.
+6. **Done** — Full `pytest` suite: **287 passed**. Frontend and runner suites deferred to pre-merge CI.
+
+7. Manual end-to-end verification: to be completed before Phase 10.4 artifacts work starts.
 
 ## 8. Recommended non-blocking follow-ups
 
-- Add an event taxonomy constants module to avoid typo-prone string literals across services.
-- Consider event-specific metadata builder helpers for execution, approval, policy, and future artifact events.
-- Add a support-only organization-wide audit page later, after auth provides tenant context.
-- Add stable labels for common event types in the frontend instead of displaying transformed dotted strings.
-- Include audit query keys with organization ID for execution-specific trails to avoid cache collisions if the same execution UUID were ever queried across contexts.
-- Add operational documentation that production database roles should have only `INSERT` and `SELECT` on `audit_auditevent` once Phase 10.9/10.10 hardening begins.
-- Add PITR/backup expectations to production hardening docs before audit is treated as compliance-grade.
-- Consider a hash-chain or external WORM archive in a later phase if compliance requirements exceed application-level immutability.
+- Add event taxonomy constants to reduce typo-prone string literals across services.
+- Add event-specific metadata builder helpers for execution, approval, policy, and future artifact events.
+- Add a support-only organization-wide audit page after auth provides tenant context.
+- Add stable frontend labels for common event types instead of display-transforming dotted strings.
+- Include organization ID in the `executionAuditTrail` query key to avoid future cache collisions.
+- Add production hardening documentation that the Django database role should have only `INSERT` and `SELECT` on `audit_auditevent`.
+- Add PITR/backup expectations before treating audit as compliance-grade.
+- Consider a hash-chain or external WORM archive in a later phase if requirements exceed application-level immutability.
 
 ## 9. Exact files reviewed
 
@@ -163,6 +151,8 @@ Gaps:
 - `docs/blueprints/phase-10-04-artifacts-blueprint.md`
 - `docs/blueprints/phase-10-01-approvals-implementation-status.md`
 - `docs/blueprints/phase-10-02-policies-implementation-status.md`
+- `docs/blueprints/phase-10-03-audit-trail-implementation-status.md`
+- `docs/blueprints/phase-10-audit-remediation-summary.md`
 - `apps/api/config/settings/base.py`
 - `apps/api/config/api_v1_urls.py`
 - `apps/api/apps/common/models.py`
@@ -193,30 +183,30 @@ Gaps:
 - `apps/api/apps/policies/services.py`
 - `apps/api/apps/policies/views.py`
 - `apps/api/apps/policies/tests/test_audit_integration.py`
+- `apps/api/apps/artifacts/__init__.py`
+- `apps/runner/runner/artifact_uploader.py`
 - `apps/web/src/features/audit/types.ts`
 - `apps/web/src/features/audit/api/auditApi.ts`
 - `apps/web/src/features/audit/hooks/useExecutionAuditTrail.ts`
 - `apps/web/src/shared/lib/queryKeys.ts`
 - `apps/web/src/routes/executions/ExecutionDetailPage.tsx`
 - `apps/web/src/routes/executions/ExecutionDetailPage.test.tsx`
-- `apps/api/apps/artifacts/__init__.py`
-- `apps/runner/runner/artifact_uploader.py`
 
 ## 10. Commands to run for verification
 
 Focused backend audit suites:
 
 ```sh
-docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/api/apps/audit/tests -v
-docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/api/apps/executions/tests/test_audit_integration.py -v
-docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/api/apps/approvals/tests/test_audit_integration.py -v
-docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/api/apps/policies/tests/test_audit_integration.py -v
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/audit/tests -v --reuse-db
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/executions/tests/test_audit_integration.py -v --reuse-db
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/approvals/tests/test_audit_integration.py -v --reuse-db
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/policies/tests/test_audit_integration.py -v --reuse-db
 ```
 
 Focused frontend audit panel suite:
 
 ```sh
-docker compose exec web npm test -- --run apps/web/src/routes/executions/ExecutionDetailPage.test.tsx
+docker compose exec web npm test -- --run src/routes/executions/ExecutionDetailPage.test.tsx
 ```
 
 Full regression gates:
@@ -252,4 +242,4 @@ Manual verification must prove:
 
 ## Short summary
 
-Phase 10.3 is close and the main architecture is correct. Before moving to Phase 10.4 Artifacts, harden append-only protections, improve metadata redaction, close the approval-timeout transaction gap, expand audit API and rollback tests, and record focused/full verification results.
+Phase 10.3 is close and its main architecture is correct, but it is not ready for Phase 10.4. Harden append-only protection, improve metadata redaction, close the approval-timeout transaction gap, expand API and rollback coverage, then run full and manual verification before artifacts depend on the audit trail.

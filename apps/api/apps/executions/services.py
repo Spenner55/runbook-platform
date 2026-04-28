@@ -455,6 +455,7 @@ def _emit_step_transition_audit(
     if not event_type:
         return
 
+    safe_error = (error_message or "")[:500] if new_status == ExecutionStep.Status.FAILED else ""
     metadata = {
         "execution_id": str(execution.id),
         "step_id": str(step.id),
@@ -465,7 +466,7 @@ def _emit_step_transition_audit(
         "previous_status": previous_status,
         "new_status": new_status,
         "exit_code": step.exit_code,
-        "error_message": error_message if new_status == ExecutionStep.Status.FAILED else "",
+        "error_message": safe_error,
     }
     AuditService.emit(
         organization_id=execution.organization_id,
