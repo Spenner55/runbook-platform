@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from django.db import transaction
@@ -9,6 +10,9 @@ from apps.audit.services import AuditService
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
 from apps.executions import services as execution_services
 from apps.executions.models import Execution, ExecutionStep
+from apps.integrations.services import IntegrationService
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Runner-facing service: create/reuse an approval request for a step
@@ -40,7 +44,9 @@ def request_step_approval(
         if step.status == ExecutionStep.Status.WAITING_FOR_APPROVAL:
             try:
                 existing = ApprovalRequest.objects.get(step=step)
-                return existing, False
+                approval_request = existing
+                created = False
+                return approval_request, created
             except ApprovalRequest.DoesNotExist:
                 pass
 
@@ -103,7 +109,17 @@ def request_step_approval(
                 "expires_at": expires_at.isoformat() if expires_at else None,
             },
         )
-        return approval_request, True
+        created = True
+
+    _safe_notify_integration(
+        event_type="approval.requested",
+        organization=execution.organization,
+        context=_approval_request_context(
+            approval_request=approval_request,
+            event_type="approval.requested",
+        ),
+    )
+    return approval_request, created
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +238,17 @@ def decide_approval(
             actor_id="",
             actor_label=actor_label or "Unauthenticated public API",
         )
-        return approval_decision
+    event_type = "approval.decided"
+    _safe_notify_integration(
+        event_type=event_type,
+        organization=locked.organization,
+        context=_approval_decision_context(
+            approval_request=locked,
+            approval_decision=approval_decision,
+            event_type=event_type,
+        ),
+    )
+    return approval_decision
 
 
 # ---------------------------------------------------------------------------
@@ -311,3 +337,70 @@ def _emit_approval_decision_audit(
             "notes_present": bool(approval_decision.notes),
         },
     )
+
+
+def _safe_notify_integration(*, event_type: str, organization, context: dict) -> None:
+    def notify() -> None:
+        try:
+            IntegrationService.notify(
+                event_type=event_type,
+                organization=organization,
+                context=dict(context),
+            )
+        except Exception:
+            logger.exception("Integration notify failed for %s.", event_type)
+
+    transaction.on_commit(notify)
+
+
+def _approval_request_context(
+    *, approval_request: ApprovalRequest, event_type: str
+) -> dict:
+    return {
+        "event_type": event_type,
+        "organization_id": str(approval_request.organization_id),
+        "approval_request_id": str(approval_request.id),
+        "execution_id": str(approval_request.execution_id),
+        "step_id": str(approval_request.step_id),
+        "step_name": approval_request.step.name,
+        "step_position": approval_request.step.position,
+        "workflow_id": str(approval_request.execution.workflow_id),
+        "workflow_name": _workflow_name(approval_request.execution),
+        "approval_status": approval_request.status,
+        "timeout_seconds": approval_request.timeout_seconds,
+        "expires_at": approval_request.expires_at.isoformat()
+        if approval_request.expires_at
+        else None,
+    }
+
+
+def _approval_decision_context(
+    *,
+    approval_request: ApprovalRequest,
+    approval_decision: ApprovalDecision,
+    event_type: str,
+) -> dict:
+    return {
+        "event_type": event_type,
+        "organization_id": str(approval_request.organization_id),
+        "approval_request_id": str(approval_request.id),
+        "approval_decision_id": str(approval_decision.id),
+        "execution_id": str(approval_request.execution_id),
+        "step_id": str(approval_request.step_id),
+        "step_name": approval_request.step.name,
+        "step_position": approval_request.step.position,
+        "workflow_id": str(approval_request.execution.workflow_id),
+        "workflow_name": _workflow_name(approval_request.execution),
+        "approval_status": approval_request.status,
+        "decision": approval_decision.decision,
+        "source_type": approval_decision.source_type,
+        "decided_at": approval_decision.decided_at.isoformat()
+        if approval_decision.decided_at
+        else None,
+        "notes_present": bool(approval_decision.notes),
+    }
+
+
+def _workflow_name(execution: Execution) -> str:
+    name = execution.workflow_snapshot.get("name")
+    return name if isinstance(name, str) and name else ""

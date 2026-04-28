@@ -30,6 +30,9 @@ export function AppLayout() {
           <NavLink className={getNavClassName} to="/policies">
             Policies
           </NavLink>
+          <NavLink className={getNavClassName} to="/integrations">
+            Integrations
+          </NavLink>
         </nav>
       </header>
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,6 +12,7 @@ import httpx
 from runner.schemas import (
     ApprovalStatusRequest,
     ApprovalStatusResponse,
+    ArtifactUploadResponse,
     ClaimNextRequest,
     ClaimNextResponse,
     CompleteExecutionRequest,
@@ -168,6 +170,38 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return CompleteExecutionResponse.model_validate(data)
+
+    def upload_artifact(
+        self,
+        execution_id: UUID,
+        step_id: UUID,
+        claim_token: UUID,
+        *,
+        kind: str,
+        name: str,
+        file_obj,
+        mime_type: str = "",
+        checksum_sha256: str = "",
+        metadata: dict | None = None,
+    ) -> ArtifactUploadResponse:
+        url = (
+            f"{self._base}/api/v1/internal/executions/{execution_id}"
+            f"/steps/{step_id}/artifacts/"
+        )
+        fields = {
+            "runner_id": self._runner_id,
+            "claim_token": str(claim_token),
+            "kind": kind,
+            "name": name,
+            "mime_type": mime_type,
+            "checksum_sha256": checksum_sha256,
+            "metadata": json.dumps(metadata or {}),
+        }
+        files = {"file": (name, file_obj, mime_type or "application/octet-stream")}
+        timeout = httpx.Timeout(30.0)
+        response = self._http.post(url, data=fields, files=files, timeout=timeout)
+        response.raise_for_status()
+        return ArtifactUploadResponse.model_validate(response.json())
 
     def close(self) -> None:
         if self._owns_http_client:

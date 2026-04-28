@@ -401,3 +401,70 @@ def test_complete_execution_raises_on_4xx():
     )
     with pytest.raises(httpx.HTTPStatusError):
         client.complete_execution(uuid4(), uuid4(), final_status="succeeded")
+
+
+# ---------------------------------------------------------------------------
+# upload_artifact
+# ---------------------------------------------------------------------------
+
+
+def test_upload_artifact_sends_multipart_shape():
+    captured = {}
+    execution_id = uuid4()
+    step_id = uuid4()
+    artifact_id = uuid4()
+    body = {
+        "id": str(artifact_id),
+        "execution_id": str(execution_id),
+        "step_id": str(step_id),
+        "kind": "stdout",
+        "name": "stdout.txt",
+        "mime_type": "text/plain",
+        "size_bytes": 11,
+        "checksum_sha256": "a" * 64,
+        "uploaded_by_runner_id": "test-runner",
+        "uploaded_at": "2026-01-01T00:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["content_type"] = request.headers["content-type"]
+        body_text = request.content.decode()
+        captured["body"] = body_text
+        return httpx.Response(
+            201,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    claim_token = uuid4()
+    client = make_client(httpx.MockTransport(handler))
+    response = client.upload_artifact(
+        execution_id,
+        step_id,
+        claim_token,
+        kind="stdout",
+        name="stdout.txt",
+        file_obj=b"hello world",
+        mime_type="text/plain",
+        checksum_sha256="a" * 64,
+        metadata={"truncated": False},
+    )
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == (
+        f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/artifacts/"
+    )
+    assert "multipart/form-data" in captured["content_type"]
+    assert 'name="runner_id"' in captured["body"]
+    assert "test-runner" in captured["body"]
+    assert 'name="claim_token"' in captured["body"]
+    assert str(claim_token) in captured["body"]
+    assert 'name="checksum_sha256"' in captured["body"]
+    assert "a" * 64 in captured["body"]
+    assert 'name="metadata"' in captured["body"]
+    assert '"truncated": false' in captured["body"]
+    assert 'name="file"; filename="stdout.txt"' in captured["body"]
+    assert "hello world" in captured["body"]
+    assert response.id == artifact_id

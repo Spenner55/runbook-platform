@@ -9,6 +9,8 @@ not leak into public viewsets.
 from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
+from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
+from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
 from apps.audit.views import ExecutionAuditEventListView
 from apps.executions.internal_views import (
     ApprovalStatusView,
@@ -34,11 +36,14 @@ urlpatterns = [
     path("approvals/", include("apps.approvals.urls")),
     path("policies/", include("apps.policies.urls")),
     path("audit/", include("apps.audit.urls")),
+    path("integrations/", include("apps.integrations.urls")),
+    *artifact_public_urlpatterns,
     path(
         "executions/<uuid:execution_id>/audit/",
         ExecutionAuditEventListView.as_view(),
         name="execution-audit-event-list",
     ),
+    path("internal/", include(artifact_internal_urlpatterns)),
     path(
         "internal/executions/claim-next/",
         ClaimNextExecutionView.as_view(),

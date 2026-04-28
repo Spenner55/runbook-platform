@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from runner.executor import Executor
 from runner.poller import Poller
 from runner.schemas import (
+    ArtifactUploadResponse,
     ClaimedExecution,
     ClaimedStep,
     ClaimNextResponse,
@@ -97,6 +98,31 @@ class FakeApiClient:
                 {"execution_id": execution_id, "final_status": final_status}
             )
         return CompleteExecutionResponse(id=execution_id, status=final_status)
+
+    def upload_artifact(
+        self,
+        execution_id: UUID,
+        step_id: UUID,
+        claim_token: UUID,
+        *,
+        kind: str,
+        name: str,
+        file_obj,
+        mime_type: str = "",
+        checksum_sha256: str = "",
+        metadata: dict | None = None,
+    ) -> ArtifactUploadResponse:
+        return ArtifactUploadResponse(
+            id=uuid4(),
+            execution_id=execution_id,
+            step_id=step_id,
+            kind=kind,
+            name=name,
+            mime_type=mime_type or "application/octet-stream",
+            size_bytes=0,
+            checksum_sha256=checksum_sha256 or "a" * 64,
+            uploaded_by_runner_id="fake-runner",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -40,3 +40,9 @@ class InvalidStateTransitionError(_BaseDomainError):
     """An operation was rejected because the resource is in an incompatible lifecycle state."""
 
     http_status = 409
+
+
+class PayloadTooLargeError(_BaseDomainError):
+    """An uploaded payload exceeds the configured size limit."""
+
+    http_status = 413
