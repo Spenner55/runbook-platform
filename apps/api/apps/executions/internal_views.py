@@ -233,6 +233,7 @@ class ExecutionStepStartView(APIView):
                     runner_id=runner_id,
                     claim_token=claim_token,
                     policy_driven=True,
+                    policy_evaluation=evaluation,
                 )
                 step.refresh_from_db()
                 execution.refresh_from_db()

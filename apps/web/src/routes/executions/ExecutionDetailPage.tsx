@@ -1,5 +1,7 @@
 import { useParams } from 'react-router-dom'
 
+import { useExecutionAuditTrail } from '../../features/audit/hooks/useExecutionAuditTrail'
+import type { AuditEvent } from '../../features/audit/types'
 import { useExecutionDetail } from '../../features/executions/hooks/useExecutionDetail'
 import type { PolicyEvaluationSummary } from '../../features/policies/types'
 import { getApiErrorMessage } from '../../shared/api/client'
@@ -68,9 +70,84 @@ function formatDateTime(value: string | null) {
   return new Date(value).toLocaleString()
 }
 
+function formatEventType(eventType: string) {
+  return eventType.replaceAll('_', ' ').replaceAll('.', ' ')
+}
+
+function metadataText(event: AuditEvent) {
+  const metadata = event.metadata
+  const parts = []
+  if (typeof metadata.previous_status === 'string' && typeof metadata.new_status === 'string') {
+    parts.push(`From ${metadata.previous_status} to ${metadata.new_status}`)
+  }
+  if (typeof metadata.step_key === 'string') {
+    parts.push(`Step ${metadata.step_key}`)
+  }
+  if (typeof metadata.risk_level === 'string' && metadata.risk_level) {
+    parts.push(`Risk ${metadata.risk_level}`)
+  }
+  if (typeof metadata.outcome === 'string') {
+    parts.push(`Outcome ${metadata.outcome}`)
+  }
+  if (typeof metadata.reason === 'string' && metadata.reason) {
+    parts.push(`Reason ${metadata.reason}`)
+  }
+  if (typeof metadata.decision === 'string') {
+    parts.push(`Decision ${metadata.decision}`)
+  }
+  return parts.join(' · ')
+}
+
+function AuditTrailPanel({
+  events,
+  isLoading,
+  error,
+}: {
+  events: AuditEvent[]
+  isLoading: boolean
+  error: unknown
+}) {
+  const timelineEvents = [...events].reverse()
+
+  return (
+    <div className="stack-md">
+      <h3>Audit trail</h3>
+      {isLoading ? <p className="muted">Loading audit trail…</p> : null}
+      {error ? <p className="banner banner--error">{getApiErrorMessage(error)}</p> : null}
+      {!isLoading && !error && timelineEvents.length === 0 ? (
+        <p className="muted">No audit events recorded yet.</p>
+      ) : null}
+      {timelineEvents.length > 0 ? (
+        <ol className="step-list">
+          {timelineEvents.map((event) => (
+            <li className="step-list__item" key={event.id}>
+              <div>
+                <strong>{formatEventType(event.event_type)}</strong>
+                <p className="muted">
+                  {event.actor_label || event.actor_type} · {event.object_type}
+                </p>
+                {metadataText(event) ? <p className="muted">{metadataText(event)}</p> : null}
+              </div>
+              <div className="step-list__meta">
+                <span className="pill">{event.actor_type}</span>
+                <span className="muted">{formatDateTime(event.occurred_at)}</span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  )
+}
+
 export function ExecutionDetailPage() {
   const { executionId } = useParams()
   const executionQuery = useExecutionDetail(executionId ?? null)
+  const auditQuery = useExecutionAuditTrail({
+    executionId: executionId ?? null,
+    organizationId: executionQuery.data?.organization_id ?? null,
+    executionStatus: executionQuery.data?.status ?? null,
+  })
 
   return (
     <section className="panel stack-lg">
@@ -161,6 +238,12 @@ export function ExecutionDetailPage() {
               ))}
             </ol>
           </div>
+
+          <AuditTrailPanel
+            events={auditQuery.data?.results ?? []}
+            isLoading={auditQuery.isLoading}
+            error={auditQuery.error}
+          />
         </>
       ) : null}
     </section>

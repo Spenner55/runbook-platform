@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
+from apps.audit.services import actor_from_request
 from apps.executions import services
 from apps.executions.models import Execution, ExecutionStep
 from apps.executions.serializers import (
@@ -76,7 +77,9 @@ class ExecutionViewSet(
         workflow = get_object_or_404(
             Workflow, pk=serializer.validated_data["workflow_id"]
         )
-        execution = services.create_execution(workflow=workflow)
+        execution = services.create_execution(
+            workflow=workflow, actor=actor_from_request(request)
+        )
 
         return Response(
             ExecutionDetailSerializer(execution).data,
@@ -86,7 +89,9 @@ class ExecutionViewSet(
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
         execution = self.get_object()
-        execution = services.cancel_execution(execution=execution)
+        execution = services.cancel_execution(
+            execution=execution, actor=actor_from_request(request)
+        )
         return Response(ExecutionDetailSerializer(execution).data)
 
     @action(detail=True, methods=["get"], url_path="policy-evaluations")

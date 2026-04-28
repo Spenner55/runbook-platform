@@ -1,9 +1,12 @@
 import logging
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from apps.audit.models import AuditEvent
+from apps.audit.services import AuditActor, AuditService, system_actor
 from apps.common.exceptions import DomainConflictError, DomainValidationError
 from apps.executions.models import Execution, ExecutionStep
 from apps.policies.models import Policy, PolicyEvaluation, PolicyRule
@@ -22,6 +25,7 @@ def create_policy(
     description: str = "",
     is_active: bool = True,
     created_by_label: str = "",
+    actor: AuditActor | None = None,
 ) -> Policy:
     if (
         is_active
@@ -33,16 +37,26 @@ def create_policy(
             code="duplicate_active_policy_name",
             detail=f"An active policy named '{name}' already exists for this organization.",
         )
-    return Policy.objects.create(
-        organization=organization,
-        name=name,
-        description=description,
-        is_active=is_active,
-        created_by_label=created_by_label,
-    )
+    with transaction.atomic():
+        policy = Policy.objects.create(
+            organization=organization,
+            name=name,
+            description=description,
+            is_active=is_active,
+            created_by_label=created_by_label,
+        )
+        _emit_policy_audit(
+            policy=policy,
+            event_type="policy.created",
+            actor=actor,
+            metadata={"policy_id": str(policy.id), "is_active": policy.is_active},
+        )
+        return policy
 
 
-def update_policy(*, policy: Policy, **changes) -> Policy:
+def update_policy(
+    *, policy: Policy, actor: AuditActor | None = None, **changes
+) -> Policy:
     allowed = {"name", "description", "is_active", "updated_by_label"}
     unknown = set(changes) - allowed
     if unknown:
@@ -69,10 +83,29 @@ def update_policy(*, policy: Policy, **changes) -> Policy:
                 detail=f"An active policy named '{new_name}' already exists for this organization.",
             )
 
-    for field, value in changes.items():
-        setattr(policy, field, value)
-    policy.save(update_fields=list(changes.keys()) + ["updated_at"])
-    return policy
+    with transaction.atomic():
+        policy = Policy.objects.select_for_update().get(pk=policy.pk)
+        previous_is_active = policy.is_active
+        for field, value in changes.items():
+            setattr(policy, field, value)
+        policy.save(update_fields=list(changes.keys()) + ["updated_at"])
+        event_type = (
+            "policy.deactivated"
+            if previous_is_active and policy.is_active is False
+            else "policy.updated"
+        )
+        _emit_policy_audit(
+            policy=policy,
+            event_type=event_type,
+            actor=actor,
+            metadata={
+                "policy_id": str(policy.id),
+                "changed_fields": sorted(changes.keys()),
+                "previous_is_active": previous_is_active,
+                "new_is_active": policy.is_active,
+            },
+        )
+        return policy
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +124,7 @@ def create_rule(
     description: str = "",
     reason: str = "",
     is_active: bool = True,
+    actor: AuditActor | None = None,
 ) -> PolicyRule:
     if priority <= 0:
         raise DomainValidationError(
@@ -111,20 +145,37 @@ def create_rule(
             detail=f"A rule named '{name}' already exists in this policy.",
         )
 
-    return PolicyRule.objects.create(
-        policy=policy,
-        name=name,
-        description=description,
-        is_active=is_active,
-        priority=priority,
-        condition_type=condition_type,
-        condition_params=condition_params,
-        outcome=outcome,
-        reason=reason,
-    )
+    with transaction.atomic():
+        rule = PolicyRule.objects.create(
+            policy=policy,
+            name=name,
+            description=description,
+            is_active=is_active,
+            priority=priority,
+            condition_type=condition_type,
+            condition_params=condition_params,
+            outcome=outcome,
+            reason=reason,
+        )
+        _emit_policy_rule_audit(
+            rule=rule,
+            event_type="policy_rule.created",
+            actor=actor,
+            metadata={
+                "policy_id": str(policy.id),
+                "rule_id": str(rule.id),
+                "condition_type": rule.condition_type,
+                "outcome": rule.outcome,
+                "priority": rule.priority,
+                "is_active": rule.is_active,
+            },
+        )
+        return rule
 
 
-def update_rule(*, rule: PolicyRule, **changes) -> PolicyRule:
+def update_rule(
+    *, rule: PolicyRule, actor: AuditActor | None = None, **changes
+) -> PolicyRule:
     allowed = {
         "name",
         "description",
@@ -181,10 +232,36 @@ def update_rule(*, rule: PolicyRule, **changes) -> PolicyRule:
     if "outcome" in changes:
         _validate_outcome(new_outcome)
 
-    for field, value in changes.items():
-        setattr(rule, field, value)
-    rule.save(update_fields=list(changes.keys()) + ["updated_at"])
-    return rule
+    with transaction.atomic():
+        rule = PolicyRule.objects.select_for_update().select_related("policy").get(
+            pk=rule.pk
+        )
+        previous_is_active = rule.is_active
+        for field, value in changes.items():
+            setattr(rule, field, value)
+        rule.save(update_fields=list(changes.keys()) + ["updated_at"])
+        event_type = (
+            "policy_rule.deactivated"
+            if previous_is_active and rule.is_active is False
+            else "policy_rule.updated"
+        )
+        _emit_policy_rule_audit(
+            rule=rule,
+            event_type=event_type,
+            actor=actor,
+            metadata={
+                "policy_id": str(rule.policy_id),
+                "rule_id": str(rule.id),
+                "changed_fields": sorted(changes.keys()),
+                "previous_is_active": previous_is_active,
+                "new_is_active": rule.is_active,
+            },
+        )
+        return rule
+
+
+def deactivate_rule(*, rule: PolicyRule, actor: AuditActor | None = None) -> PolicyRule:
+    return update_rule(rule=rule, actor=actor, is_active=False)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +353,7 @@ def evaluate_step_policy(
             if matched:
                 outcome = rule.outcome
                 effective_outcome = _apply_requires_approval_floor(outcome, step)
-                return PolicyEvaluation.objects.create(
+                return _create_policy_evaluation_with_audit(
                     organization=execution.organization,
                     execution=execution,
                     step=step,
@@ -299,7 +376,7 @@ def evaluate_step_policy(
             if step.requires_approval
             else PolicyRule.Outcome.AUTO_APPROVE
         )
-        return PolicyEvaluation.objects.create(
+        return _create_policy_evaluation_with_audit(
             organization=execution.organization,
             execution=execution,
             step=step,
@@ -579,7 +656,7 @@ def _persist_evaluation_error(
     error_code,
     error_message,
 ) -> PolicyEvaluation:
-    return PolicyEvaluation.objects.create(
+    return _create_policy_evaluation_with_audit(
         organization=execution.organization,
         execution=execution,
         step=step,
@@ -596,4 +673,76 @@ def _persist_evaluation_error(
         error_code=error_code,
         error_message=error_message,
         evaluated_at=evaluated_at,
+    )
+
+
+def _create_policy_evaluation_with_audit(**fields) -> PolicyEvaluation:
+    with transaction.atomic():
+        evaluation = PolicyEvaluation.objects.create(**fields)
+        AuditService.emit(
+            organization_id=evaluation.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_id="",
+            actor_label="Django system",
+            event_type="policy.evaluated",
+            object_type=AuditEvent.ObjectType.POLICY_EVALUATION,
+            object_id=evaluation.id,
+            metadata={
+                "execution_id": str(evaluation.execution_id),
+                "step_id": str(evaluation.step_id),
+                "policy_id": str(evaluation.policy_id) if evaluation.policy_id else "",
+                "rule_id": str(evaluation.rule_id) if evaluation.rule_id else "",
+                "matched": evaluation.matched,
+                "outcome": evaluation.outcome,
+                "effective_outcome": evaluation.effective_outcome,
+                "decision_source": evaluation.decision_source,
+                "reason": evaluation.reason,
+                "error_code": evaluation.error_code,
+                "error_message": evaluation.error_message,
+            },
+        )
+        return evaluation
+
+
+def _emit_policy_audit(
+    *, policy: Policy, event_type: str, actor: AuditActor | None, metadata: dict
+) -> None:
+    audit_actor = actor or system_actor("Unauthenticated public API")
+    if audit_actor.actor_type == AuditEvent.ActorType.SYSTEM:
+        audit_actor = AuditActor(
+            actor_type=AuditEvent.ActorType.UNKNOWN,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+        )
+    AuditService.emit(
+        organization_id=policy.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.POLICY,
+        object_id=policy.id,
+        metadata=metadata,
+    )
+
+
+def _emit_policy_rule_audit(
+    *, rule: PolicyRule, event_type: str, actor: AuditActor | None, metadata: dict
+) -> None:
+    audit_actor = actor or system_actor("Unauthenticated public API")
+    if audit_actor.actor_type == AuditEvent.ActorType.SYSTEM:
+        audit_actor = AuditActor(
+            actor_type=AuditEvent.ActorType.UNKNOWN,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+        )
+    AuditService.emit(
+        organization_id=rule.policy.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.POLICY_RULE,
+        object_id=rule.id,
+        metadata=metadata,
     )

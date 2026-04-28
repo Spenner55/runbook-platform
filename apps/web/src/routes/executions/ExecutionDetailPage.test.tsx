@@ -65,9 +65,15 @@ describe('ExecutionDetailPage', () => {
       ],
     }
 
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse(runningExecution))
-      .mockResolvedValueOnce(createJsonResponse(finishedExecution))
+    let executionFetchCount = 0
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/audit/')) {
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      }
+      executionFetchCount += 1
+      return createJsonResponse(executionFetchCount === 1 ? runningExecution : finishedExecution)
+    })
 
     renderRoute(<ExecutionDetailPage />, {
       path: '/executions/:executionId',
@@ -82,7 +88,7 @@ describe('ExecutionDetailPage', () => {
 
     await waitFor(
       () => {
-        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(executionFetchCount).toBe(2)
       },
       { timeout: 3000 }
     )
@@ -347,5 +353,81 @@ describe('ExecutionDetailPage', () => {
     })
 
     expect(screen.queryByText('policy_blocked')).not.toBeInTheDocument()
+  })
+
+  it('renders execution audit trail events', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: '2026-04-15T10:00:10Z',
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:02:00Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:02:00Z',
+      steps: [],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/audit/')) {
+        return createJsonResponse({
+          count: 2,
+          next: null,
+          previous: null,
+          results: [
+            {
+              id: 'audit-2',
+              actor_type: 'runner',
+              actor_id: 'runner-dev-01',
+              actor_label: 'runner-dev-01',
+              event_type: 'execution_step.started',
+              object_type: 'execution_step',
+              object_id: 'step-1',
+              organization_id: 'org-1',
+              metadata: {
+                execution_id: 'execution-1',
+                step_key: 'deploy',
+                previous_status: 'pending',
+                new_status: 'running',
+                risk_level: 'high',
+              },
+              occurred_at: '2026-04-15T10:00:05Z',
+            },
+            {
+              id: 'audit-1',
+              actor_type: 'unknown',
+              actor_id: '',
+              actor_label: 'Unauthenticated public API',
+              event_type: 'execution.created',
+              object_type: 'execution',
+              object_id: 'execution-1',
+              organization_id: 'org-1',
+              metadata: { initial_status: 'queued' },
+              occurred_at: '2026-04-15T10:00:00Z',
+            },
+          ],
+        })
+      }
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('execution created')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('execution step started')).toBeInTheDocument()
+    expect(screen.getByText(/From pending to running/i)).toBeInTheDocument()
+    expect(screen.getByText(/Step deploy/i)).toBeInTheDocument()
   })
 })

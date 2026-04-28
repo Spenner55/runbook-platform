@@ -4,7 +4,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.approvals.models import ApprovalDecision, ApprovalRequest
+from apps.audit.models import AuditEvent
+from apps.audit.services import AuditService
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
+from apps.executions import services as execution_services
 from apps.executions.models import Execution, ExecutionStep
 
 # ---------------------------------------------------------------------------
@@ -19,6 +22,7 @@ def request_step_approval(
     runner_id: str,
     claim_token: str,
     policy_driven: bool = False,
+    policy_evaluation=None,
 ) -> tuple[ApprovalRequest, bool]:
     """
     Atomically transition the step to waiting_for_approval and create or
@@ -56,6 +60,7 @@ def request_step_approval(
             )
 
         now = timezone.now()
+        previous_status = step.status
         step.status = ExecutionStep.Status.WAITING_FOR_APPROVAL
         step.save(update_fields=["status", "updated_at"])
 
@@ -73,6 +78,30 @@ def request_step_approval(
             requested_at=now,
             timeout_seconds=timeout_seconds,
             expires_at=expires_at,
+        )
+        execution_services.emit_step_waiting_for_approval_audit(
+            execution=execution,
+            step=step,
+            runner_id=runner_id,
+            previous_status=previous_status,
+        )
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=AuditEvent.ActorType.RUNNER,
+            actor_id=runner_id,
+            actor_label=runner_id,
+            event_type="approval.requested",
+            object_type=AuditEvent.ObjectType.APPROVAL_REQUEST,
+            object_id=approval_request.id,
+            metadata={
+                "execution_id": str(execution.id),
+                "step_id": str(step.id),
+                "policy_evaluation_id": str(policy_evaluation.id)
+                if policy_evaluation
+                else "",
+                "timeout_seconds": timeout_seconds,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            },
         )
         return approval_request, True
 
@@ -103,13 +132,20 @@ def get_approval_status(*, approval_request: ApprovalRequest) -> ApprovalRequest
         locked.resolved_at = now
         locked.save(update_fields=["status", "resolved_at", "updated_at"])
 
-        ApprovalDecision.objects.create(
+        approval_decision = ApprovalDecision.objects.create(
             approval_request=locked,
             decision=ApprovalDecision.Decision.TIMED_OUT,
             source_type=ApprovalDecision.SourceType.SYSTEM,
             decided_at=now,
             decided_by_label="system",
             decided_by_label_source="system",
+        )
+        _emit_approval_decision_audit(
+            approval_request=locked,
+            approval_decision=approval_decision,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_id="",
+            actor_label="Django system",
         )
         return locked
 
@@ -143,7 +179,7 @@ def decide_approval(
             locked.status = ApprovalRequest.Status.TIMED_OUT
             locked.resolved_at = now
             locked.save(update_fields=["status", "resolved_at", "updated_at"])
-            ApprovalDecision.objects.create(
+            approval_decision = ApprovalDecision.objects.create(
                 approval_request=locked,
                 decision=ApprovalDecision.Decision.TIMED_OUT,
                 source_type=ApprovalDecision.SourceType.SYSTEM,
@@ -151,6 +187,14 @@ def decide_approval(
                 decided_by_label="system",
                 decided_by_label_source="system",
             )
+            _emit_approval_decision_audit(
+                approval_request=locked,
+                approval_decision=approval_decision,
+                actor_type=AuditEvent.ActorType.SYSTEM,
+                actor_id="",
+                actor_label="Django system",
+            )
+            return approval_decision
 
         if locked.status != ApprovalRequest.Status.PENDING:
             raise DomainConflictError(
@@ -162,7 +206,7 @@ def decide_approval(
         locked.resolved_at = now
         locked.save(update_fields=["status", "resolved_at", "updated_at"])
 
-        return ApprovalDecision.objects.create(
+        approval_decision = ApprovalDecision.objects.create(
             approval_request=locked,
             decision=decision,
             source_type=ApprovalDecision.SourceType.HUMAN,
@@ -171,6 +215,14 @@ def decide_approval(
             decided_by_label_source="unverified_pre_auth",
             notes=notes,
         )
+        _emit_approval_decision_audit(
+            approval_request=locked,
+            approval_decision=approval_decision,
+            actor_type=AuditEvent.ActorType.UNKNOWN,
+            actor_id="",
+            actor_label=actor_label or "Unauthenticated public API",
+        )
+        return approval_decision
 
 
 # ---------------------------------------------------------------------------
@@ -228,3 +280,34 @@ def _check_runner_ownership(
             code="claim_token_mismatch",
             detail="Claim token is invalid.",
         )
+
+
+def _emit_approval_decision_audit(
+    *,
+    approval_request: ApprovalRequest,
+    approval_decision: ApprovalDecision,
+    actor_type: str,
+    actor_id: str,
+    actor_label: str,
+) -> None:
+    event_type = {
+        ApprovalDecision.Decision.APPROVED: "approval.approved",
+        ApprovalDecision.Decision.REJECTED: "approval.rejected",
+        ApprovalDecision.Decision.TIMED_OUT: "approval.timed_out",
+    }[approval_decision.decision]
+    AuditService.emit(
+        organization_id=approval_request.organization_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_label=actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.APPROVAL_DECISION,
+        object_id=approval_decision.id,
+        metadata={
+            "approval_request_id": str(approval_request.id),
+            "execution_id": str(approval_request.execution_id),
+            "step_id": str(approval_request.step_id),
+            "decision": approval_decision.decision,
+            "notes_present": bool(approval_decision.notes),
+        },
+    )
