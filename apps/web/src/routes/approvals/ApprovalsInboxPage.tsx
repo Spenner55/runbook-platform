@@ -179,7 +179,7 @@ export function ApprovalsInboxPage() {
         </p>
       </div>
 
-      <div className="stack-md">
+      <div className="filter-row">
         <div className="field">
           <label className="field__label" htmlFor="status-filter">
             Status

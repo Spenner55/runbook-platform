@@ -151,7 +151,7 @@ export function PoliciesPage() {
         </p>
       </div>
 
-      <div className="stack-md">
+      <div className="filter-row">
         <div className="field">
           <label className="field__label" htmlFor="active-filter">
             Show
