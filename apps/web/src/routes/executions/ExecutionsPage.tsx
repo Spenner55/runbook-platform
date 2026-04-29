@@ -75,7 +75,10 @@ export function ExecutionsPage() {
                 <td>{formatDateTime(execution.started_at)}</td>
                 <td>{formatDateTime(execution.finished_at)}</td>
                 <td>
-                  <Link className="button button--ghost button--sm" to={`/executions/${execution.id}`}>
+                  <Link
+                    className="button button--ghost button--sm"
+                    to={`/executions/${execution.id}`}
+                  >
                     View
                   </Link>
                 </td>
@@ -86,7 +89,9 @@ export function ExecutionsPage() {
       ) : null}
 
       {!executionsQuery.isLoading && !executionsQuery.error && !executionsQuery.data?.length ? (
-        <p className="muted">No executions{statusFilter !== 'all' ? ` with status "${statusFilter}"` : ''} yet.</p>
+        <p className="muted">
+          No executions{statusFilter !== 'all' ? ` with status "${statusFilter}"` : ''} yet.
+        </p>
       ) : null}
     </section>
   )

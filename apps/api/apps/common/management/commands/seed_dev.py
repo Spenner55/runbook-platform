@@ -16,7 +16,7 @@ Usage:
 import hashlib
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -283,7 +283,7 @@ class Command(BaseCommand):
         self._seed_execution_cancelled()
 
     def _seed_execution_succeeded(self):
-        from apps.executions.models import Execution, ExecutionStep
+        from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
         snap = wf.definition
@@ -314,7 +314,7 @@ class Command(BaseCommand):
             self._seed_artifact(ex)
 
     def _seed_execution_failed(self):
-        from apps.executions.models import Execution, ExecutionStep
+        from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
         snap = wf.definition
@@ -366,7 +366,7 @@ class Command(BaseCommand):
         self._report("Execution", f"RUNNING/awaiting-approval [{ex.id}]", created)
 
         if created:
-            step1 = ExecutionStep.objects.create(
+            ExecutionStep.objects.create(
                 execution=ex,
                 position=0,
                 step_key="page-oncall",

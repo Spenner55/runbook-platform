@@ -10,18 +10,14 @@ function getNavClassName({ isActive }: { isActive: boolean }) {
 export function AppLayout() {
   const { user, activeOrganizationId } = useAuth()
 
-  const activeMembership = user?.memberships.find(
-    (m) => m.organization.id === activeOrganizationId
-  )
+  const activeMembership = user?.memberships.find((m) => m.organization.id === activeOrganizationId)
 
   return (
     <div className="app-shell">
       <header className="app-shell__header">
         <div className="app-shell__branding">
           <h1>Runbook Platform</h1>
-          {activeMembership ? (
-            <p className="muted">{activeMembership.organization.name}</p>
-          ) : null}
+          {activeMembership ? <p className="muted">{activeMembership.organization.name}</p> : null}
         </div>
 
         <AuthStatus />

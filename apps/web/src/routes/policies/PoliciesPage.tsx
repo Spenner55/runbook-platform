@@ -49,10 +49,7 @@ function PolicyRow({ policy, organizationId, onUpdated }: PolicyRowProps) {
           <span className={policy.is_active ? 'pill pill--success' : 'pill'}>
             {policy.is_active ? 'active' : 'inactive'}
           </span>
-          <button
-            className="btn"
-            onClick={() => navigate(`/policies/${policy.id}`)}
-          >
+          <button className="btn" onClick={() => navigate(`/policies/${policy.id}`)}>
             Manage rules
           </button>
           <button className="btn" disabled={updateMutation.isPending} onClick={handleToggleActive}>
