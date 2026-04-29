@@ -84,7 +84,9 @@ describe('WorkflowReviewPage', () => {
 
     const user = userEvent.setup()
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Accept workflow' })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Accept workflow' })
+      ).toBeInTheDocument()
     })
 
     await user.click(screen.getByRole('button', { name: 'Accept workflow' }))
@@ -114,7 +116,9 @@ describe('WorkflowReviewPage', () => {
 
     const user = userEvent.setup()
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Reject workflow' })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: 'Reject workflow' })
+      ).toBeInTheDocument()
     })
 
     await user.click(screen.getByRole('button', { name: 'Reject workflow' }))
