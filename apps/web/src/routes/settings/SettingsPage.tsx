@@ -3,9 +3,7 @@ import { useAuth } from '../../features/auth/context/useAuth'
 export function SettingsPage() {
   const { user, activeOrganizationId } = useAuth()
 
-  const activeMembership = user?.memberships.find(
-    (m) => m.organization.id === activeOrganizationId
-  )
+  const activeMembership = user?.memberships.find((m) => m.organization.id === activeOrganizationId)
 
   return (
     <section className="panel stack-lg">

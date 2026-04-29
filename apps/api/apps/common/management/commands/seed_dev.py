@@ -306,9 +306,25 @@ class Command(BaseCommand):
 
         if created:
             step_data = [
-                ("check-health", "Pre-deploy health check", "low", False, 0, "succeeded", 0),
+                (
+                    "check-health",
+                    "Pre-deploy health check",
+                    "low",
+                    False,
+                    0,
+                    "succeeded",
+                    0,
+                ),
                 ("deploy", "Run deployment script", "high", True, 1, "succeeded", 0),
-                ("smoke-test", "Post-deploy smoke test", "low", False, 2, "succeeded", 0),
+                (
+                    "smoke-test",
+                    "Post-deploy smoke test",
+                    "low",
+                    False,
+                    2,
+                    "succeeded",
+                    0,
+                ),
             ]
             self._create_steps(ex, step_data)
             self._seed_artifact(ex)
@@ -337,11 +353,31 @@ class Command(BaseCommand):
 
         if created:
             step_data = [
-                ("check-health", "Pre-deploy health check", "low", False, 0, "succeeded", 0),
+                (
+                    "check-health",
+                    "Pre-deploy health check",
+                    "low",
+                    False,
+                    0,
+                    "succeeded",
+                    0,
+                ),
                 ("deploy", "Run deployment script", "high", True, 1, "failed", 1),
-                ("smoke-test", "Post-deploy smoke test", "low", False, 2, "skipped", None),
+                (
+                    "smoke-test",
+                    "Post-deploy smoke test",
+                    "low",
+                    False,
+                    2,
+                    "skipped",
+                    None,
+                ),
             ]
-            self._create_steps(ex, step_data, fail_message="Script exited with code 1: permission denied on /app/deploy")
+            self._create_steps(
+                ex,
+                step_data,
+                fail_message="Script exited with code 1: permission denied on /app/deploy",
+            )
 
     def _seed_execution_waiting_approval(self):
         from apps.approvals.models import ApprovalRequest
@@ -441,7 +477,9 @@ class Command(BaseCommand):
             defaults={
                 "workflow_snapshot": snap,
                 "started_at": timezone.now() - timedelta(days=1),
-                "finished_at": timezone.now() - timedelta(days=1) + timedelta(minutes=1),
+                "finished_at": timezone.now()
+                - timedelta(days=1)
+                + timedelta(minutes=1),
                 "claimed_by_runner_id": "seed-runner-01",
                 "claim_token": uuid.uuid4(),
                 "claimed_at": timezone.now() - timedelta(days=1),
@@ -454,7 +492,15 @@ class Command(BaseCommand):
 
         snap_steps = execution.workflow_snapshot.get("steps", [])
 
-        for step_key, name, risk, requires_approval, pos, status, exit_code in step_data:
+        for (
+            step_key,
+            name,
+            risk,
+            requires_approval,
+            pos,
+            status,
+            exit_code,
+        ) in step_data:
             snap = next((s for s in snap_steps if s["id"] == step_key), {})
             finished = None
             started = None
@@ -600,7 +646,11 @@ class Command(BaseCommand):
             type=IntegrationConnection.Type.GENERIC_WEBHOOK,
             name="Seed Generic Webhook",
             config={"url": "https://webhook.example.invalid/hook"},
-            event_types=["execution.started", "execution.finished", "artifact.uploaded"],
+            event_types=[
+                "execution.started",
+                "execution.finished",
+                "artifact.uploaded",
+            ],
             is_active=True,
         )
         try:

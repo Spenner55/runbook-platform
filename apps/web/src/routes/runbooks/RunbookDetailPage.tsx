@@ -70,10 +70,7 @@ export function RunbookDetailPage() {
         <div className="actions-row">
           <h3>Workflows</h3>
           <div>
-            <Link
-              className="button button--secondary"
-              to={`/workflows/new?runbookId=${runbookId}`}
-            >
+            <Link className="button button--secondary" to={`/workflows/new?runbookId=${runbookId}`}>
               Generate workflow (AI)
             </Link>
           </div>
