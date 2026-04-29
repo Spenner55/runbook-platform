@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -24,6 +24,14 @@ class RunnerSettings(BaseModel):
     log_level: str = "INFO"
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def validate_registration_token(self) -> RunnerSettings:
+        if self.registration_token.strip() in {"", "change-me"}:
+            raise ValueError(
+                "RUNNER_REGISTRATION_TOKEN must be set to a non-placeholder value."
+            )
+        return self
 
     @classmethod
     def from_env(cls) -> RunnerSettings:

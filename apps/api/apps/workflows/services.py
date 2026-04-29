@@ -7,6 +7,8 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
+from apps.audit.models import AuditEvent
+from apps.audit.services import AuditActor, AuditService, system_actor
 from apps.common.exceptions import (
     ConcurrencyConflictError,
     DomainConflictError,
@@ -32,6 +34,7 @@ def create_workflow(
     transform_client,
     requires_review: bool = False,
     parse_source: str = Workflow.ParseSource.MANUAL,
+    actor: AuditActor | None = None,
 ) -> Workflow:
     """
     Create a draft Workflow from a Runbook via the transform client boundary.
@@ -61,7 +64,7 @@ def create_workflow(
                 )["max_version"]
                 or 0
             )
-            return Workflow.objects.create(
+            workflow = Workflow.objects.create(
                 organization=locked_runbook.organization,
                 runbook=locked_runbook,
                 name=candidate.workflow_title,
@@ -72,6 +75,19 @@ def create_workflow(
                 requires_review=requires_review,
                 parse_source=parse_source,
             )
+            _emit_workflow_audit(
+                workflow=workflow,
+                event_type="workflow.created",
+                actor=actor,
+                metadata={
+                    "runbook_id": str(locked_runbook.id),
+                    "version": workflow.version,
+                    "status": workflow.status,
+                    "requires_review": workflow.requires_review,
+                    "parse_source": workflow.parse_source,
+                },
+            )
+            return workflow
     except IntegrityError as exc:
         raise ConcurrencyConflictError(
             code="workflow_version_conflict",
@@ -79,7 +95,9 @@ def create_workflow(
         ) from exc
 
 
-def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
+def create_workflow_from_runbook(
+    *, runbook: Runbook, actor: AuditActor | None = None
+) -> Workflow:
     """Create a draft Workflow via the AI service boundary with input guard."""
     from apps.workflows.internal_clients import HttpWorkflowTransformClient
 
@@ -98,82 +116,152 @@ def create_workflow_from_runbook(*, runbook: Runbook) -> Workflow:
         transform_client=HttpWorkflowTransformClient.from_settings(),
         requires_review=True,
         parse_source=Workflow.ParseSource.AI_PARSE,
+        actor=actor,
     )
 
 
-def accept_review(*, workflow: Workflow) -> Workflow:
+def accept_review(
+    *, workflow: Workflow, actor: AuditActor | None = None
+) -> Workflow:
     """Clear the requires_review flag on a workflow, allowing it to be published."""
-    if not workflow.requires_review:
-        raise InvalidStateTransitionError(
-            code="workflow_not_pending_review",
-            detail="Workflow is not pending review.",
-        )
-    if workflow.status != Workflow.Status.DRAFT:
-        raise InvalidStateTransitionError(
-            code="invalid_state_transition",
-            detail=f"Cannot accept review for workflow with status '{workflow.status}', expected 'draft'.",
-        )
-    workflow.requires_review = False
-    workflow.save(update_fields=["requires_review", "updated_at"])
-    return workflow
-
-
-def reject_review(*, workflow: Workflow) -> Workflow:
-    """Archive an AI-parsed workflow that failed human review."""
-    if not workflow.requires_review:
-        raise InvalidStateTransitionError(
-            code="workflow_not_pending_review",
-            detail="Workflow is not pending review.",
-        )
-    if workflow.status != Workflow.Status.DRAFT:
-        raise InvalidStateTransitionError(
-            code="invalid_state_transition",
-            detail=f"Cannot reject review for workflow with status '{workflow.status}', expected 'draft'.",
-        )
-    workflow.status = Workflow.Status.ARCHIVED
-    workflow.requires_review = False
-    workflow.save(update_fields=["status", "requires_review", "updated_at"])
-    return workflow
-
-
-def publish_workflow(*, workflow: Workflow) -> Workflow:
-    """Transition a draft workflow to published status, superseding any currently published sibling."""
-    if workflow.requires_review:
-        raise DomainConflictError(
-            code="workflow_requires_review",
-            detail="Workflow requires human review before it can be published.",
-        )
-    if workflow.status != Workflow.Status.DRAFT:
-        raise InvalidStateTransitionError(
-            code="invalid_state_transition",
-            detail=f"Cannot publish workflow with status '{workflow.status}', expected 'draft'.",
-        )
     with transaction.atomic():
+        workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
+        if not workflow.requires_review:
+            raise InvalidStateTransitionError(
+                code="workflow_not_pending_review",
+                detail="Workflow is not pending review.",
+            )
+        if workflow.status != Workflow.Status.DRAFT:
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail=f"Cannot accept review for workflow with status '{workflow.status}', expected 'draft'.",
+            )
+        workflow.requires_review = False
+        workflow.save(update_fields=["requires_review", "updated_at"])
+        _emit_workflow_audit(
+            workflow=workflow,
+            event_type="workflow.review_accepted",
+            actor=actor,
+            metadata={"runbook_id": str(workflow.runbook_id)},
+        )
+    return workflow
+
+
+def reject_review(
+    *, workflow: Workflow, actor: AuditActor | None = None
+) -> Workflow:
+    """Archive an AI-parsed workflow that failed human review."""
+    with transaction.atomic():
+        workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
+        if not workflow.requires_review:
+            raise InvalidStateTransitionError(
+                code="workflow_not_pending_review",
+                detail="Workflow is not pending review.",
+            )
+        if workflow.status != Workflow.Status.DRAFT:
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail=f"Cannot reject review for workflow with status '{workflow.status}', expected 'draft'.",
+            )
+        workflow.status = Workflow.Status.ARCHIVED
+        workflow.requires_review = False
+        workflow.save(update_fields=["status", "requires_review", "updated_at"])
+        _emit_workflow_audit(
+            workflow=workflow,
+            event_type="workflow.review_rejected",
+            actor=actor,
+            metadata={
+                "runbook_id": str(workflow.runbook_id),
+                "new_status": workflow.status,
+            },
+        )
+    return workflow
+
+
+def publish_workflow(
+    *, workflow: Workflow, actor: AuditActor | None = None
+) -> Workflow:
+    """Transition a draft workflow to published status, superseding any currently published sibling."""
+    with transaction.atomic():
+        workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
+        if workflow.requires_review:
+            raise DomainConflictError(
+                code="workflow_requires_review",
+                detail="Workflow requires human review before it can be published.",
+            )
+        if workflow.status != Workflow.Status.DRAFT:
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail=f"Cannot publish workflow with status '{workflow.status}', expected 'draft'.",
+            )
         Workflow.objects.filter(
             runbook=workflow.runbook,
             status=Workflow.Status.PUBLISHED,
         ).exclude(pk=workflow.pk).update(status=Workflow.Status.SUPERSEDED)
+        previous_status = workflow.status
         workflow.status = Workflow.Status.PUBLISHED
         workflow.save(update_fields=["status", "updated_at"])
+        _emit_workflow_audit(
+            workflow=workflow,
+            event_type="workflow.published",
+            actor=actor,
+            metadata={
+                "runbook_id": str(workflow.runbook_id),
+                "previous_status": previous_status,
+                "new_status": workflow.status,
+                "version": workflow.version,
+            },
+        )
     return workflow
 
 
-def archive_workflow(*, workflow: Workflow) -> Workflow:
+def archive_workflow(
+    *, workflow: Workflow, actor: AuditActor | None = None
+) -> Workflow:
     """Transition a draft or superseded workflow to archived status."""
-    allowed = {Workflow.Status.DRAFT, Workflow.Status.SUPERSEDED}
-    if workflow.status not in allowed:
-        raise InvalidStateTransitionError(
-            code="invalid_state_transition",
-            detail=f"Cannot archive workflow with status '{workflow.status}'.",
+    with transaction.atomic():
+        workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
+        allowed = {Workflow.Status.DRAFT, Workflow.Status.SUPERSEDED}
+        if workflow.status not in allowed:
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail=f"Cannot archive workflow with status '{workflow.status}'.",
+            )
+        previous_status = workflow.status
+        workflow.status = Workflow.Status.ARCHIVED
+        workflow.save(update_fields=["status", "updated_at"])
+        _emit_workflow_audit(
+            workflow=workflow,
+            event_type="workflow.archived",
+            actor=actor,
+            metadata={
+                "runbook_id": str(workflow.runbook_id),
+                "previous_status": previous_status,
+                "new_status": workflow.status,
+            },
         )
-    workflow.status = Workflow.Status.ARCHIVED
-    workflow.save(update_fields=["status", "updated_at"])
     return workflow
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _emit_workflow_audit(
+    *, workflow: Workflow, event_type: str, actor: AuditActor | None, metadata: dict
+) -> None:
+    audit_actor = actor or system_actor("Workflow service")
+    AuditService.emit(
+        organization_id=workflow.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.WORKFLOW,
+        object_id=workflow.id,
+        metadata=metadata,
+    )
 
 
 def _validate_candidate(candidate: WorkflowCandidate) -> None:

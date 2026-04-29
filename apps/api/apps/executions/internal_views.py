@@ -16,6 +16,8 @@ from rest_framework.views import APIView
 
 from apps.approvals import services as approval_services
 from apps.approvals.models import ApprovalRequest
+from apps.common.authentication import RunnerBearerTokenAuthentication
+from apps.common.permissions import IsRunnerAuthenticated
 from apps.executions import services
 from apps.executions.internal_serializers import (
     ApprovalStatusRequestSerializer,
@@ -34,7 +36,12 @@ from apps.policies import services as policy_services
 logger = logging.getLogger(__name__)
 
 
-class ClaimNextExecutionView(APIView):
+class RunnerInternalAPIView(APIView):
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+
+class ClaimNextExecutionView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/claim-next/"""
 
     def post(self, request):
@@ -56,7 +63,7 @@ class ClaimNextExecutionView(APIView):
         )
 
 
-class ExecutionHeartbeatView(APIView):
+class ExecutionHeartbeatView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/<execution_id>/heartbeat/"""
 
     def post(self, request, execution_id):
@@ -80,7 +87,7 @@ class ExecutionHeartbeatView(APIView):
         )
 
 
-class ExecutionStepUpdateView(APIView):
+class ExecutionStepUpdateView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/<execution_id>/steps/<step_id>/update/"""
 
     def post(self, request, execution_id, step_id):
@@ -110,7 +117,7 @@ class ExecutionStepUpdateView(APIView):
         )
 
 
-class ExecutionCompleteView(APIView):
+class ExecutionCompleteView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/<execution_id>/complete/"""
 
     def post(self, request, execution_id):
@@ -134,7 +141,7 @@ class ExecutionCompleteView(APIView):
         )
 
 
-class ExecutionStepStartView(APIView):
+class ExecutionStepStartView(RunnerInternalAPIView):
     """
     POST /api/v1/internal/executions/<execution_id>/steps/<step_id>/start/
 
@@ -280,7 +287,7 @@ class ExecutionStepStartView(APIView):
             )
 
 
-class ApprovalStatusView(APIView):
+class ApprovalStatusView(RunnerInternalAPIView):
     """
     POST /api/v1/internal/executions/<execution_id>/steps/<step_id>/approval-status/
 

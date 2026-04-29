@@ -58,4 +58,6 @@ class ApprovalRequestSerializer(serializers.ModelSerializer):
 class DecideApprovalSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     notes = serializers.CharField(required=False, allow_blank=True, default="")
-    actor_display_name = serializers.CharField(max_length=255)
+    actor_display_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, write_only=True
+    )

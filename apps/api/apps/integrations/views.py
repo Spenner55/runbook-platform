@@ -2,10 +2,16 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.services import actor_from_request
+from apps.common.org_context import require_organization_id
+from apps.common.permissions import (
+    assert_organization_admin,
+    assert_organization_member,
+)
 from apps.integrations.models import (
     IntegrationConnection,
     IntegrationDeliveryAttempt,
@@ -22,17 +28,7 @@ from apps.organizations.models import Organization
 
 
 def _organization_id_from_request(request):
-    organization_id = request.query_params.get("organization_id")
-    if not organization_id:
-        raise ValidationError(
-            {
-                "organization_id": [
-                    "organization_id is required.",
-                ]
-            },
-            code="invalid_query_params",
-        )
-    return organization_id
+    return require_organization_id(request)
 
 
 def _connection_queryset():
@@ -43,6 +39,7 @@ def _connection_queryset():
 
 def _connection_for_request(request, integration_id):
     organization_id = _organization_id_from_request(request)
+    assert_organization_member(user=request.user, organization_id=organization_id)
     return get_object_or_404(
         _connection_queryset(),
         pk=integration_id,
@@ -76,8 +73,11 @@ def _normalise_optional_json_inputs(data, *, include_defaults=False):
 
 
 class IntegrationConnectionListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         organization_id = _organization_id_from_request(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
         qs = _connection_queryset().filter(organization_id=organization_id)
         return Response(IntegrationConnectionSerializer(qs, many=True).data)
 
@@ -88,7 +88,10 @@ class IntegrationConnectionListCreateView(APIView):
         serializer = IntegrationConnectionCreateSerializer(data=input_data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        organization = get_object_or_404(Organization, pk=data["organization_id"])
+        organization = get_object_or_404(
+            Organization, pk=_organization_id_from_request(request)
+        )
+        assert_organization_admin(user=request.user, organization_id=organization.id)
 
         try:
             connection = IntegrationService.create_connection(
@@ -110,12 +113,17 @@ class IntegrationConnectionListCreateView(APIView):
 
 
 class IntegrationConnectionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, integration_id):
         connection = _connection_for_request(request, integration_id)
         return Response(IntegrationConnectionSerializer(connection).data)
 
     def patch(self, request, integration_id):
         connection = _connection_for_request(request, integration_id)
+        assert_organization_admin(
+            user=request.user, organization_id=connection.organization_id
+        )
         input_data = _normalise_optional_json_inputs(request.data)
         serializer = IntegrationConnectionUpdateSerializer(data=input_data)
         serializer.is_valid(raise_exception=True)
@@ -136,10 +144,15 @@ class IntegrationConnectionDetailView(APIView):
 
 
 class IntegrationDeactivateView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request, integration_id):
         serializer = IntegrationDeactivateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         connection = _connection_for_request(request, integration_id)
+        assert_organization_admin(
+            user=request.user, organization_id=connection.organization_id
+        )
         connection = IntegrationService.deactivate_connection(
             connection=connection,
             actor=actor_from_request(request),
@@ -148,6 +161,8 @@ class IntegrationDeactivateView(APIView):
 
 
 class IntegrationDeliveryAttemptListView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, integration_id):
         connection = _connection_for_request(request, integration_id)
         qs = IntegrationDeliveryAttempt.objects.filter(

@@ -5,11 +5,11 @@ Never exposes storage_key or claim tokens.
 """
 
 import logging
-from uuid import UUID
 
 from django.http import FileResponse
 from rest_framework import status as http_status
 from rest_framework.generics import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -19,34 +19,23 @@ from apps.artifacts.serializers import ArtifactSerializer
 from apps.artifacts.storage import ArtifactStorage
 from apps.audit.services import actor_from_request
 from apps.common.exceptions import DomainValidationError
+from apps.common.org_context import require_organization_id
+from apps.common.permissions import (
+    assert_organization_member,
+)
 from apps.executions.models import Execution
 
 logger = logging.getLogger(__name__)
 
 
-def _require_organization_id(request) -> str:
-    organization_id = request.query_params.get("organization_id") or request.data.get(
-        "organization_id"
-    )
-    if not organization_id:
-        raise DomainValidationError(
-            code="artifact_organization_required",
-            detail="organization_id is required.",
-        )
-    try:
-        return str(UUID(str(organization_id)))
-    except ValueError as exc:
-        raise DomainValidationError(
-            code="artifact_organization_invalid",
-            detail="organization_id must be a UUID.",
-        ) from exc
-
-
 class ExecutionArtifactListView(APIView):
     """GET /api/v1/executions/{execution_id}/artifacts/"""
 
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, execution_id):
-        organization_id = _require_organization_id(request)
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
         execution = get_object_or_404(
             Execution, pk=execution_id, organization_id=organization_id
         )
@@ -90,8 +79,11 @@ class ExecutionArtifactListView(APIView):
 class ArtifactDownloadView(APIView):
     """POST /api/v1/artifacts/{artifact_id}/download/"""
 
+    permission_classes = [IsAuthenticated]
+
     def post(self, request, artifact_id):
-        organization_id = _require_organization_id(request)
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
         artifact = get_object_or_404(
             Artifact,
             pk=artifact_id,
@@ -112,8 +104,11 @@ class ArtifactContentView(APIView):
     disabled or restricted to internal use only.
     """
 
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, artifact_id):
-        organization_id = _require_organization_id(request)
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
         token = request.query_params.get("token")
         if not token:
             raise DomainValidationError(

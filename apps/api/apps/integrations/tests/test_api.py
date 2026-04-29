@@ -1,7 +1,6 @@
 import json
 
 import pytest
-from django.test import Client
 from django.utils import timezone
 
 from apps.integrations.crypto import encrypt_credentials
@@ -10,7 +9,7 @@ from apps.integrations.models import (
     IntegrationDeliveryAttempt,
 )
 from apps.integrations.services import EVENT_EXECUTION_FAILED, IntegrationService
-from apps.organizations.models import Organization
+from apps.organizations.models import MembershipRole, Organization
 
 RAW_WEBHOOK_URL = "https://hooks.example.com/services/raw-secret-token"
 
@@ -41,11 +40,15 @@ def disable_ssrf_validation(monkeypatch):
     )
 
 
+@pytest.fixture
+def client(org, api_client_for_org):
+    return api_client_for_org(org, role=MembershipRole.ADMIN)
+
+
 @pytest.mark.django_db
 def test_list_returns_only_organization_scoped_integrations(
-    org, integration_fernet_key
+    org, integration_fernet_key, client
 ):
-    client = Client()
     other_org = Organization.objects.create(name="Other Corp", slug="other")
     own = _create_connection(
         org=org, integration_fernet_key=integration_fernet_key, name="Own"
@@ -64,9 +67,8 @@ def test_list_returns_only_organization_scoped_integrations(
 
 @pytest.mark.django_db
 def test_create_stores_encrypted_credentials_and_response_excludes_secrets(
-    org, integration_fernet_key, disable_ssrf_validation
+    org, integration_fernet_key, disable_ssrf_validation, client
 ):
-    client = Client()
 
     response = client.post(
         "/api/v1/integrations/",
@@ -95,9 +97,8 @@ def test_create_stores_encrypted_credentials_and_response_excludes_secrets(
 
 @pytest.mark.django_db
 def test_detail_excludes_encrypted_credentials_and_plaintext_url(
-    org, integration_fernet_key
+    org, integration_fernet_key, client
 ):
-    client = Client()
     connection = _create_connection(
         org=org, integration_fernet_key=integration_fernet_key
     )
@@ -117,9 +118,8 @@ def test_detail_excludes_encrypted_credentials_and_plaintext_url(
 
 @pytest.mark.django_db
 def test_deactivate_prevents_future_dispatch(
-    org, integration_fernet_key, monkeypatch, disable_ssrf_validation
+    org, integration_fernet_key, monkeypatch, disable_ssrf_validation, client
 ):
-    client = Client()
     connection = _create_connection(
         org=org, integration_fernet_key=integration_fernet_key
     )
@@ -154,8 +154,7 @@ def test_deactivate_prevents_future_dispatch(
 
 
 @pytest.mark.django_db
-def test_delivery_history_endpoint_returns_attempts(org, integration_fernet_key):
-    client = Client()
+def test_delivery_history_endpoint_returns_attempts(org, integration_fernet_key, client):
     connection = _create_connection(
         org=org, integration_fernet_key=integration_fernet_key
     )
@@ -184,8 +183,7 @@ def test_delivery_history_endpoint_returns_attempts(org, integration_fernet_key)
 
 
 @pytest.mark.django_db
-def test_invalid_webhook_url_returns_validation_error(org, integration_fernet_key):
-    client = Client()
+def test_invalid_webhook_url_returns_validation_error(org, integration_fernet_key, client):
 
     response = client.post(
         "/api/v1/integrations/",
@@ -205,8 +203,7 @@ def test_invalid_webhook_url_returns_validation_error(org, integration_fernet_ke
 
 
 @pytest.mark.django_db
-def test_metadata_endpoint_url_is_blocked(org, integration_fernet_key):
-    client = Client()
+def test_metadata_endpoint_url_is_blocked(org, integration_fernet_key, client):
 
     response = client.post(
         "/api/v1/integrations/",
@@ -227,9 +224,8 @@ def test_metadata_endpoint_url_is_blocked(org, integration_fernet_key):
 
 @pytest.mark.django_db
 def test_serializer_redaction_regression_raw_credential_never_appears_in_response(
-    org, integration_fernet_key, disable_ssrf_validation
+    org, integration_fernet_key, disable_ssrf_validation, client
 ):
-    client = Client()
     create_response = client.post(
         "/api/v1/integrations/",
         data={

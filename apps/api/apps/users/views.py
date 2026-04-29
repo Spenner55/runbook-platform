@@ -1,13 +1,13 @@
 from django.conf import settings
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.users import services
-from apps.users.serializers import LoginSerializer, RegisterSerializer, UserSerializer
+from apps.users.serializers import LoginSerializer, UserSerializer
 
 REFRESH_COOKIE = "refresh_token"
 _COOKIE_SECURE = not getattr(settings, "DEBUG", True)
@@ -19,13 +19,15 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         refresh_token,
         max_age=int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()),
         httponly=True,
-        samesite="Lax",
+        samesite="Strict",
         secure=_COOKIE_SECURE,
         path="/api/v1/auth/",
     )
 
 
 class LoginView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -41,7 +43,7 @@ class LoginView(APIView):
         response = Response(
             {
                 "access": str(refresh.access_token),
-                "user": UserSerializer(user).data,
+                "user": UserSerializer(user, context={"request": request}).data,
             }
         )
         _set_refresh_cookie(response, str(refresh))
@@ -49,6 +51,8 @@ class LoginView(APIView):
 
 
 class RefreshView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         raw = request.COOKIES.get(REFRESH_COOKIE)
         if not raw:
@@ -72,6 +76,8 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
         response = Response(status=status.HTTP_204_NO_CONTENT)
         response.delete_cookie(REFRESH_COOKIE, path="/api/v1/auth/")
@@ -82,26 +88,4 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(UserSerializer(request.user).data)
-
-
-class RegisterView(APIView):
-    def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = services.create_user(
-            email=serializer.validated_data["email"],
-            password=serializer.validated_data["password"],
-            first_name=serializer.validated_data.get("first_name", ""),
-            last_name=serializer.validated_data.get("last_name", ""),
-        )
-        refresh = RefreshToken.for_user(user)
-        response = Response(
-            {
-                "access": str(refresh.access_token),
-                "user": UserSerializer(user).data,
-            },
-            status=status.HTTP_201_CREATED,
-        )
-        _set_refresh_cookie(response, str(refresh))
-        return response
+        return Response(UserSerializer(request.user, context={"request": request}).data)

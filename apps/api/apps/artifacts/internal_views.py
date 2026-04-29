@@ -15,12 +15,19 @@ from rest_framework.views import APIView
 
 from apps.artifacts import services as artifact_services
 from apps.artifacts.serializers import ArtifactSerializer, ArtifactUploadSerializer
+from apps.common.authentication import RunnerBearerTokenAuthentication
+from apps.common.permissions import IsRunnerAuthenticated
 from apps.executions.models import Execution, ExecutionStep
 
 logger = logging.getLogger(__name__)
 
 
-class InternalStepArtifactUploadView(APIView):
+class RunnerInternalAPIView(APIView):
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+
+class InternalStepArtifactUploadView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/{execution_id}/steps/{step_id}/artifacts/"""
 
     parser_classes = [MultiPartParser, FormParser]
@@ -51,7 +58,7 @@ class InternalStepArtifactUploadView(APIView):
         )
 
 
-class InternalExecutionArtifactUploadView(APIView):
+class InternalExecutionArtifactUploadView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/{execution_id}/artifacts/"""
 
     parser_classes = [MultiPartParser, FormParser]

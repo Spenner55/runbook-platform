@@ -2,23 +2,33 @@ from urllib.parse import urlencode
 
 from django.db.models import Q
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.models import AuditEvent
 from apps.audit.serializers import AuditEventListQuerySerializer, AuditEventSerializer
+from apps.common.org_context import require_organization_id
+from apps.common.permissions import assert_organization_member
 
 
 class AuditEventListView(APIView):
     """GET /api/v1/audit/"""
 
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        serializer = AuditEventListQuerySerializer(data=request.query_params)
+        query_data = request.query_params.copy()
+        query_data["organization_id"] = require_organization_id(request)
+        serializer = AuditEventListQuerySerializer(data=query_data)
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
 
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
+        assert_organization_member(
+            user=request.user, organization_id=params["organization_id"]
+        )
         qs = build_audit_queryset(params)
         count = qs.count()
         results = list(qs[offset : offset + limit])
@@ -38,8 +48,11 @@ class AuditEventListView(APIView):
 class ExecutionAuditEventListView(APIView):
     """GET /api/v1/executions/<execution_id>/audit/"""
 
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, execution_id):
         query_data = request.query_params.copy()
+        query_data["organization_id"] = require_organization_id(request)
         query_data["object_type"] = AuditEvent.ObjectType.EXECUTION
         query_data["object_id"] = str(execution_id)
         serializer = AuditEventListQuerySerializer(data=query_data)
@@ -49,6 +62,9 @@ class ExecutionAuditEventListView(APIView):
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
         organization_id = params["organization_id"]
+        assert_organization_member(
+            user=request.user, organization_id=organization_id
+        )
         qs = execution_audit_queryset(
             organization_id=organization_id,
             execution_id=execution_id,

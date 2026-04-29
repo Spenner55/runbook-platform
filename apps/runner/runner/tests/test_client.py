@@ -39,6 +39,7 @@ def make_client(transport: httpx.MockTransport) -> ApiClient:
     return ApiClient(
         base_url="http://api:8000",
         runner_id="test-runner",
+        runner_token="test-runner-token",
         runner_version="0.1.0",
         http_client=http,
     )
@@ -119,6 +120,24 @@ def test_claim_next_sends_correct_url_and_method():
     assert captured["method"] == "POST"
     assert captured["path"] == "/api/v1/internal/executions/claim-next/"
     assert captured["runner_id"] == "test-runner"
+
+
+def test_claim_next_sends_runner_bearer_token():
+    captured = {}
+    body = {"execution": None, "poll_after_seconds": 5}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["authorization"] = request.headers.get("Authorization")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.claim_next()
+
+    assert captured["authorization"] == "Bearer test-runner-token"
 
 
 def test_claim_next_raises_on_non_2xx():
@@ -429,6 +448,7 @@ def test_upload_artifact_sends_multipart_shape():
     def handler(request: httpx.Request) -> httpx.Response:
         captured["method"] = request.method
         captured["path"] = request.url.path
+        captured["authorization"] = request.headers.get("Authorization")
         captured["content_type"] = request.headers["content-type"]
         body_text = request.content.decode()
         captured["body"] = body_text
@@ -456,6 +476,7 @@ def test_upload_artifact_sends_multipart_shape():
     assert captured["path"] == (
         f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/artifacts/"
     )
+    assert captured["authorization"] == "Bearer test-runner-token"
     assert "multipart/form-data" in captured["content_type"]
     assert 'name="runner_id"' in captured["body"]
     assert "test-runner" in captured["body"]

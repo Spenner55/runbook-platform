@@ -5,7 +5,12 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
-from apps.audit.services import AuditActor, AuditService, system_actor
+from apps.audit.services import (
+    AuditActor,
+    AuditService,
+    actor_from_runner,
+    system_actor,
+)
 from apps.common.exceptions import (
     DomainValidationError,
     InvalidStateTransitionError,
@@ -232,11 +237,12 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                 "updated_at",
             ]
         )
+        audit_actor = actor_from_runner(runner_id)
         AuditService.emit(
             organization_id=execution.organization_id,
-            actor_type=AuditEvent.ActorType.RUNNER,
-            actor_id=runner_id,
-            actor_label=runner_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
             event_type="execution.claimed",
             object_type=AuditEvent.ObjectType.EXECUTION,
             object_id=execution.id,
@@ -461,11 +467,12 @@ def complete_execution(
         execution.save(
             update_fields=["status", "finished_at", "started_at", "updated_at"]
         )
+        audit_actor = actor_from_runner(runner_id)
         AuditService.emit(
             organization_id=execution.organization_id,
-            actor_type=AuditEvent.ActorType.RUNNER,
-            actor_id=runner_id,
-            actor_label=runner_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
             event_type="execution.completed"
             if outcome == Execution.Status.SUCCEEDED
             else "execution.failed",
@@ -549,11 +556,12 @@ def _emit_step_transition_audit(
         "exit_code": step.exit_code,
         "error_message": safe_error,
     }
+    audit_actor = actor_from_runner(runner_id)
     AuditService.emit(
         organization_id=execution.organization_id,
-        actor_type=AuditEvent.ActorType.RUNNER,
-        actor_id=runner_id,
-        actor_label=runner_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
         event_type=event_type,
         object_type=AuditEvent.ObjectType.EXECUTION_STEP,
         object_id=step.id,

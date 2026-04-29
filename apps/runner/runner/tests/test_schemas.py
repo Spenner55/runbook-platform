@@ -24,7 +24,11 @@ from runner.schemas import (
 
 
 def test_runner_settings_defaults():
-    s = RunnerSettings(api_base_url="http://api:8000", runner_id="r1")
+    s = RunnerSettings(
+        api_base_url="http://api:8000",
+        runner_id="r1",
+        registration_token="runner-secret",
+    )
     assert s.runner_version == "0.1.0"
     assert s.poll_interval_seconds == 5
     assert s.heartbeat_interval_seconds == 10
@@ -33,18 +37,35 @@ def test_runner_settings_defaults():
 
 def test_runner_settings_rejects_extra_fields():
     with pytest.raises(ValidationError):
-        RunnerSettings(api_base_url="http://x", runner_id="r1", unknown_field="bad")
+        RunnerSettings(
+            api_base_url="http://x",
+            runner_id="r1",
+            registration_token="runner-secret",
+            unknown_field="bad",
+        )
+
+
+@pytest.mark.parametrize("token", ["", "change-me"])
+def test_runner_settings_rejects_missing_or_placeholder_registration_token(token):
+    with pytest.raises(ValidationError):
+        RunnerSettings(
+            api_base_url="http://x",
+            runner_id="r1",
+            registration_token=token,
+        )
 
 
 def test_runner_settings_from_env(monkeypatch):
     monkeypatch.setenv("API_BASE_URL", "http://my-api:9000")
     monkeypatch.setenv("RUNNER_ID", "test-runner")
     monkeypatch.setenv("RUNNER_VERSION", "1.2.3")
+    monkeypatch.setenv("RUNNER_REGISTRATION_TOKEN", "runner-secret")
     monkeypatch.setenv("RUNNER_POLL_INTERVAL_SECONDS", "15")
     s = RunnerSettings.from_env()
     assert s.api_base_url == "http://my-api:9000"
     assert s.runner_id == "test-runner"
     assert s.runner_version == "1.2.3"
+    assert s.registration_token == "runner-secret"
     assert s.poll_interval_seconds == 15
 
 

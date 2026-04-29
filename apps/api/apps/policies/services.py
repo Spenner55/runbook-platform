@@ -709,13 +709,7 @@ def _create_policy_evaluation_with_audit(**fields) -> PolicyEvaluation:
 def _emit_policy_audit(
     *, policy: Policy, event_type: str, actor: AuditActor | None, metadata: dict
 ) -> None:
-    audit_actor = actor or system_actor("Unauthenticated public API")
-    if audit_actor.actor_type == AuditEvent.ActorType.SYSTEM:
-        audit_actor = AuditActor(
-            actor_type=AuditEvent.ActorType.UNKNOWN,
-            actor_id=audit_actor.actor_id,
-            actor_label=audit_actor.actor_label,
-        )
+    audit_actor = actor or system_actor("Policy service")
     AuditService.emit(
         organization_id=policy.organization_id,
         actor_type=audit_actor.actor_type,
@@ -731,13 +725,7 @@ def _emit_policy_audit(
 def _emit_policy_rule_audit(
     *, rule: PolicyRule, event_type: str, actor: AuditActor | None, metadata: dict
 ) -> None:
-    audit_actor = actor or system_actor("Unauthenticated public API")
-    if audit_actor.actor_type == AuditEvent.ActorType.SYSTEM:
-        audit_actor = AuditActor(
-            actor_type=AuditEvent.ActorType.UNKNOWN,
-            actor_id=audit_actor.actor_id,
-            actor_label=audit_actor.actor_label,
-        )
+    audit_actor = actor or system_actor("Policy service")
     AuditService.emit(
         organization_id=rule.policy.organization_id,
         actor_type=audit_actor.actor_type,

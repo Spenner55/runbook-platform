@@ -82,6 +82,32 @@ pre {
   box-shadow: var(--shadow);
 }
 
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.auth-panel {
+  width: min(100%, 28rem);
+}
+
+.auth-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.auth-status__email {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+}
+
 .app-shell__branding h1,
 .panel h2,
 .panel h3 {

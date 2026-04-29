@@ -1,7 +1,6 @@
 from unittest.mock import patch
 
 import pytest
-from django.test import Client
 
 from apps.common.exceptions import ConcurrencyConflictError
 from apps.runbooks import services as runbook_services
@@ -36,13 +35,21 @@ def pending_review_workflow(runbook):
     )
 
 
+def _client_for_runbook(api_client_for_org, runbook):
+    return api_client_for_org(runbook.organization)
+
+
+def _client_for_workflow(api_client_for_org, workflow):
+    return api_client_for_org(workflow.organization)
+
+
 # ---------------------------------------------------------------------------
 # Create endpoint
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
-def test_create_workflow_returns_201(runbook):
+def test_create_workflow_returns_201(runbook, api_client_for_org):
     """POST /api/v1/workflows/ creates a workflow via the AI boundary (mocked)."""
     stub_workflow = workflow_services.create_workflow(
         runbook=runbook,
@@ -52,7 +59,7 @@ def test_create_workflow_returns_201(runbook):
         "apps.workflows.views.services.create_workflow_from_runbook",
         return_value=stub_workflow,
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -66,8 +73,8 @@ def test_create_workflow_returns_201(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_invalid_runbook_returns_404():
-    client = Client()
+def test_create_workflow_invalid_runbook_returns_404(org, api_client_for_org):
+    client = api_client_for_org(org)
     response = client.post(
         "/api/v1/workflows/",
         data={"runbook_id": "00000000-0000-0000-0000-000000000000"},
@@ -77,8 +84,8 @@ def test_create_workflow_invalid_runbook_returns_404():
 
 
 @pytest.mark.django_db
-def test_create_workflow_missing_runbook_id_returns_400():
-    client = Client()
+def test_create_workflow_missing_runbook_id_returns_400(org, api_client_for_org):
+    client = api_client_for_org(org)
     response = client.post(
         "/api/v1/workflows/",
         data={},
@@ -89,7 +96,7 @@ def test_create_workflow_missing_runbook_id_returns_400():
 
 
 @pytest.mark.django_db
-def test_create_workflow_version_conflict_returns_409(runbook):
+def test_create_workflow_version_conflict_returns_409(runbook, api_client_for_org):
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=ConcurrencyConflictError(
@@ -97,7 +104,7 @@ def test_create_workflow_version_conflict_returns_409(runbook):
             detail="Workflow version allocation conflicted with another request.",
         ),
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -115,14 +122,14 @@ def test_create_workflow_version_conflict_returns_409(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_ai_unavailable_surfaces_as_503(runbook):
+def test_create_workflow_ai_unavailable_surfaces_as_503(runbook, api_client_for_org):
     from apps.workflows.internal_clients import AiServiceUnavailableError
 
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceUnavailableError("ai unavailable"),
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -135,14 +142,14 @@ def test_create_workflow_ai_unavailable_surfaces_as_503(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_ai_timeout_surfaces_as_503(runbook):
+def test_create_workflow_ai_timeout_surfaces_as_503(runbook, api_client_for_org):
     from apps.workflows.internal_clients import AiServiceTimeoutError
 
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceTimeoutError("timed out"),
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -155,14 +162,14 @@ def test_create_workflow_ai_timeout_surfaces_as_503(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_ai_bad_response_surfaces_as_503(runbook):
+def test_create_workflow_ai_bad_response_surfaces_as_503(runbook, api_client_for_org):
     from apps.workflows.internal_clients import AiServiceBadResponseError
 
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceBadResponseError("bad body"),
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -175,14 +182,14 @@ def test_create_workflow_ai_bad_response_surfaces_as_503(runbook):
 
 
 @pytest.mark.django_db
-def test_create_workflow_ai_contract_error_surfaces_as_503(runbook):
+def test_create_workflow_ai_contract_error_surfaces_as_503(runbook, api_client_for_org):
     from apps.workflows.internal_clients import AiServiceContractError
 
     with patch(
         "apps.workflows.views.services.create_workflow_from_runbook",
         side_effect=AiServiceContractError("missing field"),
     ):
-        client = Client()
+        client = _client_for_runbook(api_client_for_org, runbook)
         response = client.post(
             "/api/v1/workflows/",
             data={"runbook_id": str(runbook.id)},
@@ -200,16 +207,16 @@ def test_create_workflow_ai_contract_error_surfaces_as_503(runbook):
 
 
 @pytest.mark.django_db
-def test_publish_workflow_transitions_to_published(draft_workflow):
-    client = Client()
+def test_publish_workflow_transitions_to_published(draft_workflow, api_client_for_org):
+    client = _client_for_workflow(api_client_for_org, draft_workflow)
     response = client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
     assert response.status_code == 200
     assert response.json()["status"] == "published"
 
 
 @pytest.mark.django_db
-def test_publish_already_published_returns_409(draft_workflow):
-    client = Client()
+def test_publish_already_published_returns_409(draft_workflow, api_client_for_org):
+    client = _client_for_workflow(api_client_for_org, draft_workflow)
     client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
     response = client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
     assert response.status_code == 409
@@ -219,8 +226,10 @@ def test_publish_already_published_returns_409(draft_workflow):
 
 
 @pytest.mark.django_db
-def test_publish_requires_review_returns_409(pending_review_workflow):
-    client = Client()
+def test_publish_requires_review_returns_409(
+    pending_review_workflow, api_client_for_org
+):
+    client = _client_for_workflow(api_client_for_org, pending_review_workflow)
     response = client.post(f"/api/v1/workflows/{pending_review_workflow.id}/publish/")
     assert response.status_code == 409
     body = response.json()
@@ -228,8 +237,10 @@ def test_publish_requires_review_returns_409(pending_review_workflow):
 
 
 @pytest.mark.django_db
-def test_accept_review_clears_requires_review(pending_review_workflow):
-    client = Client()
+def test_accept_review_clears_requires_review(
+    pending_review_workflow, api_client_for_org
+):
+    client = _client_for_workflow(api_client_for_org, pending_review_workflow)
     response = client.post(
         f"/api/v1/workflows/{pending_review_workflow.id}/accept-review/"
     )
@@ -239,8 +250,8 @@ def test_accept_review_clears_requires_review(pending_review_workflow):
 
 
 @pytest.mark.django_db
-def test_accept_review_allows_publish(pending_review_workflow):
-    client = Client()
+def test_accept_review_allows_publish(pending_review_workflow, api_client_for_org):
+    client = _client_for_workflow(api_client_for_org, pending_review_workflow)
     accept_response = client.post(
         f"/api/v1/workflows/{pending_review_workflow.id}/accept-review/"
     )
@@ -254,8 +265,8 @@ def test_accept_review_allows_publish(pending_review_workflow):
 
 
 @pytest.mark.django_db
-def test_reject_review_archives_workflow(pending_review_workflow):
-    client = Client()
+def test_reject_review_archives_workflow(pending_review_workflow, api_client_for_org):
+    client = _client_for_workflow(api_client_for_org, pending_review_workflow)
     response = client.post(
         f"/api/v1/workflows/{pending_review_workflow.id}/reject-review/"
     )
@@ -269,13 +280,13 @@ def test_reject_review_archives_workflow(pending_review_workflow):
 
 
 @pytest.mark.django_db
-def test_publish_supersedes_existing_published_workflow(runbook):
+def test_publish_supersedes_existing_published_workflow(runbook, api_client_for_org):
     """Publishing a new version must supersede the previously published one."""
     stub = StubWorkflowTransformClient()
     wf1 = workflow_services.create_workflow(runbook=runbook, transform_client=stub)
     wf2 = workflow_services.create_workflow(runbook=runbook, transform_client=stub)
 
-    client = Client()
+    client = _client_for_runbook(api_client_for_org, runbook)
     client.post(f"/api/v1/workflows/{wf1.id}/publish/")
     client.post(f"/api/v1/workflows/{wf2.id}/publish/")
 
@@ -291,16 +302,33 @@ def test_publish_supersedes_existing_published_workflow(runbook):
 
 
 @pytest.mark.django_db
-def test_archive_draft_workflow_transitions_to_archived(draft_workflow):
-    client = Client()
+def test_archive_draft_workflow_transitions_to_archived(
+    draft_workflow, api_client_for_org
+):
+    client = _client_for_workflow(api_client_for_org, draft_workflow)
     response = client.post(f"/api/v1/workflows/{draft_workflow.id}/archive/")
     assert response.status_code == 200
     assert response.json()["status"] == "archived"
 
 
 @pytest.mark.django_db
-def test_archive_published_workflow_returns_409(draft_workflow):
-    client = Client()
+def test_archive_published_workflow_returns_409(draft_workflow, api_client_for_org):
+    client = _client_for_workflow(api_client_for_org, draft_workflow)
     client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/")
     response = client.post(f"/api/v1/workflows/{draft_workflow.id}/archive/")
     assert response.status_code == 409
+
+
+@pytest.mark.django_db
+def test_non_member_cannot_read_or_publish_workflow(
+    draft_workflow, org, api_client_for_org
+):
+    other_org = type(org).objects.create(name="Other Corp", slug="other-corp")
+    client = api_client_for_org(other_org)
+
+    assert client.get("/api/v1/workflows/").json() == []
+    assert client.get(f"/api/v1/workflows/{draft_workflow.id}/").status_code == 404
+    assert (
+        client.post(f"/api/v1/workflows/{draft_workflow.id}/publish/").status_code
+        == 404
+    )
