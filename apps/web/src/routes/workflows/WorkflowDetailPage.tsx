@@ -38,8 +38,7 @@ export function WorkflowDetailPage() {
 
       {workflowQuery.data?.requires_review ? (
         <p className="banner banner--warning">
-          AI-generated workflow requires review before it can be published or executed.{' '}
-          <Link to={`/workflows/${workflowId}/review`}>Review now</Link>
+          AI-generated workflow requires review before it can be published or executed.
         </p>
       ) : null}
 
@@ -65,10 +64,16 @@ export function WorkflowDetailPage() {
           </div>
 
           <div className="actions-row">
+            {workflowQuery.data.requires_review ? (
+              <Link className="button" to={`/workflows/${workflowId}/review`}>
+                Review now
+              </Link>
+            ) : null}
+
             {workflowQuery.data.status === 'draft' ? (
               <button
-                className="button"
-                disabled={publishWorkflow.isPending}
+                className="button button--secondary"
+                disabled={publishWorkflow.isPending || workflowQuery.data.requires_review}
                 onClick={handlePublishWorkflow}
                 type="button"
               >

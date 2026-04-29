@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useAuth } from '../../features/auth/context/useAuth'
 import { useCreatePolicy } from '../../features/policies/hooks/useCreatePolicy'
 import { usePolicies } from '../../features/policies/hooks/usePolicies'
 import { useUpdatePolicy } from '../../features/policies/hooks/useUpdatePolicy'
@@ -50,7 +51,7 @@ function PolicyRow({ policy, organizationId, onUpdated }: PolicyRowProps) {
           </span>
           <button
             className="btn"
-            onClick={() => navigate(`/policies/${policy.id}?organization_id=${organizationId}`)}
+            onClick={() => navigate(`/policies/${policy.id}`)}
           >
             Manage rules
           </button>
@@ -133,11 +134,11 @@ function CreatePolicyForm({ organizationId, onCreated, onCancel }: CreatePolicyF
 }
 
 export function PoliciesPage() {
-  const [orgId, setOrgId] = useState('')
+  const { activeOrganizationId } = useAuth()
   const [isActiveFilter, setIsActiveFilter] = useState<'true' | 'false' | 'all'>('all')
   const [showCreateForm, setShowCreateForm] = useState(false)
 
-  const query = usePolicies(orgId || null, isActiveFilter)
+  const query = usePolicies(activeOrganizationId, isActiveFilter)
 
   return (
     <section className="panel stack-lg">
@@ -151,19 +152,6 @@ export function PoliciesPage() {
       </div>
 
       <div className="stack-md">
-        <div className="field">
-          <label className="field__label" htmlFor="org-id">
-            Organization ID
-          </label>
-          <input
-            id="org-id"
-            className="field__input"
-            type="text"
-            value={orgId}
-            onChange={(e) => setOrgId(e.target.value)}
-            placeholder="Paste an organization UUID"
-          />
-        </div>
         <div className="field">
           <label className="field__label" htmlFor="active-filter">
             Show
@@ -181,9 +169,9 @@ export function PoliciesPage() {
         </div>
       </div>
 
-      {!orgId ? <p className="muted">Enter an organization ID to load policies.</p> : null}
+      {!activeOrganizationId ? <p className="muted">No active organization selected.</p> : null}
 
-      {orgId && !showCreateForm ? (
+      {activeOrganizationId && !showCreateForm ? (
         <button
           className="btn btn--primary"
           style={{ alignSelf: 'flex-start' }}
@@ -195,7 +183,7 @@ export function PoliciesPage() {
 
       {showCreateForm ? (
         <CreatePolicyForm
-          organizationId={orgId}
+          organizationId={activeOrganizationId ?? ''}
           onCreated={() => {
             setShowCreateForm(false)
             query.refetch()
@@ -220,7 +208,7 @@ export function PoliciesPage() {
             <PolicyRow
               key={policy.id}
               policy={policy}
-              organizationId={orgId}
+              organizationId={activeOrganizationId ?? ''}
               onUpdated={() => query.refetch()}
             />
           ))}

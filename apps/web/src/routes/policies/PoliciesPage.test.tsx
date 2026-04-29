@@ -40,18 +40,20 @@ describe('PoliciesPage', () => {
     fetchMock.mockReset()
   })
 
-  it('shows prompt when no org id is entered', () => {
+  it('shows prompt when no active organization is selected', () => {
     renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
 
-    expect(screen.getByText(/Enter an organization ID/i)).toBeInTheDocument()
+    expect(screen.getByText(/No active organization selected/i)).toBeInTheDocument()
   })
 
-  it('fetches and renders policy list after entering org id', async () => {
+  it('fetches and renders policy list for the active organization', async () => {
     fetchMock.mockResolvedValue(createJsonResponse({ results: [policy1, policy2] }))
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText('Production Safety Policy')).toBeInTheDocument()
@@ -65,9 +67,11 @@ describe('PoliciesPage', () => {
   it('renders active/inactive status pills', async () => {
     fetchMock.mockResolvedValue(createJsonResponse({ results: [policy1, policy2] }))
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText('active')).toBeInTheDocument()
@@ -79,9 +83,11 @@ describe('PoliciesPage', () => {
   it('shows create policy form when Create policy button is clicked', async () => {
     fetchMock.mockResolvedValue(createJsonResponse({ results: [] }))
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Create policy/i })).toBeInTheDocument()
@@ -102,9 +108,11 @@ describe('PoliciesPage', () => {
       return Promise.resolve(createJsonResponse({ results: [policy1] }))
     })
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Create policy/i })).toBeInTheDocument()
@@ -125,9 +133,11 @@ describe('PoliciesPage', () => {
   it('renders error banner on API failure', async () => {
     fetchMock.mockResolvedValue(createJsonResponse({ detail: 'Forbidden' }, { status: 403 }))
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText(/Forbidden/i)).toBeInTheDocument()
@@ -137,9 +147,11 @@ describe('PoliciesPage', () => {
   it('shows empty state when no policies found', async () => {
     fetchMock.mockResolvedValue(createJsonResponse({ results: [] }))
 
-    renderRoute(<PoliciesPage />, { path: '/policies', route: '/policies' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<PoliciesPage />, {
+      path: '/policies',
+      route: '/policies',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText(/No policies found/i)).toBeInTheDocument()

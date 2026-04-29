@@ -85,6 +85,30 @@ describe('IntegrationDetailPage', () => {
     expect(screen.getByText('HTTP 500')).toBeInTheDocument()
   })
 
+  it('uses the active organization when the detail URL has no organization_id', async () => {
+    fetchMock.mockImplementation((url) => {
+      if (String(url).includes('/delivery-attempts/')) {
+        return Promise.resolve(createJsonResponse({ results: [] }))
+      }
+      return Promise.resolve(createJsonResponse(integration))
+    })
+
+    renderRoute(<IntegrationDetailPage />, {
+      path: '/integrations/:integrationId',
+      route: '/integrations/integration-1',
+      auth: { activeOrganizationId: 'org-1' },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Production alerts')).toBeInTheDocument()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/integrations/integration-1/?organization_id=org-1'),
+      expect.any(Object)
+    )
+  })
+
   it('shows failed delivery row as failed with error summary', async () => {
     fetchMock.mockImplementation((url) => {
       if (String(url).includes('/delivery-attempts/')) {
