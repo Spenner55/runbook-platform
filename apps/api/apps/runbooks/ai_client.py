@@ -50,6 +50,7 @@ class WorkflowCandidateStep:
     step_type: str
     risk_level: str
     requires_approval: bool
+    command: str | None = None
 
 
 @dataclass
@@ -58,6 +59,13 @@ class WorkflowCandidate:
     workflow_title: str
     steps: list[WorkflowCandidateStep]
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExecutionSummary:
+    request_id: str
+    summary: str
+    key_outcomes: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +156,114 @@ class RunbookAiClient:
 
         return _validate_and_map_candidate(data)
 
+    def enrich_workflow_candidate(
+        self,
+        *,
+        request_id: str,
+        workflow_title: str,
+        steps: list[WorkflowCandidateStep],
+        raw_content: str | None = None,
+    ) -> WorkflowCandidate:
+        """
+        Call the AI service to enrich parsed steps with risk and approval metadata.
+        """
+        url = f"{self._base_url}/enrich/workflow"
+        payload = {
+            "request_id": request_id,
+            "workflow_title": workflow_title,
+            "steps": [
+                {
+                    "step_key": s.step_key,
+                    "name": s.name,
+                    "step_type": s.step_type,
+                    "risk_level": s.risk_level,
+                    "requires_approval": s.requires_approval,
+                    **({"command": s.command} if s.command is not None else {}),
+                }
+                for s in steps
+            ],
+            **({"raw_content": raw_content} if raw_content is not None else {}),
+        }
+
+        try:
+            response = self._client.post(url, json=payload)
+        except httpx.ConnectError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service unreachable at {url}: {exc}"
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise AiServiceTimeoutError(
+                f"AI service timed out at {url}: {exc}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service request failed: {exc}"
+            ) from exc
+
+        if response.status_code != 200:
+            raise AiServiceBadResponseError(
+                f"AI service returned HTTP {response.status_code} for {url}"
+            )
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise AiServiceBadResponseError(
+                "AI service returned a non-JSON body"
+            ) from exc
+
+        return _validate_and_map_candidate(data)
+
+    def summarize_execution(
+        self,
+        *,
+        request_id: str,
+        execution_id: str,
+        workflow_title: str,
+        status: str,
+        steps: list[dict],
+    ) -> ExecutionSummary:
+        """
+        Call the AI service to summarize a completed execution.
+        """
+        url = f"{self._base_url}/summarize/execution"
+        payload = {
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "workflow_title": workflow_title,
+            "status": status,
+            "steps": steps,
+        }
+
+        try:
+            response = self._client.post(url, json=payload)
+        except httpx.ConnectError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service unreachable at {url}: {exc}"
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise AiServiceTimeoutError(
+                f"AI service timed out at {url}: {exc}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AiServiceUnavailableError(
+                f"AI service request failed: {exc}"
+            ) from exc
+
+        if response.status_code != 200:
+            raise AiServiceBadResponseError(
+                f"AI service returned HTTP {response.status_code} for {url}"
+            )
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise AiServiceBadResponseError(
+                "AI service returned a non-JSON body"
+            ) from exc
+
+        return _validate_and_map_summary(data)
+
     def close(self) -> None:
         self._client.close()
 
@@ -155,6 +271,23 @@ class RunbookAiClient:
 # ---------------------------------------------------------------------------
 # Response validation / mapping
 # ---------------------------------------------------------------------------
+
+
+def _validate_and_map_summary(data: object) -> ExecutionSummary:
+    """Validate raw summary response and return a typed ExecutionSummary."""
+    if not isinstance(data, dict):
+        raise AiServiceContractError("AI summary response is not a JSON object")
+
+    summary = data.get("summary", "")
+    if not isinstance(summary, str):
+        raise AiServiceContractError("AI summary response 'summary' must be a string")
+
+    key_outcomes = data.get("key_outcomes", [])
+    return ExecutionSummary(
+        request_id=data.get("request_id", ""),
+        summary=summary,
+        key_outcomes=key_outcomes if isinstance(key_outcomes, list) else [],
+    )
 
 
 def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
@@ -194,6 +327,7 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
         if step_key in seen_keys:
             raise AiServiceContractError(f"Duplicate step_key: '{step_key}'")
 
+        command = raw_step.get("command")
         seen_keys.add(step_key)
         steps.append(
             WorkflowCandidateStep(
@@ -202,6 +336,7 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
                 step_type=step_type,
                 risk_level=risk_level,
                 requires_approval=bool(requires_approval),
+                command=command if isinstance(command, str) else None,
             )
         )
 

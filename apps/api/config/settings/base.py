@@ -104,6 +104,8 @@ CORS_ALLOWED_ORIGINS = [
 
 # AI service settings
 AI_BASE_URL = env("AI_BASE_URL", default="http://ai:8001")
+# Model selection is a human decision — no default. Must be set explicitly when LLM parsing is enabled.
+AI_PARSE_MODEL = env("AI_PARSE_MODEL", default="")
 
 # Integration settings
 INTEGRATION_FERNET_KEY = env("INTEGRATION_FERNET_KEY", default="")
@@ -154,6 +156,7 @@ if ARTIFACT_STORAGE_BACKEND == "s3" and (
         "ARTIFACT_STORAGE_BACKEND=s3."
     )
 AI_CONNECT_TIMEOUT_SECONDS = env.float("AI_CONNECT_TIMEOUT_SECONDS", default=1.0)
-AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=20.0)
+AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=60.0)
 AI_WRITE_TIMEOUT_SECONDS = env.float("AI_WRITE_TIMEOUT_SECONDS", default=5.0)
 AI_POOL_TIMEOUT_SECONDS = env.float("AI_POOL_TIMEOUT_SECONDS", default=1.0)
+AI_MAX_INPUT_CHARS = env.int("AI_MAX_INPUT_CHARS", default=100000)

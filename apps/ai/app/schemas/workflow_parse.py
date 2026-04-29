@@ -18,6 +18,7 @@ class WorkflowCandidateStep(BaseModel):
     step_type: str
     risk_level: str
     requires_approval: bool
+    command: str | None = None
 
 
 class ParseRunbookResponse(BaseModel):

@@ -72,3 +72,15 @@ class WorkflowViewSet(
         workflow = self.get_object()
         workflow = services.archive_workflow(workflow=workflow)
         return Response(WorkflowDetailSerializer(workflow).data)
+
+    @action(detail=True, methods=["post"], url_path="accept-review")
+    def accept_review(self, request, pk=None):
+        workflow = self.get_object()
+        workflow = services.accept_review(workflow=workflow)
+        return Response(WorkflowDetailSerializer(workflow).data)
+
+    @action(detail=True, methods=["post"], url_path="reject-review")
+    def reject_review(self, request, pk=None):
+        workflow = self.get_object()
+        workflow = services.reject_review(workflow=workflow)
+        return Response(WorkflowDetailSerializer(workflow).data)

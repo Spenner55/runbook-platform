@@ -17,3 +17,15 @@ export function publishWorkflow(workflowId: string) {
     method: 'POST',
   })
 }
+
+export function acceptWorkflowReview(workflowId: string) {
+  return apiRequest<WorkflowDetail>(`/api/v1/workflows/${workflowId}/accept-review/`, {
+    method: 'POST',
+  })
+}
+
+export function rejectWorkflowReview(workflowId: string) {
+  return apiRequest<void>(`/api/v1/workflows/${workflowId}/reject-review/`, {
+    method: 'POST',
+  })
+}

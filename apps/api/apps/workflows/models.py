@@ -10,6 +10,10 @@ class Workflow(BaseModel):
         SUPERSEDED = "superseded", "Superseded"
         ARCHIVED = "archived", "Archived"
 
+    class ParseSource(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        AI_PARSE = "ai_parse", "AI Parse"
+
     organization = models.ForeignKey(
         "organizations.Organization",
         on_delete=models.PROTECT,
@@ -31,6 +35,12 @@ class Workflow(BaseModel):
         max_length=32, default="workflow.schema.v1"
     )
     definition = models.JSONField(default=dict)
+    requires_review = models.BooleanField(default=False)
+    parse_source = models.CharField(
+        max_length=16,
+        choices=ParseSource.choices,
+        default=ParseSource.MANUAL,
+    )
 
     class Meta:
         ordering = ["name", "-version"]
