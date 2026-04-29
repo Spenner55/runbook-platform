@@ -28,11 +28,7 @@ export function WorkflowDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <p className="eyebrow">Step 4</p>
         <h2>Workflow detail</h2>
-        <p className="muted">
-          Publish the generated workflow, then create an execution from the published version.
-        </p>
       </div>
 
       {workflowQuery.isLoading ? <p className="muted">Loading workflow…</p> : null}

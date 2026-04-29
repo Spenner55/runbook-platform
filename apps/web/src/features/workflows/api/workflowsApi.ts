@@ -1,5 +1,9 @@
 import { apiRequest } from '../../../shared/api/client'
-import type { CreateWorkflowInput, WorkflowDetail } from '../types'
+import type { CreateWorkflowInput, WorkflowDetail, WorkflowSummary } from '../types'
+
+export function listWorkflows() {
+  return apiRequest<WorkflowSummary[]>('/api/v1/workflows/')
+}
 
 export function createWorkflow(input: CreateWorkflowInput) {
   return apiRequest<WorkflowDetail>('/api/v1/workflows/', {

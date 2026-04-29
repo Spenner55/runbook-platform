@@ -26,9 +26,7 @@ export function OrganizationsPage() {
     <section className="page-grid">
       <article className="panel">
         <div className="panel__header">
-          <p className="eyebrow">Step 1</p>
           <h2>Create an organization</h2>
-          <p className="muted">Organizations anchor the rest of the Phase 1 flow.</p>
         </div>
 
         <form className="stack-md" onSubmit={handleSubmit}>
@@ -78,11 +76,7 @@ export function OrganizationsPage() {
 
       <article className="panel">
         <div className="panel__header">
-          <p className="eyebrow">Inventory</p>
           <h2>Organizations</h2>
-          <p className="muted">
-            Continue the slice by jumping into runbooks for a selected tenant.
-          </p>
         </div>
 
         {organizationsQuery.isLoading ? <p className="muted">Loading organizations…</p> : null}
@@ -100,10 +94,7 @@ export function OrganizationsPage() {
                     <code>{organization.slug}</code>
                   </p>
                 </div>
-                <Link
-                  className="button button--ghost"
-                  to={`/runbooks?organizationId=${organization.id}`}
-                >
+                <Link className="button button--ghost" to="/runbooks">
                   View runbooks
                 </Link>
               </li>

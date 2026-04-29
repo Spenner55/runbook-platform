@@ -1,32 +1,37 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
 import { AuthStatus } from '../features/auth/AuthStatus'
+import { useAuth } from '../features/auth/context/useAuth'
 
 function getNavClassName({ isActive }: { isActive: boolean }) {
   return isActive ? 'app-nav__link app-nav__link--active' : 'app-nav__link'
 }
 
 export function AppLayout() {
+  const { user, activeOrganizationId } = useAuth()
+
+  const activeMembership = user?.memberships.find(
+    (m) => m.organization.id === activeOrganizationId
+  )
+
   return (
     <div className="app-shell">
       <header className="app-shell__header">
         <div className="app-shell__branding">
-          <p className="eyebrow">Phase 1 Vertical Slice</p>
           <h1>Runbook Platform</h1>
-          <p className="lede">
-            Create organizations and runbooks, generate workflows through Django, and inspect live
-            execution progress from the browser.
-          </p>
+          {activeMembership ? (
+            <p className="muted">{activeMembership.organization.name}</p>
+          ) : null}
         </div>
 
         <AuthStatus />
 
         <nav className="app-nav" aria-label="Primary">
-          <NavLink className={getNavClassName} to="/organizations">
-            Organizations
-          </NavLink>
           <NavLink className={getNavClassName} to="/runbooks">
             Runbooks
+          </NavLink>
+          <NavLink className={getNavClassName} to="/executions">
+            Executions
           </NavLink>
           <NavLink className={getNavClassName} to="/approvals">
             Approvals
@@ -36,6 +41,9 @@ export function AppLayout() {
           </NavLink>
           <NavLink className={getNavClassName} to="/integrations">
             Integrations
+          </NavLink>
+          <NavLink className={getNavClassName} to="/settings">
+            Settings
           </NavLink>
         </nav>
       </header>
