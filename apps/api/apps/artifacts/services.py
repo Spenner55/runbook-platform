@@ -22,7 +22,7 @@ from django.utils import timezone
 from apps.artifacts.models import Artifact
 from apps.artifacts.storage import ArtifactStorage
 from apps.audit.models import AuditEvent
-from apps.audit.services import AuditActor, AuditService
+from apps.audit.services import AuditActor, AuditService, actor_from_runner
 from apps.common.exceptions import (
     DomainValidationError,
     ExternalDependencyError,
@@ -349,11 +349,12 @@ def create_from_runner_upload(
                 content_disposition=Artifact.ContentDisposition.ATTACHMENT,
                 metadata=metadata,
             )
+            audit_actor = actor_from_runner(runner_id)
             AuditService.emit(
                 organization_id=execution.organization_id,
-                actor_type=AuditEvent.ActorType.RUNNER,
-                actor_id=runner_id,
-                actor_label=runner_id,
+                actor_type=audit_actor.actor_type,
+                actor_id=audit_actor.actor_id,
+                actor_label=audit_actor.actor_label,
                 event_type="artifact.uploaded",
                 object_type=AuditEvent.ObjectType.ARTIFACT,
                 object_id=artifact.id,

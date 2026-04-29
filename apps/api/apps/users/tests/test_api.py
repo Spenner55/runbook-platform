@@ -1,6 +1,8 @@
 import pytest
 from rest_framework.test import APIClient
 
+from apps.organizations import services as organization_services
+from apps.organizations.models import MembershipRole
 from apps.users import services
 
 
@@ -22,7 +24,9 @@ def test_login_success(client, user):
     assert resp.status_code == 200
     assert "access" in resp.data
     assert resp.data["user"]["email"] == "alice@example.com"
+    assert "memberships" in resp.data["user"]
     assert "refresh_token" in resp.cookies
+    assert resp.cookies["refresh_token"]["samesite"] == "Strict"
 
 
 @pytest.mark.django_db
@@ -52,18 +56,29 @@ def test_refresh_missing_cookie(client):
 
 
 @pytest.mark.django_db
+def test_logout_requires_authentication(client):
+    resp = client.post("/api/v1/auth/logout/")
+    assert resp.status_code == 401
+
+
+@pytest.mark.django_db
 def test_logout(client, user):
     login = client.post(
         "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
     )
     refresh_cookie = login.cookies["refresh_token"].value
     client.cookies["refresh_token"] = refresh_cookie
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
     resp = client.post("/api/v1/auth/logout/")
     assert resp.status_code == 204
 
 
 @pytest.mark.django_db
 def test_me_authenticated(client, user):
+    org = organization_services.create_organization(name="Acme", slug="acme-auth")
+    organization_services.create_membership(
+        organization=org, user=user, role=MembershipRole.OPERATOR
+    )
     login = client.post(
         "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
     )
@@ -72,6 +87,18 @@ def test_me_authenticated(client, user):
     resp = client.get("/api/v1/auth/me/")
     assert resp.status_code == 200
     assert resp.data["email"] == "alice@example.com"
+    assert resp.data["active_organization_id"] == str(org.id)
+    assert resp.data["memberships"] == [
+        {
+            "id": str(user.memberships.get().id),
+            "role": MembershipRole.OPERATOR,
+            "organization": {
+                "id": str(org.id),
+                "name": "Acme",
+                "slug": "acme-auth",
+            },
+        }
+    ]
 
 
 @pytest.mark.django_db
@@ -81,25 +108,6 @@ def test_me_unauthenticated(client):
 
 
 @pytest.mark.django_db
-def test_register(client):
-    resp = client.post(
-        "/api/v1/auth/register/",
-        {
-            "email": "newuser@example.com",
-            "password": "s3cur3pass!",
-            "first_name": "New",
-        },
-    )
-    assert resp.status_code == 201
-    assert resp.data["user"]["email"] == "newuser@example.com"
-    assert "access" in resp.data
-    assert "refresh_token" in resp.cookies
-
-
-@pytest.mark.django_db
-def test_register_duplicate_email(client, user):
-    resp = client.post(
-        "/api/v1/auth/register/",
-        {"email": "alice@example.com", "password": "s3cur3pass!"},
-    )
-    assert resp.status_code == 400
+def test_register_endpoint_is_not_exposed(client):
+    resp = client.post("/api/v1/auth/register/", {})
+    assert resp.status_code == 404

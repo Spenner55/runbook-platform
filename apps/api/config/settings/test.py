@@ -1,3 +1,5 @@
 from .base import *
 
 DEBUG = False
+RUNNER_REGISTRATION_TOKEN = "test-runner-token"
+RUNNER_TOKENS = [RUNNER_REGISTRATION_TOKEN]

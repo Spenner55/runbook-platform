@@ -67,7 +67,7 @@ def test_step_start_no_approval_returns_run(claimed_no_approval):
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
         data={"runner_id": "runner-1", "claim_token": claim_token},
@@ -87,7 +87,7 @@ def test_step_start_non_approval_transitions_execution_to_running(claimed_no_app
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
         data={"runner_id": "runner-1", "claim_token": claim_token},
@@ -110,7 +110,7 @@ def test_step_start_with_approval_returns_wait(claimed_with_approval):
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
         data={"runner_id": "runner-1", "claim_token": claim_token},
@@ -133,7 +133,7 @@ def test_step_start_approval_is_idempotent(claimed_with_approval):
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     url = f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/"
     payload = {"runner_id": "runner-1", "claim_token": claim_token}
 
@@ -153,7 +153,7 @@ def test_step_start_wrong_runner_returns_409(claimed_with_approval):
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
         data={"runner_id": "wrong-runner", "claim_token": claim_token},
@@ -190,7 +190,7 @@ def test_policy_forced_approval_on_schema_non_approval_step(claimed_no_approval)
     step.requires_approval = True
     step.save(update_fields=["requires_approval", "updated_at"])
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
         data={"runner_id": "runner-1", "claim_token": claim_token},
@@ -229,7 +229,7 @@ def waiting_step_data(claimed_with_approval):
 @pytest.mark.django_db
 def test_approval_status_pending_returns_wait(waiting_step_data):
     d = waiting_step_data
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{d['execution'].id}/steps/{d['step'].id}/approval-status/",
         data={"runner_id": "runner-1", "claim_token": d["claim_token"]},
@@ -250,7 +250,7 @@ def test_approval_status_approved_returns_run(waiting_step_data):
         actor_label="Test Op",
     )
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{d['execution'].id}/steps/{d['step'].id}/approval-status/",
         data={"runner_id": "runner-1", "claim_token": d["claim_token"]},
@@ -271,7 +271,7 @@ def test_approval_status_rejected_returns_fail(waiting_step_data):
         actor_label="Test Op",
     )
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{d['execution'].id}/steps/{d['step'].id}/approval-status/",
         data={"runner_id": "runner-1", "claim_token": d["claim_token"]},
@@ -293,7 +293,7 @@ def test_approval_status_timed_out_returns_fail(waiting_step_data):
     d["ar"].expires_at = timezone.now() - timedelta(seconds=1)
     d["ar"].save(update_fields=["expires_at", "updated_at"])
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{d['execution'].id}/steps/{d['step'].id}/approval-status/",
         data={"runner_id": "runner-1", "claim_token": d["claim_token"]},
@@ -307,7 +307,7 @@ def test_approval_status_timed_out_returns_fail(waiting_step_data):
 @pytest.mark.django_db
 def test_approval_status_wrong_runner_returns_409(waiting_step_data):
     d = waiting_step_data
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{d['execution'].id}/steps/{d['step'].id}/approval-status/",
         data={"runner_id": "wrong-runner", "claim_token": d["claim_token"]},
@@ -323,7 +323,7 @@ def test_approval_status_step_not_in_approval_flow_returns_409(claimed_no_approv
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/approval-status/",
         data={"runner_id": "runner-1", "claim_token": claim_token},

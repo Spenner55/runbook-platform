@@ -6,7 +6,12 @@ from django.utils import timezone
 
 from apps.approvals.models import ApprovalDecision, ApprovalRequest
 from apps.audit.models import AuditEvent
-from apps.audit.services import AuditService
+from apps.audit.services import (
+    AuditActor,
+    AuditService,
+    actor_from_runner,
+    system_actor,
+)
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
 from apps.executions import services as execution_services
 from apps.executions.models import Execution, ExecutionStep
@@ -91,11 +96,12 @@ def request_step_approval(
             runner_id=runner_id,
             previous_status=previous_status,
         )
+        audit_actor = actor_from_runner(runner_id)
         AuditService.emit(
             organization_id=execution.organization_id,
-            actor_type=AuditEvent.ActorType.RUNNER,
-            actor_id=runner_id,
-            actor_label=runner_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
             event_type="approval.requested",
             object_type=AuditEvent.ObjectType.APPROVAL_REQUEST,
             object_id=approval_request.id,
@@ -159,9 +165,7 @@ def get_approval_status(*, approval_request: ApprovalRequest) -> ApprovalRequest
         _emit_approval_decision_audit(
             approval_request=locked,
             approval_decision=approval_decision,
-            actor_type=AuditEvent.ActorType.SYSTEM,
-            actor_id="",
-            actor_label="Django system",
+            actor=system_actor(),
         )
         return locked
 
@@ -176,7 +180,8 @@ def decide_approval(
     approval_request: ApprovalRequest,
     decision: str,
     notes: str = "",
-    actor_label: str,
+    actor: AuditActor | None = None,
+    actor_label: str = "",
 ) -> ApprovalDecision:
     """
     Apply a human decision to a pending approval request.
@@ -206,9 +211,7 @@ def decide_approval(
             _emit_approval_decision_audit(
                 approval_request=locked,
                 approval_decision=approval_decision,
-                actor_type=AuditEvent.ActorType.SYSTEM,
-                actor_id="",
-                actor_label="Django system",
+                actor=system_actor(),
             )
             return approval_decision
 
@@ -222,21 +225,28 @@ def decide_approval(
         locked.resolved_at = now
         locked.save(update_fields=["status", "resolved_at", "updated_at"])
 
+        audit_actor = actor or AuditActor(
+            actor_type=AuditEvent.ActorType.UNKNOWN,
+            actor_label=actor_label or "Unauthenticated public API",
+        )
         approval_decision = ApprovalDecision.objects.create(
             approval_request=locked,
             decision=decision,
             source_type=ApprovalDecision.SourceType.HUMAN,
             decided_at=now,
-            decided_by_label=actor_label,
-            decided_by_label_source="unverified_pre_auth",
+            decided_by_user_id=audit_actor.actor_id
+            if audit_actor.actor_type == AuditEvent.ActorType.USER
+            else None,
+            decided_by_label=audit_actor.actor_label,
+            decided_by_label_source="authenticated_user"
+            if audit_actor.actor_type == AuditEvent.ActorType.USER
+            else "unverified_pre_auth",
             notes=notes,
         )
         _emit_approval_decision_audit(
             approval_request=locked,
             approval_decision=approval_decision,
-            actor_type=AuditEvent.ActorType.UNKNOWN,
-            actor_id="",
-            actor_label=actor_label or "Unauthenticated public API",
+            actor=audit_actor,
         )
     event_type = "approval.decided"
     _safe_notify_integration(
@@ -312,9 +322,7 @@ def _emit_approval_decision_audit(
     *,
     approval_request: ApprovalRequest,
     approval_decision: ApprovalDecision,
-    actor_type: str,
-    actor_id: str,
-    actor_label: str,
+    actor: AuditActor,
 ) -> None:
     event_type = {
         ApprovalDecision.Decision.APPROVED: "approval.approved",
@@ -323,9 +331,9 @@ def _emit_approval_decision_audit(
     }[approval_decision.decision]
     AuditService.emit(
         organization_id=approval_request.organization_id,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        actor_label=actor_label,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
         event_type=event_type,
         object_type=AuditEvent.ObjectType.APPROVAL_DECISION,
         object_id=approval_decision.id,

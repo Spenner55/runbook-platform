@@ -94,7 +94,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -136,6 +136,13 @@ INTEGRATION_DISPATCH_BUDGET_SECONDS = env.float(
 INTEGRATION_MAX_PER_TRIGGER = env.int("INTEGRATION_MAX_PER_TRIGGER", default=25)
 
 # Artifact storage settings
+RUNNER_REGISTRATION_TOKEN = env("RUNNER_REGISTRATION_TOKEN", default="")
+RUNNER_TOKENS = [
+    token
+    for token in env.list("RUNNER_TOKENS", default=[])
+    or ([RUNNER_REGISTRATION_TOKEN] if RUNNER_REGISTRATION_TOKEN else [])
+    if token
+]
 ARTIFACT_STORAGE_BACKEND = env("ARTIFACT_STORAGE_BACKEND", default="local")
 ARTIFACT_MEDIA_ROOT = env(
     "ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts")

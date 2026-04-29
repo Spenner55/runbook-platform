@@ -1,5 +1,4 @@
 import pytest
-from django.test import Client
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditService
@@ -22,16 +21,22 @@ def _make_event(
     )
 
 
+@pytest.fixture
+def client(org, api_client_for_org):
+    return api_client_for_org(org)
+
+
 @pytest.mark.django_db
-def test_audit_list_requires_organization_id():
-    response = Client().get("/api/v1/audit/")
+def test_audit_list_requires_organization_id(client):
+    client.defaults.pop("HTTP_X_ORGANIZATION_ID")
+    response = client.get("/api/v1/audit/")
 
     assert response.status_code == 400
-    assert response.json()["errors"][0]["attr"] == "organization_id"
+    assert response.json()["errors"][0]["attr"] == "X-Organization-Id"
 
 
 @pytest.mark.django_db
-def test_audit_list_filters_by_organization_and_object(org):
+def test_audit_list_filters_by_organization_and_object(org, client):
     other_org = Organization.objects.create(name="Other Corp", slug="other")
     execution_id = org.id
     other_execution_id = other_org.id
@@ -53,7 +58,7 @@ def test_audit_list_filters_by_organization_and_object(org):
         metadata={},
     )
 
-    response = Client().get(
+    response = client.get(
         "/api/v1/audit/",
         {
             "organization_id": str(org.id),
@@ -69,8 +74,8 @@ def test_audit_list_filters_by_organization_and_object(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_rejects_object_type_without_object_id(org):
-    response = Client().get(
+def test_audit_list_rejects_object_type_without_object_id(org, client):
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "object_type": "execution"},
     )
@@ -79,7 +84,7 @@ def test_audit_list_rejects_object_type_without_object_id(org):
 
 
 @pytest.mark.django_db
-def test_execution_audit_includes_related_events(org):
+def test_execution_audit_includes_related_events(org, client):
     execution_id = org.id
     step_id = Organization.objects.create(name="Step Org", slug="step-org").id
 
@@ -102,7 +107,7 @@ def test_execution_audit_includes_related_events(org):
         metadata={"execution_id": str(execution_id), "step_key": "deploy"},
     )
 
-    response = Client().get(
+    response = client.get(
         f"/api/v1/executions/{execution_id}/audit/",
         {"organization_id": str(org.id)},
     )
@@ -113,11 +118,11 @@ def test_execution_audit_includes_related_events(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_filters_by_event_type(org):
+def test_audit_list_filters_by_event_type(org, client):
     _make_event(org, event_type="execution.created")
     cancelled = _make_event(org, event_type="execution.cancelled")
 
-    response = Client().get(
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "event_type": "execution.cancelled"},
     )
@@ -129,11 +134,11 @@ def test_audit_list_filters_by_event_type(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_filters_by_actor_type(org):
+def test_audit_list_filters_by_actor_type(org, client):
     _make_event(org, actor_type=AuditEvent.ActorType.SYSTEM)
     runner_event = _make_event(org, actor_type=AuditEvent.ActorType.RUNNER)
 
-    response = Client().get(
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "actor_type": "runner"},
     )
@@ -145,7 +150,7 @@ def test_audit_list_filters_by_actor_type(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_filters_by_occurred_after(org):
+def test_audit_list_filters_by_occurred_after(org, client):
     early = _make_event(org)
     early_event = AuditEvent.objects.get(pk=early.id)
     early_event_time = early_event.occurred_at
@@ -161,7 +166,7 @@ def test_audit_list_filters_by_occurred_after(org):
     )
 
     cutoff = early_event_time.isoformat()
-    response = Client().get(
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "occurred_after": cutoff},
     )
@@ -172,10 +177,10 @@ def test_audit_list_filters_by_occurred_after(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_filters_by_occurred_before(org):
+def test_audit_list_filters_by_occurred_before(org, client):
     _make_event(org, event_type="execution.created")
 
-    response = Client().get(
+    response = client.get(
         "/api/v1/audit/",
         {
             "organization_id": str(org.id),
@@ -188,16 +193,16 @@ def test_audit_list_filters_by_occurred_before(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_limit_and_offset(org):
+def test_audit_list_limit_and_offset(org, client):
     Organization.objects.create(name="Other", slug="other-2")
     for i in range(5):
         _make_event(org, event_type="execution.created")
 
-    response_page1 = Client().get(
+    response_page1 = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "limit": "2", "offset": "0"},
     )
-    response_page2 = Client().get(
+    response_page2 = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "limit": "2", "offset": "2"},
     )
@@ -214,8 +219,8 @@ def test_audit_list_limit_and_offset(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_malformed_timestamp_returns_400(org):
-    response = Client().get(
+def test_audit_list_malformed_timestamp_returns_400(org, client):
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "occurred_after": "not-a-date"},
     )
@@ -223,8 +228,8 @@ def test_audit_list_malformed_timestamp_returns_400(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_invalid_actor_type_returns_400(org):
-    response = Client().get(
+def test_audit_list_invalid_actor_type_returns_400(org, client):
+    response = client.get(
         "/api/v1/audit/",
         {"organization_id": str(org.id), "actor_type": "superuser"},
     )
@@ -232,8 +237,7 @@ def test_audit_list_invalid_actor_type_returns_400(org):
 
 
 @pytest.mark.django_db
-def test_audit_list_write_methods_rejected(org):
-    client = Client()
+def test_audit_list_write_methods_rejected(org, client):
     url = "/api/v1/audit/"
     params = f"?organization_id={org.id}"
 

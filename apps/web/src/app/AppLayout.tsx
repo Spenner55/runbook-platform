@@ -1,5 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
+import { AuthStatus } from '../features/auth/AuthStatus'
+
 function getNavClassName({ isActive }: { isActive: boolean }) {
   return isActive ? 'app-nav__link app-nav__link--active' : 'app-nav__link'
 }
@@ -16,6 +18,8 @@ export function AppLayout() {
             execution progress from the browser.
           </p>
         </div>
+
+        <AuthStatus />
 
         <nav className="app-nav" aria-label="Primary">
           <NavLink className={getNavClassName} to="/organizations">

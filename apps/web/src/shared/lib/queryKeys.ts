@@ -1,4 +1,5 @@
 export const queryKeys = {
+  currentUser: ['auth', 'current-user'] as const,
   organizations: ['organizations'] as const,
   runbooks: (organizationId?: string) => ['runbooks', organizationId ?? 'all'] as const,
   runbook: (runbookId: string) => ['runbook', runbookId] as const,

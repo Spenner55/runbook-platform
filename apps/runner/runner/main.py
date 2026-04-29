@@ -32,6 +32,7 @@ def main() -> None:
         api_client = ApiClient(
             base_url=settings.api_base_url,
             runner_id=settings.runner_id,
+            runner_token=settings.registration_token,
             runner_version=settings.runner_version,
             http_client=http_client,
         )

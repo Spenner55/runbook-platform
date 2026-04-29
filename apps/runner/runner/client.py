@@ -39,11 +39,13 @@ class ApiClient:
         self,
         base_url: str,
         runner_id: str,
+        runner_token: str,
         runner_version: str = "0.1.0",
         http_client: httpx.Client | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._runner_id = runner_id
+        self._auth_headers = {"Authorization": f"Bearer {runner_token}"}
         self._runner_version = runner_version
         self._owns_http_client = http_client is None
         self._http = (
@@ -58,7 +60,7 @@ class ApiClient:
 
     def _post(self, path: str, payload: dict) -> dict:
         url = f"{self._base}{path}"
-        response = self._http.post(url, json=payload)
+        response = self._http.post(url, json=payload, headers=self._auth_headers)
         response.raise_for_status()
         return response.json()
 
@@ -199,7 +201,13 @@ class ApiClient:
         }
         files = {"file": (name, file_obj, mime_type or "application/octet-stream")}
         timeout = httpx.Timeout(30.0)
-        response = self._http.post(url, data=fields, files=files, timeout=timeout)
+        response = self._http.post(
+            url,
+            data=fields,
+            files=files,
+            headers=self._auth_headers,
+            timeout=timeout,
+        )
         response.raise_for_status()
         return ArtifactUploadResponse.model_validate(response.json())
 

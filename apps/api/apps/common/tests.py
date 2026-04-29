@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.test import TestCase
 
 from apps.common.models import BaseModel
@@ -12,3 +13,9 @@ class BaseModelTest(TestCase):
         self.assertIn("id", field_names)
         self.assertIn("created_at", field_names)
         self.assertIn("updated_at", field_names)
+
+
+def test_default_api_permission_requires_authentication():
+    assert settings.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] == [
+        "rest_framework.permissions.IsAuthenticated"
+    ]

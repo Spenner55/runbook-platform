@@ -4,7 +4,6 @@ import io
 from datetime import timedelta
 
 import pytest
-from django.test import Client
 from django.utils import timezone
 
 from apps.artifacts import services as artifact_services
@@ -33,11 +32,15 @@ def uploaded_artifact(org, claimed_execution, claim_token, step, artifact_media_
     )
 
 
+@pytest.fixture
+def client(org, api_client_for_org):
+    return api_client_for_org(org)
+
+
 @pytest.mark.django_db
 def test_execution_artifact_list_returns_results(
-    org, claimed_execution, uploaded_artifact
+    org, claimed_execution, uploaded_artifact, client
 ):
-    client = Client()
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id)},
@@ -53,8 +56,9 @@ def test_execution_artifact_list_returns_results(
 
 
 @pytest.mark.django_db
-def test_execution_artifact_list_empty(org, claimed_execution, artifact_media_root):
-    client = Client()
+def test_execution_artifact_list_empty(
+    org, claimed_execution, artifact_media_root, client
+):
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id)},
@@ -67,7 +71,7 @@ def test_execution_artifact_list_empty(org, claimed_execution, artifact_media_ro
 
 @pytest.mark.django_db
 def test_execution_artifact_list_filter_by_kind(
-    org, claimed_execution, claim_token, step, artifact_media_root
+    org, claimed_execution, claim_token, step, artifact_media_root, client
 ):
     artifact_services.create_from_runner_upload(
         execution=claimed_execution,
@@ -87,7 +91,6 @@ def test_execution_artifact_list_filter_by_kind(
         name="stderr.txt",
         file_obj=_make_file(b"err"),
     )
-    client = Client()
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id), "kind": "stdout"},
@@ -101,7 +104,7 @@ def test_execution_artifact_list_filter_by_kind(
 @pytest.mark.django_db
 @pytest.mark.django_db
 def test_execution_artifact_list_filter_by_step(
-    org, claimed_execution, claim_token, step, artifact_media_root
+    org, claimed_execution, claim_token, step, artifact_media_root, client
 ):
     artifact_services.create_from_runner_upload(
         execution=claimed_execution,
@@ -112,7 +115,6 @@ def test_execution_artifact_list_filter_by_step(
         name="stdout.txt",
         file_obj=_make_file(b"out"),
     )
-    client = Client()
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id), "step_id": str(step.id)},
@@ -124,17 +126,19 @@ def test_execution_artifact_list_filter_by_step(
 
 
 @pytest.mark.django_db
-def test_execution_artifact_list_requires_organization(claimed_execution):
-    client = Client()
+def test_execution_artifact_list_requires_organization(claimed_execution, client):
+    client.defaults.pop("HTTP_X_ORGANIZATION_ID")
     response = client.get(f"/api/v1/executions/{claimed_execution.id}/artifacts/")
     assert response.status_code == 400
-    assert response.json()["errors"][0]["code"] == "artifact_organization_required"
+    assert response.json()["errors"][0]["code"] == "organization_id_required"
 
 
 @pytest.mark.django_db
-def test_execution_artifact_list_rejects_cross_tenant(claimed_execution):
+def test_execution_artifact_list_rejects_cross_tenant(
+    claimed_execution, api_client_for_org
+):
     other_org = Organization.objects.create(name="Other Org", slug="other-org")
-    client = Client()
+    client = api_client_for_org(other_org)
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(other_org.id)},
@@ -143,8 +147,9 @@ def test_execution_artifact_list_rejects_cross_tenant(claimed_execution):
 
 
 @pytest.mark.django_db
-def test_artifact_list_omits_storage_key(org, claimed_execution, uploaded_artifact):
-    client = Client()
+def test_artifact_list_omits_storage_key(
+    org, claimed_execution, uploaded_artifact, client
+):
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id)},
@@ -155,8 +160,9 @@ def test_artifact_list_omits_storage_key(org, claimed_execution, uploaded_artifa
 
 
 @pytest.mark.django_db
-def test_download_url_endpoint_returns_url(org, claimed_execution, uploaded_artifact):
-    client = Client()
+def test_download_url_endpoint_returns_url(
+    org, claimed_execution, uploaded_artifact, client
+):
     response = client.post(
         f"/api/v1/artifacts/{uploaded_artifact.id}/download/",
         data={"organization_id": str(org.id)},
@@ -174,8 +180,9 @@ def test_download_url_endpoint_returns_url(org, claimed_execution, uploaded_arti
 
 
 @pytest.mark.django_db
-def test_download_url_emits_audit_event(org, claimed_execution, uploaded_artifact):
-    client = Client()
+def test_download_url_emits_audit_event(
+    org, claimed_execution, uploaded_artifact, client
+):
     client.post(
         f"/api/v1/artifacts/{uploaded_artifact.id}/download/",
         data={"organization_id": str(org.id)},
@@ -193,9 +200,8 @@ def test_download_url_emits_audit_event(org, claimed_execution, uploaded_artifac
 
 
 @pytest.mark.django_db
-def test_list_does_not_emit_audit_events(claimed_execution, uploaded_artifact):
+def test_list_does_not_emit_audit_events(claimed_execution, uploaded_artifact, client):
     before = AuditEvent.objects.count()
-    client = Client()
     client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(claimed_execution.organization_id)},
@@ -205,8 +211,7 @@ def test_list_does_not_emit_audit_events(claimed_execution, uploaded_artifact):
 
 
 @pytest.mark.django_db
-def test_content_endpoint_requires_download_token(org, uploaded_artifact):
-    client = Client()
+def test_content_endpoint_requires_download_token(org, uploaded_artifact, client):
     response = client.get(
         f"/api/v1/artifacts/{uploaded_artifact.id}/content/",
         {"organization_id": str(org.id)},
@@ -216,8 +221,7 @@ def test_content_endpoint_requires_download_token(org, uploaded_artifact):
 
 
 @pytest.mark.django_db
-def test_download_grant_allows_content_access(org, uploaded_artifact):
-    client = Client()
+def test_download_grant_allows_content_access(org, uploaded_artifact, client):
     response = client.post(
         f"/api/v1/artifacts/{uploaded_artifact.id}/download/",
         data={"organization_id": str(org.id)},
@@ -230,12 +234,11 @@ def test_download_grant_allows_content_access(org, uploaded_artifact):
 
 
 @pytest.mark.django_db
-def test_expired_download_grant_is_rejected(org, uploaded_artifact):
+def test_expired_download_grant_is_rejected(org, uploaded_artifact, client):
     expired_at = timezone.now() - timedelta(seconds=1)
     token = artifact_services.create_download_token(
         artifact=uploaded_artifact, expires_at=expired_at
     )
-    client = Client()
     response = client.get(
         f"/api/v1/artifacts/{uploaded_artifact.id}/content/",
         {"organization_id": str(org.id), "token": token},
@@ -245,9 +248,9 @@ def test_expired_download_grant_is_rejected(org, uploaded_artifact):
 
 
 @pytest.mark.django_db
-def test_download_request_rejects_cross_tenant(uploaded_artifact):
+def test_download_request_rejects_cross_tenant(uploaded_artifact, api_client_for_org):
     other_org = Organization.objects.create(name="Other Org", slug="other-org")
-    client = Client()
+    client = api_client_for_org(other_org)
     response = client.post(
         f"/api/v1/artifacts/{uploaded_artifact.id}/download/",
         data={"organization_id": str(other_org.id)},

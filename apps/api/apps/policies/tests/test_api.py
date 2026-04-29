@@ -5,15 +5,15 @@ Covers: CRUD, validation, conflict handling, tenant isolation.
 """
 
 import pytest
-from django.test import Client
 
-from apps.organizations.models import Organization
+from apps.organizations.models import MembershipRole, Organization
 from apps.policies import services as policy_services
 
 
 @pytest.fixture
-def client():
-    return Client()
+def client(org, org2, api_client_for_org, user):
+    api_client_for_org(org2, role=MembershipRole.ADMIN, user=user)
+    return api_client_for_org(org, role=MembershipRole.ADMIN, user=user)
 
 
 @pytest.fixture
@@ -63,8 +63,17 @@ def _rule_url(policy, rule, organization=None):
 
 @pytest.mark.django_db
 def test_list_policies_requires_organization_id(client):
+    client.defaults.pop("HTTP_X_ORGANIZATION_ID")
     resp = client.get("/api/v1/policies/")
     assert resp.status_code == 400
+    assert resp.json()["errors"][0]["code"] == "organization_id_required"
+
+
+@pytest.mark.django_db
+def test_list_policies_rejects_query_header_mismatch(client, org2):
+    resp = client.get(f"/api/v1/policies/?organization_id={org2.id}")
+    assert resp.status_code == 400
+    assert resp.json()["errors"][0]["code"] == "org_id_mismatch"
 
 
 @pytest.mark.django_db
@@ -186,6 +195,7 @@ def test_get_policy_detail_rules_ordered_by_priority(client, org, policy):
 
 @pytest.mark.django_db
 def test_get_unknown_policy_returns_404(client):
+    client.defaults["HTTP_X_ORGANIZATION_ID"] = "00000000-0000-0000-0000-000000000000"
     resp = client.get(
         "/api/v1/policies/00000000-0000-0000-0000-000000000000/"
         "?organization_id=00000000-0000-0000-0000-000000000000"
@@ -195,12 +205,14 @@ def test_get_unknown_policy_returns_404(client):
 
 @pytest.mark.django_db
 def test_get_policy_detail_requires_organization_id(client, policy):
+    client.defaults.pop("HTTP_X_ORGANIZATION_ID")
     resp = client.get(f"/api/v1/policies/{policy.id}/")
     assert resp.status_code == 400
 
 
 @pytest.mark.django_db
 def test_get_policy_detail_wrong_org_returns_404(client, org2, policy):
+    client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org2.id)
     resp = client.get(_policy_url(policy, organization=org2))
     assert resp.status_code == 404
 
@@ -388,6 +400,7 @@ def test_delete_rule_soft_deactivates(client, policy, rule):
 @pytest.mark.django_db
 def test_cross_tenant_policy_access_returns_404_on_rules(client, org, org2, policy):
     """Cannot create rules on another org's policy."""
+    client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org2.id)
     resp = client.post(
         _rules_url(policy, organization=org2),
         data={
@@ -404,6 +417,7 @@ def test_cross_tenant_policy_access_returns_404_on_rules(client, org, org2, poli
 
 @pytest.mark.django_db
 def test_cross_tenant_policy_patch_returns_404(client, org2, policy):
+    client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org2.id)
     resp = client.patch(
         _policy_url(policy, organization=org2),
         data={"description": "Wrong tenant"},
@@ -414,6 +428,7 @@ def test_cross_tenant_policy_patch_returns_404(client, org2, policy):
 
 @pytest.mark.django_db
 def test_cross_tenant_rule_patch_returns_404(client, org2, policy, rule):
+    client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org2.id)
     resp = client.patch(
         _rule_url(policy, rule, organization=org2),
         data={"reason": "Wrong tenant"},

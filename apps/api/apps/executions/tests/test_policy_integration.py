@@ -48,7 +48,7 @@ def claimed(published_workflow):
 
 
 def _step_start(execution_id, step_id, claim_token):
-    c = Client()
+    c = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     return c.post(
         f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/start/",
         data={"runner_id": "runner-1", "claim_token": str(claim_token)},
@@ -276,9 +276,12 @@ def test_unexpected_policy_exception_persists_error_evaluation(monkeypatch, clai
 
 
 @pytest.mark.django_db
-def test_policy_evaluation_history_requires_organization_id(claimed):
+def test_policy_evaluation_history_requires_organization_id(
+    claimed, api_client_for_org
+):
     execution = claimed["execution"]
-    c = Client()
+    c = api_client_for_org(execution.organization)
+    c.defaults.pop("HTTP_X_ORGANIZATION_ID")
 
     resp = c.get(f"/api/v1/executions/{execution.id}/policy-evaluations/")
 
@@ -286,10 +289,12 @@ def test_policy_evaluation_history_requires_organization_id(claimed):
 
 
 @pytest.mark.django_db
-def test_policy_evaluation_history_rejects_wrong_organization(claimed):
+def test_policy_evaluation_history_rejects_wrong_organization(
+    claimed, api_client_for_org
+):
     execution = claimed["execution"]
     other_org = Organization.objects.create(name="Other Org", slug="other-org")
-    c = Client()
+    c = api_client_for_org(other_org)
 
     resp = c.get(
         f"/api/v1/executions/{execution.id}/policy-evaluations/"
@@ -300,7 +305,7 @@ def test_policy_evaluation_history_rejects_wrong_organization(claimed):
 
 
 @pytest.mark.django_db
-def test_policy_evaluation_history_returns_scoped_results(claimed):
+def test_policy_evaluation_history_returns_scoped_results(claimed, api_client_for_org):
     execution = claimed["execution"]
     claim_token = claimed["claim_token"]
     step = execution.steps.order_by("position").first()
@@ -308,7 +313,7 @@ def test_policy_evaluation_history_returns_scoped_results(claimed):
     start_resp = _step_start(execution.id, step.id, claim_token)
     assert start_resp.status_code == 200
 
-    c = Client()
+    c = api_client_for_org(execution.organization)
     resp = c.get(
         f"/api/v1/executions/{execution.id}/policy-evaluations/"
         f"?organization_id={execution.organization_id}"

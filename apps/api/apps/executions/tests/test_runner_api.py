@@ -6,6 +6,7 @@ These tests exercise the full HTTP path through /api/v1/internal/...
 
 import pytest
 from django.test import Client
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
@@ -45,7 +46,7 @@ CLAIM_NEXT_URL = "/api/v1/internal/executions/claim-next/"
 
 @pytest.mark.django_db
 def test_claim_next_empty_queue_returns_200_with_null_execution():
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         CLAIM_NEXT_URL,
         data={"runner_id": "runner-1"},
@@ -59,7 +60,7 @@ def test_claim_next_empty_queue_returns_200_with_null_execution():
 
 @pytest.mark.django_db
 def test_claim_next_claims_queued_execution(queued_execution):
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         CLAIM_NEXT_URL,
         data={"runner_id": "runner-1"},
@@ -76,7 +77,7 @@ def test_claim_next_claims_queued_execution(queued_execution):
 
 @pytest.mark.django_db
 def test_claim_next_response_includes_steps(queued_execution):
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         CLAIM_NEXT_URL,
         data={"runner_id": "runner-1"},
@@ -89,7 +90,7 @@ def test_claim_next_response_includes_steps(queued_execution):
 
 @pytest.mark.django_db
 def test_claim_next_missing_runner_id_returns_400():
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         CLAIM_NEXT_URL,
         data={},
@@ -97,6 +98,40 @@ def test_claim_next_missing_runner_id_returns_400():
     )
     assert response.status_code == 400
     assert "errors" in response.json()
+
+
+@pytest.mark.django_db
+def test_claim_next_without_authorization_is_rejected():
+    client = Client()
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_claim_next_with_invalid_runner_token_is_rejected():
+    client = Client(HTTP_AUTHORIZATION="Bearer wrong-runner-token")
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_claim_next_with_user_jwt_is_rejected(user):
+    token = str(RefreshToken.for_user(user).access_token)
+    client = Client(HTTP_AUTHORIZATION=f"Bearer {token}")
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +145,7 @@ def test_heartbeat_updates_last_heartbeat_at(queued_execution):
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/heartbeat/",
         data={"runner_id": "runner-1", "claim_token": claim_token},
@@ -128,7 +163,7 @@ def test_heartbeat_wrong_runner_returns_409(queued_execution):
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/heartbeat/",
         data={"runner_id": "wrong-runner", "claim_token": claim_token},
@@ -145,7 +180,7 @@ def test_heartbeat_wrong_token_returns_409(queued_execution):
     claim_result = execution_services.claim_next_execution(runner_id="runner-1")
     execution = claim_result["execution"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/heartbeat/",
         data={
@@ -171,7 +206,7 @@ def test_step_update_transitions_pending_to_running(queued_execution):
     claim_token = claim_result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/update/",
         data={
@@ -194,7 +229,7 @@ def test_step_update_invalid_transition_returns_409(queued_execution):
     claim_token = claim_result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/update/",
         data={
@@ -219,7 +254,7 @@ def test_complete_marks_execution_succeeded(queued_execution):
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/complete/",
         data={
@@ -241,7 +276,7 @@ def test_complete_wrong_runner_returns_409(queued_execution):
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/complete/",
         data={
@@ -260,7 +295,7 @@ def test_complete_invalid_final_status_returns_400(queued_execution):
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    client = Client()
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/complete/",
         data={
