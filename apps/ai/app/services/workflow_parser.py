@@ -75,15 +75,13 @@ def _llm_parse(request: ParseRunbookRequest) -> ParseRunbookResponse:
     except Exception as exc:
         raise ValueError(f"LLM parse returned invalid output: {exc}") from exc
 
-    return ParseRunbookResponse(
-        request_id=request.request_id,
-        workflow_title=output.workflow_title or request.runbook.title,
-        steps=output.steps,
-        warnings=output.warnings,
-    )
-    warnings: list[str] = []
-    steps = _extract_steps(request.runbook.raw_content, warnings)
-
+    warnings = list(output.warnings)
+    steps = output.steps
+    if not steps:
+        steps = _extract_steps(request.runbook.raw_content, warnings)
+        warnings.append(
+            "LLM parser returned no steps; using deterministic step extraction."
+        )
     if not steps:
         steps = _default_steps(request.runbook.title)
         warnings.append(
@@ -92,7 +90,7 @@ def _llm_parse(request: ParseRunbookRequest) -> ParseRunbookResponse:
 
     return ParseRunbookResponse(
         request_id=request.request_id,
-        workflow_title=request.runbook.title,
+        workflow_title=output.workflow_title or request.runbook.title,
         steps=steps,
         warnings=warnings,
     )
