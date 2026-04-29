@@ -231,9 +231,7 @@ export function ExecutionDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <p className="eyebrow">Step 5</p>
         <h2>Execution detail</h2>
-        <p className="muted">This page polls Django while the execution is active.</p>
       </div>
 
       {executionQuery.isLoading ? <p className="muted">Loading execution…</p> : null}

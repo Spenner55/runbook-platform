@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 
+import { useAuth } from '../../features/auth/context/useAuth'
 import {
   useCreateRule,
   useDeactivateRule,
@@ -418,7 +419,8 @@ function RuleRow({ rule, policyId, organizationId, onChanged }: RuleRowProps) {
 export function PolicyDetailPage() {
   const { policyId } = useParams()
   const [searchParams] = useSearchParams()
-  const organizationId = searchParams.get('organization_id') ?? ''
+  const { activeOrganizationId } = useAuth()
+  const organizationId = searchParams.get('organization_id') ?? activeOrganizationId ?? ''
   const query = usePolicyDetail(policyId ?? null, organizationId || null)
   const [showEditMeta, setShowEditMeta] = useState(false)
   const [showAddRule, setShowAddRule] = useState(false)

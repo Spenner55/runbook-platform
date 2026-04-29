@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useAuth } from '../../features/auth/context/useAuth'
 import { useCreateIntegration } from '../../features/integrations/hooks/useCreateIntegration'
 import { useDeactivateIntegration } from '../../features/integrations/hooks/useDeactivateIntegration'
 import { useIntegrations } from '../../features/integrations/hooks/useIntegrations'
@@ -79,9 +80,7 @@ function IntegrationRow({ integration, organizationId, onChanged }: IntegrationR
           </span>
           <button
             className="button button--secondary"
-            onClick={() =>
-              navigate(`/integrations/${integration.id}?organization_id=${organizationId}`)
-            }
+            onClick={() => navigate(`/integrations/${integration.id}`)}
           >
             View history
           </button>
@@ -213,9 +212,9 @@ function CreateIntegrationForm({
 }
 
 export function IntegrationsPage() {
-  const [orgId, setOrgId] = useState('')
+  const { activeOrganizationId } = useAuth()
   const [showCreateForm, setShowCreateForm] = useState(false)
-  const query = useIntegrations(orgId || null)
+  const query = useIntegrations(activeOrganizationId)
 
   return (
     <section className="panel stack-lg">
@@ -227,23 +226,9 @@ export function IntegrationsPage() {
         </p>
       </div>
 
-      <div className="field">
-        <label className="field__label" htmlFor="org-id">
-          Organization ID
-        </label>
-        <input
-          id="org-id"
-          className="input"
-          type="text"
-          value={orgId}
-          onChange={(e) => setOrgId(e.target.value)}
-          placeholder="Paste an organization UUID"
-        />
-      </div>
+      {!activeOrganizationId ? <p className="muted">No active organization selected.</p> : null}
 
-      {!orgId ? <p className="muted">Enter an organization ID to load integrations.</p> : null}
-
-      {orgId && !showCreateForm ? (
+      {activeOrganizationId && !showCreateForm ? (
         <button
           className="button"
           style={{ justifySelf: 'start' }}
@@ -255,7 +240,7 @@ export function IntegrationsPage() {
 
       {showCreateForm ? (
         <CreateIntegrationForm
-          organizationId={orgId}
+          organizationId={activeOrganizationId ?? ''}
           onCreated={() => {
             setShowCreateForm(false)
             query.refetch()
@@ -280,7 +265,7 @@ export function IntegrationsPage() {
             <IntegrationRow
               key={integration.id}
               integration={integration}
-              organizationId={orgId}
+              organizationId={activeOrganizationId ?? ''}
               onChanged={() => query.refetch()}
             />
           ))}

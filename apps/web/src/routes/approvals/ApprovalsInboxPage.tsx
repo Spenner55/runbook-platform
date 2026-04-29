@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useApprovalsInbox } from '../../features/approvals/hooks/useApprovalsInbox'
 import { useDecideApproval } from '../../features/approvals/hooks/useDecideApproval'
 import type { ApprovalRequest } from '../../features/approvals/types'
+import { useAuth } from '../../features/auth/context/useAuth'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 function formatDateTime(value: string | null) {
@@ -162,10 +163,10 @@ function ApprovalRow({ approval, organizationId }: ApprovalRowProps) {
 }
 
 export function ApprovalsInboxPage() {
-  const [orgId, setOrgId] = useState('')
+  const { activeOrganizationId } = useAuth()
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
 
-  const query = useApprovalsInbox(orgId || null, statusFilter)
+  const query = useApprovalsInbox(activeOrganizationId, statusFilter)
 
   return (
     <section className="panel stack-lg">
@@ -178,20 +179,7 @@ export function ApprovalsInboxPage() {
         </p>
       </div>
 
-      <div className="stack-md">
-        <div className="field">
-          <label className="field__label" htmlFor="org-id">
-            Organization ID
-          </label>
-          <input
-            id="org-id"
-            className="field__input"
-            type="text"
-            value={orgId}
-            onChange={(e) => setOrgId(e.target.value)}
-            placeholder="Paste an organization UUID"
-          />
-        </div>
+      <div className="filter-row">
         <div className="field">
           <label className="field__label" htmlFor="status-filter">
             Status
@@ -211,7 +199,7 @@ export function ApprovalsInboxPage() {
         </div>
       </div>
 
-      {!orgId ? <p className="muted">Enter an organization ID to load the inbox.</p> : null}
+      {!activeOrganizationId ? <p className="muted">No active organization selected.</p> : null}
 
       {query.isLoading ? <p className="muted">Loading approvals…</p> : null}
 
@@ -226,7 +214,7 @@ export function ApprovalsInboxPage() {
       {query.data && (query.data.results?.length ?? 0) > 0 ? (
         <ol className="step-list">
           {query.data.results.map((ar) => (
-            <ApprovalRow key={ar.id} approval={ar} organizationId={orgId} />
+            <ApprovalRow key={ar.id} approval={ar} organizationId={activeOrganizationId ?? ''} />
           ))}
         </ol>
       ) : null}

@@ -36,9 +36,11 @@ describe('IntegrationsPage', () => {
   it('renders integration list', async () => {
     fetchMock.mockResolvedValue(createJsonResponse([activeIntegration]))
 
-    renderRoute(<IntegrationsPage />, { path: '/integrations', route: '/integrations' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<IntegrationsPage />, {
+      path: '/integrations',
+      route: '/integrations',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText('Production alerts')).toBeInTheDocument()
@@ -52,9 +54,11 @@ describe('IntegrationsPage', () => {
   it('renders empty state', async () => {
     fetchMock.mockResolvedValue(createJsonResponse([]))
 
-    renderRoute(<IntegrationsPage />, { path: '/integrations', route: '/integrations' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<IntegrationsPage />, {
+      path: '/integrations',
+      route: '/integrations',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByText(/No integrations configured/i)).toBeInTheDocument()
@@ -78,9 +82,11 @@ describe('IntegrationsPage', () => {
       return Promise.resolve(createJsonResponse([]))
     })
 
-    renderRoute(<IntegrationsPage />, { path: '/integrations', route: '/integrations' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<IntegrationsPage />, {
+      path: '/integrations',
+      route: '/integrations',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Create integration/i })).toBeInTheDocument()
@@ -126,9 +132,11 @@ describe('IntegrationsPage', () => {
       return Promise.resolve(createJsonResponse([activeIntegration]))
     })
 
-    renderRoute(<IntegrationsPage />, { path: '/integrations', route: '/integrations' })
-
-    await userEvent.type(screen.getByLabelText(/Organization ID/i), 'org-1')
+    renderRoute(<IntegrationsPage />, {
+      path: '/integrations',
+      route: '/integrations',
+      auth: { activeOrganizationId: 'org-1' },
+    })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Deactivate/i })).toBeInTheDocument()

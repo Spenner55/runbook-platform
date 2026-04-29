@@ -1,3 +1,17 @@
+export interface WorkflowSummary {
+  id: string
+  name: string
+  version: number
+  status: string
+  definition_schema_version: string
+  requires_review: boolean
+  parse_source: 'manual' | 'ai_parse'
+  runbook_id: string
+  organization_id: string
+  created_at: string
+  updated_at: string
+}
+
 export interface WorkflowStep {
   id: string
   name: string

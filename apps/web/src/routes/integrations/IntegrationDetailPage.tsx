@@ -1,5 +1,6 @@
 import { useParams, useSearchParams } from 'react-router-dom'
 
+import { useAuth } from '../../features/auth/context/useAuth'
 import { useIntegrationDelivery } from '../../features/integrations/hooks/useIntegrationDelivery'
 import { useIntegrationDetail } from '../../features/integrations/hooks/useIntegrationDetail'
 import type { IntegrationDeliveryAttempt, IntegrationType } from '../../features/integrations/types'
@@ -29,7 +30,8 @@ function responseSummary(attempt: IntegrationDeliveryAttempt) {
 export function IntegrationDetailPage() {
   const { integrationId } = useParams()
   const [searchParams] = useSearchParams()
-  const organizationId = searchParams.get('organization_id')
+  const { activeOrganizationId } = useAuth()
+  const organizationId = searchParams.get('organization_id') ?? activeOrganizationId
   const detailQuery = useIntegrationDetail(integrationId, organizationId)
   const deliveryQuery = useIntegrationDelivery(integrationId, organizationId)
 

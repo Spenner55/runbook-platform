@@ -1,5 +1,9 @@
 import { apiRequest } from '../../../shared/api/client'
-import type { CreateExecutionInput, ExecutionDetail } from '../types'
+import type { CreateExecutionInput, ExecutionDetail, ExecutionSummary } from '../types'
+
+export function listExecutions() {
+  return apiRequest<ExecutionSummary[]>('/api/v1/executions/')
+}
 
 export function createExecution(input: CreateExecutionInput) {
   return apiRequest<ExecutionDetail>('/api/v1/executions/', {

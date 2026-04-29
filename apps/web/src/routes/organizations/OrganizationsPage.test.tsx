@@ -61,9 +61,6 @@ describe('OrganizationsPage', () => {
         method: 'POST',
       })
     )
-    expect(screen.getByRole('link', { name: 'View runbooks' })).toHaveAttribute(
-      'href',
-      `/runbooks?organizationId=${organization.id}`
-    )
+    expect(screen.getByRole('link', { name: 'View runbooks' })).toHaveAttribute('href', '/runbooks')
   })
 })

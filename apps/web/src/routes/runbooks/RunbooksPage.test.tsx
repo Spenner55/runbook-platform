@@ -6,6 +6,8 @@ import { RunbooksPage } from './RunbooksPage'
 import { createJsonResponse } from '../../test/fetchResponse'
 import { renderRoute } from '../../test/renderRoute'
 
+const ORG_ID = 'org-1'
+
 describe('RunbooksPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
 
@@ -18,62 +20,72 @@ describe('RunbooksPage', () => {
     fetchMock.mockReset()
   })
 
-  it('shows organization-selection prompt when organizationId is absent', () => {
+  it('renders runbook list without requiring ?organizationId= query param', async () => {
     fetchMock.mockResolvedValue(createJsonResponse([]))
 
     renderRoute(<RunbooksPage />, {
       path: '/runbooks',
       route: '/runbooks',
-    })
-
-    expect(screen.getByText('Select an organization first')).toBeInTheDocument()
-  })
-
-  it('renders runbook create form when organizationId is present', async () => {
-    const org = { id: 'org-1', name: 'Acme', slug: 'acme', created_at: '', updated_at: '' }
-
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse([org])) // organizations
-      .mockResolvedValueOnce(createJsonResponse([])) // runbooks
-
-    renderRoute(<RunbooksPage />, {
-      path: '/runbooks',
-      route: '/runbooks?organizationId=org-1',
+      auth: { activeOrganizationId: ORG_ID },
     })
 
     await waitFor(() => {
-      expect(screen.getByText('Create a runbook')).toBeInTheDocument()
+      expect(screen.getByText('New runbook')).toBeInTheDocument()
     })
   })
 
+  it('shows runbooks from the active org', async () => {
+    const runbook = {
+      id: 'rb-1',
+      title: 'Rotate Creds',
+      slug: 'rotate-creds',
+      status: 'draft',
+      organization_id: ORG_ID,
+      created_at: '',
+    }
+
+    fetchMock.mockResolvedValueOnce(createJsonResponse([runbook]))
+
+    renderRoute(<RunbooksPage />, {
+      path: '/runbooks',
+      route: '/runbooks',
+      auth: { activeOrganizationId: ORG_ID },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Rotate Creds')).toBeInTheDocument()
+    })
+
+    const link = screen.getByRole('link', { name: 'View' })
+    expect(link).toHaveAttribute('href', `/runbooks/${runbook.id}`)
+  })
+
   it('submits the create form and calls Django runbooks endpoint', async () => {
-    const org = { id: 'org-1', name: 'Acme', slug: 'acme', created_at: '', updated_at: '' }
     const newRunbook = {
       id: 'rb-1',
       title: 'Deploy API',
       slug: 'deploy-api',
       status: 'draft',
-      organization_id: 'org-1',
+      organization_id: ORG_ID,
       created_at: '',
       raw_content: '1. Verify',
       updated_at: '',
     }
 
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse([org])) // organizations
       .mockResolvedValueOnce(createJsonResponse([])) // runbooks (initial)
       .mockResolvedValueOnce(createJsonResponse(newRunbook, { status: 201 })) // create
-      .mockResolvedValueOnce(createJsonResponse([])) // organizations refetch
       .mockResolvedValueOnce(createJsonResponse([newRunbook])) // runbooks refetch
 
     renderRoute(<RunbooksPage />, {
       path: '/runbooks',
-      route: '/runbooks?organizationId=org-1',
+      route: '/runbooks',
+      auth: { activeOrganizationId: ORG_ID },
     })
 
     const user = userEvent.setup()
 
-    await waitFor(() => expect(screen.getByText('Create a runbook')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('New runbook')).toBeInTheDocument())
 
     const titleInput = screen.getByPlaceholderText('Deploy API service')
     const slugInput = screen.getByPlaceholderText('deploy-api-service')
@@ -81,7 +93,6 @@ describe('RunbooksPage', () => {
     await user.type(slugInput, 'deploy-api')
     await user.click(screen.getByRole('button', { name: 'Create runbook' }))
 
-    // Verify the POST went to Django's runbook endpoint, not FastAPI
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
         ([url, opts]) =>
@@ -93,31 +104,17 @@ describe('RunbooksPage', () => {
     })
   })
 
-  it('shows existing runbooks with generate-workflow links', async () => {
-    const org = { id: 'org-1', name: 'Acme', slug: 'acme', created_at: '', updated_at: '' }
-    const runbook = {
-      id: 'rb-1',
-      title: 'Rotate Creds',
-      slug: 'rotate-creds',
-      status: 'draft',
-      organization_id: 'org-1',
-      created_at: '',
-    }
-
-    fetchMock
-      .mockResolvedValueOnce(createJsonResponse([org]))
-      .mockResolvedValueOnce(createJsonResponse([runbook]))
+  it('shows empty state when there are no runbooks', async () => {
+    fetchMock.mockResolvedValue(createJsonResponse([]))
 
     renderRoute(<RunbooksPage />, {
       path: '/runbooks',
-      route: '/runbooks?organizationId=org-1',
+      route: '/runbooks',
+      auth: { activeOrganizationId: ORG_ID },
     })
 
     await waitFor(() => {
-      expect(screen.getByText('Rotate Creds')).toBeInTheDocument()
+      expect(screen.getByText('No runbooks yet.')).toBeInTheDocument()
     })
-
-    const link = screen.getByRole('link', { name: 'Generate workflow' })
-    expect(link).toHaveAttribute('href', `/workflows/new?runbookId=${runbook.id}`)
   })
 })

@@ -1,5 +1,20 @@
 import type { PolicyEvaluationSummary } from '../policies/types'
 
+export interface ExecutionSummary {
+  id: string
+  status: string
+  workflow_id: string
+  organization_id: string
+  workflow_version: number
+  claimed_by_runner_id: string
+  claimed_at: string | null
+  last_heartbeat_at: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface ExecutionStep {
   id: string
   position: number

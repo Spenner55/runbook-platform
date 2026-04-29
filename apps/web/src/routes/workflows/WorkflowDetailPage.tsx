@@ -28,11 +28,7 @@ export function WorkflowDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <p className="eyebrow">Step 4</p>
         <h2>Workflow detail</h2>
-        <p className="muted">
-          Publish the generated workflow, then create an execution from the published version.
-        </p>
       </div>
 
       {workflowQuery.isLoading ? <p className="muted">Loading workflow…</p> : null}
@@ -42,8 +38,7 @@ export function WorkflowDetailPage() {
 
       {workflowQuery.data?.requires_review ? (
         <p className="banner banner--warning">
-          AI-generated workflow requires review before it can be published or executed.{' '}
-          <Link to={`/workflows/${workflowId}/review`}>Review now</Link>
+          AI-generated workflow requires review before it can be published or executed.
         </p>
       ) : null}
 
@@ -69,10 +64,16 @@ export function WorkflowDetailPage() {
           </div>
 
           <div className="actions-row">
+            {workflowQuery.data.requires_review ? (
+              <Link className="button" to={`/workflows/${workflowId}/review`}>
+                Review now
+              </Link>
+            ) : null}
+
             {workflowQuery.data.status === 'draft' ? (
               <button
-                className="button"
-                disabled={publishWorkflow.isPending}
+                className="button button--secondary"
+                disabled={publishWorkflow.isPending || workflowQuery.data.requires_review}
                 onClick={handlePublishWorkflow}
                 type="button"
               >

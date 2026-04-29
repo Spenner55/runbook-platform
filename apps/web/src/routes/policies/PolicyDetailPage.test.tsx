@@ -71,6 +71,25 @@ describe('PolicyDetailPage', () => {
     expect(screen.getAllByText('active').length).toBeGreaterThan(0)
   })
 
+  it('uses the active organization when the detail URL has no organization_id', async () => {
+    fetchMock.mockResolvedValue(createJsonResponse(policyDetail))
+
+    renderRoute(<PolicyDetailPage />, {
+      path: '/policies/:policyId',
+      route: '/policies/policy-1',
+      auth: { activeOrganizationId: 'org-1' },
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Production Safety Policy')).toBeInTheDocument()
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/policies/policy-1/?organization_id=org-1'),
+      expect.any(Object)
+    )
+  })
+
   it('renders rules list with rule names and outcomes', async () => {
     fetchMock.mockResolvedValue(createJsonResponse(policyDetail))
 

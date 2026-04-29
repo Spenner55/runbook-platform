@@ -56,13 +56,13 @@ describe('ApprovalsInboxPage', () => {
     fetchMock.mockReset()
   })
 
-  it('shows prompt when no org id is entered', () => {
+  it('shows prompt when no active organization is selected', () => {
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
       route: '/approvals',
     })
 
-    expect(screen.getByText(/Enter an organization ID/i)).toBeInTheDocument()
+    expect(screen.getByText(/No active organization selected/i)).toBeInTheDocument()
   })
 
   it('fetches and renders pending approval request', async () => {
@@ -71,10 +71,8 @@ describe('ApprovalsInboxPage', () => {
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
       route: '/approvals',
+      auth: { activeOrganizationId: 'org-1' },
     })
-
-    const orgInput = screen.getByLabelText(/Organization ID/i)
-    await userEvent.type(orgInput, 'org-1')
 
     await waitFor(() => {
       expect(screen.getByText('Deploy production service')).toBeInTheDocument()
@@ -90,10 +88,8 @@ describe('ApprovalsInboxPage', () => {
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
       route: '/approvals',
+      auth: { activeOrganizationId: 'org-1' },
     })
-
-    const orgInput = screen.getByLabelText(/Organization ID/i)
-    await userEvent.type(orgInput, 'org-1')
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Decide/i })).toBeInTheDocument()
@@ -111,10 +107,8 @@ describe('ApprovalsInboxPage', () => {
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
       route: '/approvals',
+      auth: { activeOrganizationId: 'org-1' },
     })
-
-    const orgInput = screen.getByLabelText(/Organization ID/i)
-    await userEvent.type(orgInput, 'org-1')
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Decide/i })).toBeInTheDocument()
@@ -143,10 +137,8 @@ describe('ApprovalsInboxPage', () => {
     renderRoute(<ApprovalsInboxPage />, {
       path: '/approvals',
       route: '/approvals',
+      auth: { activeOrganizationId: 'org-1' },
     })
-
-    const orgInput = screen.getByLabelText(/Organization ID/i)
-    await userEvent.type(orgInput, 'org-1')
 
     await waitFor(() => {
       expect(screen.getByText(/Server failed/i)).toBeInTheDocument()
