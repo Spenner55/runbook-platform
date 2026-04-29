@@ -84,9 +84,7 @@ describe('WorkflowReviewPage', () => {
 
     const user = userEvent.setup()
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: 'Accept workflow' })
-      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Accept workflow' })).toBeInTheDocument()
     })
 
     await user.click(screen.getByRole('button', { name: 'Accept workflow' }))
@@ -105,9 +103,7 @@ describe('WorkflowReviewPage', () => {
   it('reject review action calls Django endpoint', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(PENDING_REVIEW_WORKFLOW))
-      .mockResolvedValueOnce(
-        createJsonResponse({ ...PENDING_REVIEW_WORKFLOW, status: 'archived' })
-      )
+      .mockResolvedValueOnce(createJsonResponse({ ...PENDING_REVIEW_WORKFLOW, status: 'archived' }))
 
     renderRoute(<WorkflowReviewPage />, {
       path: '/workflows/:workflowId/review',
@@ -116,9 +112,7 @@ describe('WorkflowReviewPage', () => {
 
     const user = userEvent.setup()
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: 'Reject workflow' })
-      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reject workflow' })).toBeInTheDocument()
     })
 
     await user.click(screen.getByRole('button', { name: 'Reject workflow' }))

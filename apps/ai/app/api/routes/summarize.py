@@ -10,7 +10,9 @@ router = APIRouter()
 
 
 @router.post("/execution", response_model=ExecutionSummarizeResponse)
-def summarize_execution(request: ExecutionSummarizeRequest) -> ExecutionSummarizeResponse:
+def summarize_execution(
+    request: ExecutionSummarizeRequest,
+) -> ExecutionSummarizeResponse:
     """
     Accept execution data and return a human-readable summary.
 

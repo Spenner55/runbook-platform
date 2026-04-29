@@ -16,7 +16,9 @@ def user(db):
 
 @pytest.mark.django_db
 def test_login_success(client, user):
-    resp = client.post("/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"})
+    resp = client.post(
+        "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
+    )
     assert resp.status_code == 200
     assert "access" in resp.data
     assert resp.data["user"]["email"] == "alice@example.com"
@@ -25,13 +27,17 @@ def test_login_success(client, user):
 
 @pytest.mark.django_db
 def test_login_bad_credentials(client, user):
-    resp = client.post("/api/v1/auth/login/", {"email": "alice@example.com", "password": "wrong!"})
+    resp = client.post(
+        "/api/v1/auth/login/", {"email": "alice@example.com", "password": "wrong!"}
+    )
     assert resp.status_code == 401
 
 
 @pytest.mark.django_db
 def test_refresh_success(client, user):
-    login = client.post("/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"})
+    login = client.post(
+        "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
+    )
     refresh_cookie = login.cookies["refresh_token"].value
     client.cookies["refresh_token"] = refresh_cookie
     resp = client.post("/api/v1/auth/refresh/")
@@ -47,7 +53,9 @@ def test_refresh_missing_cookie(client):
 
 @pytest.mark.django_db
 def test_logout(client, user):
-    login = client.post("/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"})
+    login = client.post(
+        "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
+    )
     refresh_cookie = login.cookies["refresh_token"].value
     client.cookies["refresh_token"] = refresh_cookie
     resp = client.post("/api/v1/auth/logout/")
@@ -56,7 +64,9 @@ def test_logout(client, user):
 
 @pytest.mark.django_db
 def test_me_authenticated(client, user):
-    login = client.post("/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"})
+    login = client.post(
+        "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
+    )
     token = login.data["access"]
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     resp = client.get("/api/v1/auth/me/")
@@ -74,7 +84,11 @@ def test_me_unauthenticated(client):
 def test_register(client):
     resp = client.post(
         "/api/v1/auth/register/",
-        {"email": "newuser@example.com", "password": "s3cur3pass!", "first_name": "New"},
+        {
+            "email": "newuser@example.com",
+            "password": "s3cur3pass!",
+            "first_name": "New",
+        },
     )
     assert resp.status_code == 201
     assert resp.data["user"]["email"] == "newuser@example.com"

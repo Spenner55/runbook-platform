@@ -52,7 +52,10 @@ class RefreshView(APIView):
     def post(self, request):
         raw = request.COOKIES.get(REFRESH_COOKIE)
         if not raw:
-            return Response({"detail": "Refresh token missing."}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": "Refresh token missing."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         try:
             refresh = RefreshToken(raw)
             access = str(refresh.access_token)

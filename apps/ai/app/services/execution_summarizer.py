@@ -19,13 +19,17 @@ from app.schemas.workflow_summarize import (
 )
 
 
-def summarize_execution_result(request: ExecutionSummarizeRequest) -> ExecutionSummarizeResponse:
+def summarize_execution_result(
+    request: ExecutionSummarizeRequest,
+) -> ExecutionSummarizeResponse:
     if settings.AI_USE_LLM_PARSER and settings.OPENAI_API_KEY:
         return _llm_summarize(request)
     return _deterministic_summarize(request)
 
 
-def _deterministic_summarize(request: ExecutionSummarizeRequest) -> ExecutionSummarizeResponse:
+def _deterministic_summarize(
+    request: ExecutionSummarizeRequest,
+) -> ExecutionSummarizeResponse:
     total = len(request.steps)
     succeeded = [s for s in request.steps if s.status == "succeeded"]
     failed = [s for s in request.steps if s.status == "failed"]

@@ -16,9 +16,37 @@ from app.prompts.enrich import ENRICH_SYSTEM_PROMPT, build_enrich_user_prompt
 from app.schemas.workflow_enrich import WorkflowEnrichRequest, WorkflowEnrichResponse
 from app.schemas.workflow_parse import WorkflowCandidateStep
 
-_CRITICAL_KEYWORDS = {"delete", "drop", "truncate", "failover", "destroy", "wipe", "purge"}
-_HIGH_KEYWORDS = {"deploy", "migration", "migrate", "restart", "reboot", "scale", "upgrade", "rollback"}
-_LOW_KEYWORDS = {"check", "verify", "read", "list", "view", "health", "monitor", "describe", "show", "validate"}
+_CRITICAL_KEYWORDS = {
+    "delete",
+    "drop",
+    "truncate",
+    "failover",
+    "destroy",
+    "wipe",
+    "purge",
+}
+_HIGH_KEYWORDS = {
+    "deploy",
+    "migration",
+    "migrate",
+    "restart",
+    "reboot",
+    "scale",
+    "upgrade",
+    "rollback",
+}
+_LOW_KEYWORDS = {
+    "check",
+    "verify",
+    "read",
+    "list",
+    "view",
+    "health",
+    "monitor",
+    "describe",
+    "show",
+    "validate",
+}
 
 
 def enrich_workflow_candidate(request: WorkflowEnrichRequest) -> WorkflowEnrichResponse:
@@ -31,7 +59,9 @@ def _deterministic_enrich(request: WorkflowEnrichRequest) -> WorkflowEnrichRespo
     enriched: list[WorkflowCandidateStep] = []
     for step in request.steps:
         risk, approval = _classify_risk(step)
-        enriched.append(step.model_copy(update={"risk_level": risk, "requires_approval": approval}))
+        enriched.append(
+            step.model_copy(update={"risk_level": risk, "requires_approval": approval})
+        )
     return WorkflowEnrichResponse(
         request_id=request.request_id,
         steps=enriched,

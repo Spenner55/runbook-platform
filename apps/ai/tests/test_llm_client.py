@@ -61,7 +61,11 @@ def test_complete_passes_system_and_user_messages():
         client.complete("system msg", "user msg")
 
     call_kwargs = create_mock.call_args
-    messages = call_kwargs.kwargs["messages"] if call_kwargs.kwargs else call_kwargs[1]["messages"]
+    messages = (
+        call_kwargs.kwargs["messages"]
+        if call_kwargs.kwargs
+        else call_kwargs[1]["messages"]
+    )
     roles = [m["role"] for m in messages]
     assert roles == ["system", "user"]
 

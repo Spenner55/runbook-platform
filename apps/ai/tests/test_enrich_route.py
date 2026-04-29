@@ -83,7 +83,14 @@ def test_enrich_workflow_missing_steps_returns_422():
 def test_enrich_workflow_invalid_step_missing_name_returns_422():
     payload = {
         **_VALID_PAYLOAD,
-        "steps": [{"step_key": "step-1", "step_type": "manual_task", "risk_level": "low", "requires_approval": False}],
+        "steps": [
+            {
+                "step_key": "step-1",
+                "step_type": "manual_task",
+                "risk_level": "low",
+                "requires_approval": False,
+            }
+        ],
     }
     response = client.post("/enrich/workflow", json=payload)
     assert response.status_code == 422

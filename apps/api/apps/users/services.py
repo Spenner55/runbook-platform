@@ -7,7 +7,9 @@ class AuthenticationError(Exception):
     pass
 
 
-def create_user(*, email: str, password: str, first_name: str = "", last_name: str = "") -> User:
+def create_user(
+    *, email: str, password: str, first_name: str = "", last_name: str = ""
+) -> User:
     return User.objects.create_user(
         email=email.lower(),
         password=password,
