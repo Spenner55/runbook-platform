@@ -214,7 +214,10 @@ def test_non_member_cannot_read_or_decide_approval(
     other_org = type(org).objects.create(name="Other Corp", slug="other-corp")
     client = api_client_for_org(other_org)
 
-    assert client.get(f"/api/v1/approvals/{pending_approval_request.id}/").status_code == 404
+    assert (
+        client.get(f"/api/v1/approvals/{pending_approval_request.id}/").status_code
+        == 404
+    )
     assert (
         client.post(
             f"/api/v1/approvals/{pending_approval_request.id}/decide/",

@@ -62,9 +62,7 @@ class ExecutionAuditEventListView(APIView):
         limit = params.get("limit", 50)
         offset = params.get("offset", 0)
         organization_id = params["organization_id"]
-        assert_organization_member(
-            user=request.user, organization_id=organization_id
-        )
+        assert_organization_member(user=request.user, organization_id=organization_id)
         qs = execution_audit_queryset(
             organization_id=organization_id,
             execution_id=execution_id,

@@ -120,9 +120,7 @@ def create_workflow_from_runbook(
     )
 
 
-def accept_review(
-    *, workflow: Workflow, actor: AuditActor | None = None
-) -> Workflow:
+def accept_review(*, workflow: Workflow, actor: AuditActor | None = None) -> Workflow:
     """Clear the requires_review flag on a workflow, allowing it to be published."""
     with transaction.atomic():
         workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
@@ -147,9 +145,7 @@ def accept_review(
     return workflow
 
 
-def reject_review(
-    *, workflow: Workflow, actor: AuditActor | None = None
-) -> Workflow:
+def reject_review(*, workflow: Workflow, actor: AuditActor | None = None) -> Workflow:
     """Archive an AI-parsed workflow that failed human review."""
     with transaction.atomic():
         workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)

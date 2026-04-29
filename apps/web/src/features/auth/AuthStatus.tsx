@@ -19,7 +19,8 @@ export function AuthStatus() {
       <div>
         <p className="eyebrow">Signed in</p>
         <p className="auth-status__email">
-          {currentUserQuery.data?.email ?? (currentUserQuery.isLoading ? 'Loading...' : 'Unknown user')}
+          {currentUserQuery.data?.email ??
+            (currentUserQuery.isLoading ? 'Loading...' : 'Unknown user')}
         </p>
       </div>
       {currentUserQuery.error ? (

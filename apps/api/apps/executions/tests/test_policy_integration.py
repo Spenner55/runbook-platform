@@ -276,7 +276,9 @@ def test_unexpected_policy_exception_persists_error_evaluation(monkeypatch, clai
 
 
 @pytest.mark.django_db
-def test_policy_evaluation_history_requires_organization_id(claimed, api_client_for_org):
+def test_policy_evaluation_history_requires_organization_id(
+    claimed, api_client_for_org
+):
     execution = claimed["execution"]
     c = api_client_for_org(execution.organization)
     c.defaults.pop("HTTP_X_ORGANIZATION_ID")

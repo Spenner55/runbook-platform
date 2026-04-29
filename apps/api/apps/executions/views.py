@@ -142,7 +142,9 @@ class ExecutionViewSet(
 
         org_id = require_organization_id(request)
         assert_organization_member(user=request.user, organization_id=org_id)
-        execution = get_object_or_404(self.get_queryset(), pk=pk, organization_id=org_id)
+        execution = get_object_or_404(
+            self.get_queryset(), pk=pk, organization_id=org_id
+        )
         qs = (
             PolicyEvaluation.objects.filter(execution=execution)
             .select_related("policy", "rule", "step")

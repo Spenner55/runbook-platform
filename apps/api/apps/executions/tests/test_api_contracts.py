@@ -172,9 +172,7 @@ def test_cancel_execution_returns_cancelled_status(execution, api_client_for_org
 
 
 @pytest.mark.django_db
-def test_non_member_cannot_read_or_cancel_execution(
-    execution, org, api_client_for_org
-):
+def test_non_member_cannot_read_or_cancel_execution(execution, org, api_client_for_org):
     other_org = type(org).objects.create(name="Other Corp", slug="other-corp")
     client = api_client_for_org(other_org)
 

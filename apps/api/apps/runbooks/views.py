@@ -53,9 +53,7 @@ class RunbookViewSet(
 
         organization_id = require_organization_id(request)
         organization = get_object_or_404(Organization, pk=organization_id)
-        assert_organization_operator(
-            user=request.user, organization_id=organization.id
-        )
+        assert_organization_operator(user=request.user, organization_id=organization.id)
 
         runbook = services.create_runbook(
             organization=organization,

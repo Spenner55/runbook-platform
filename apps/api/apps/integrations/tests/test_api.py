@@ -154,7 +154,9 @@ def test_deactivate_prevents_future_dispatch(
 
 
 @pytest.mark.django_db
-def test_delivery_history_endpoint_returns_attempts(org, integration_fernet_key, client):
+def test_delivery_history_endpoint_returns_attempts(
+    org, integration_fernet_key, client
+):
     connection = _create_connection(
         org=org, integration_fernet_key=integration_fernet_key
     )
@@ -183,7 +185,9 @@ def test_delivery_history_endpoint_returns_attempts(org, integration_fernet_key,
 
 
 @pytest.mark.django_db
-def test_invalid_webhook_url_returns_validation_error(org, integration_fernet_key, client):
+def test_invalid_webhook_url_returns_validation_error(
+    org, integration_fernet_key, client
+):
 
     response = client.post(
         "/api/v1/integrations/",

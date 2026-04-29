@@ -64,7 +64,9 @@ def test_create_runbook_rejects_header_body_org_mismatch(org, api_client_for_org
 
 
 @pytest.mark.django_db
-def test_create_runbook_missing_title_returns_400_with_envelope(org, api_client_for_org):
+def test_create_runbook_missing_title_returns_400_with_envelope(
+    org, api_client_for_org
+):
     client = api_client_for_org(org)
     payload = {
         "organization_id": str(org.id),

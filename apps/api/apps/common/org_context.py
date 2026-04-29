@@ -43,7 +43,9 @@ def require_matching_organization_id(request, organization_id) -> str:
     return header_organization_id
 
 
-def _assert_request_organization_matches_header(request, header_organization_id: str) -> None:
+def _assert_request_organization_matches_header(
+    request, header_organization_id: str
+) -> None:
     for source, value in _request_organization_ids(request):
         request_organization_id = _normalize_uuid(
             value,

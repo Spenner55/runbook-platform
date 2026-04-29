@@ -56,7 +56,9 @@ def test_execution_artifact_list_returns_results(
 
 
 @pytest.mark.django_db
-def test_execution_artifact_list_empty(org, claimed_execution, artifact_media_root, client):
+def test_execution_artifact_list_empty(
+    org, claimed_execution, artifact_media_root, client
+):
     response = client.get(
         f"/api/v1/executions/{claimed_execution.id}/artifacts/",
         {"organization_id": str(org.id)},
