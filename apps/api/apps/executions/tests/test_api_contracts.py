@@ -103,6 +103,28 @@ def test_create_execution_draft_workflow_returns_400_with_envelope(runbook):
     assert body["errors"][0]["code"] == "workflow_not_published"
 
 
+@pytest.mark.django_db
+def test_create_execution_requires_review_workflow_returns_400(runbook):
+    workflow = workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=StubWorkflowTransformClient(),
+        requires_review=True,
+        parse_source="ai_parse",
+    )
+    workflow.status = "published"
+    workflow.save(update_fields=["status", "updated_at"])
+
+    client = Client()
+    response = client.post(
+        "/api/v1/executions/",
+        data={"workflow_id": str(workflow.id)},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["errors"][0]["code"] == "workflow_requires_review"
+
+
 # ---------------------------------------------------------------------------
 # Retrieve
 # ---------------------------------------------------------------------------

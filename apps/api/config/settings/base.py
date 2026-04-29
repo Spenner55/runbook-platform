@@ -18,6 +18,8 @@ DEBUG = env("DJANGO_DEBUG", default=False)
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
+AUTH_USER_MODEL = "users.User"
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -26,8 +28,10 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt",
     "corsheaders",
     # Domain apps
+    "apps.users.apps.UsersConfig",
     "apps.common.apps.CommonConfig",
     "apps.organizations.apps.OrganizationsConfig",
     "apps.runbooks.apps.RunbooksConfig",
@@ -92,10 +96,24 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_VERSION": "v1",
     "ALLOWED_VERSIONS": ("v1",),
     "EXCEPTION_HANDLER": "apps.common.api_errors.custom_exception_handler",
+}
+
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 CORS_ALLOWED_ORIGINS = [
@@ -104,6 +122,8 @@ CORS_ALLOWED_ORIGINS = [
 
 # AI service settings
 AI_BASE_URL = env("AI_BASE_URL", default="http://ai:8001")
+# Model selection is a human decision — no default. Must be set explicitly when LLM parsing is enabled.
+AI_PARSE_MODEL = env("AI_PARSE_MODEL", default="")
 
 # Integration settings
 INTEGRATION_FERNET_KEY = env("INTEGRATION_FERNET_KEY", default="")
@@ -154,6 +174,7 @@ if ARTIFACT_STORAGE_BACKEND == "s3" and (
         "ARTIFACT_STORAGE_BACKEND=s3."
     )
 AI_CONNECT_TIMEOUT_SECONDS = env.float("AI_CONNECT_TIMEOUT_SECONDS", default=1.0)
-AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=20.0)
+AI_READ_TIMEOUT_SECONDS = env.float("AI_READ_TIMEOUT_SECONDS", default=60.0)
 AI_WRITE_TIMEOUT_SECONDS = env.float("AI_WRITE_TIMEOUT_SECONDS", default=5.0)
 AI_POOL_TIMEOUT_SECONDS = env.float("AI_POOL_TIMEOUT_SECONDS", default=1.0)
+AI_MAX_INPUT_CHARS = env.int("AI_MAX_INPUT_CHARS", default=100000)

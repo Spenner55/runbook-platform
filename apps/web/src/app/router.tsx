@@ -11,6 +11,7 @@ import { PolicyDetailPage } from '../routes/policies/PolicyDetailPage'
 import { RunbooksPage } from '../routes/runbooks/RunbooksPage'
 import { WorkflowCreatePage } from '../routes/workflows/WorkflowCreatePage'
 import { WorkflowDetailPage } from '../routes/workflows/WorkflowDetailPage'
+import { WorkflowReviewPage } from '../routes/workflows/WorkflowReviewPage'
 
 export const router = createBrowserRouter([
   {
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
       { path: 'runbooks', element: <RunbooksPage /> },
       { path: 'workflows/new', element: <WorkflowCreatePage /> },
       { path: 'workflows/:workflowId', element: <WorkflowDetailPage /> },
+      { path: 'workflows/:workflowId/review', element: <WorkflowReviewPage /> },
       { path: 'executions/:executionId', element: <ExecutionDetailPage /> },
       { path: 'approvals', element: <ApprovalsInboxPage /> },
       { path: 'policies', element: <PoliciesPage /> },

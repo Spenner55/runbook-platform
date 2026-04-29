@@ -12,6 +12,8 @@ export interface WorkflowDetail {
   name: string
   version: number
   status: string
+  requires_review: boolean
+  parse_source: 'manual' | 'ai_parse'
   definition: {
     name: string
     steps: WorkflowStep[]

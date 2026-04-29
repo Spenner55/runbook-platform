@@ -1,5 +1,8 @@
 """Unit tests for the deterministic workflow parser service."""
 
+from types import SimpleNamespace
+
+from app.core.config import settings
 from app.schemas.workflow_parse import ParseRunbookRequest, RunbookInput
 from app.services.workflow_parser import parse_runbook_to_candidate
 
@@ -74,3 +77,59 @@ def test_same_input_same_output():
     assert [(s.step_key, s.name) for s in r1.steps] == [
         (s.step_key, s.name) for s in r2.steps
     ]
+
+
+def test_llm_empty_steps_falls_back_to_deterministic_extraction(monkeypatch):
+    class FakeLLMClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def complete_structured(self, *_args):
+            return SimpleNamespace(
+                workflow_title="LLM Title",
+                steps=[],
+                warnings=["empty model output"],
+            )
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", FakeLLMClient)
+    settings.AI_USE_LLM_PARSER = True
+    settings.OPENAI_API_KEY = "test-key"
+
+    req = _make_request("1. Verify health\n2. Restart service")
+    resp = parse_runbook_to_candidate(req)
+
+    assert resp.workflow_title == "LLM Title"
+    assert [step.name for step in resp.steps] == ["Verify health", "Restart service"]
+    assert "empty model output" in resp.warnings
+    assert (
+        "LLM parser returned no steps; using deterministic step extraction."
+        in resp.warnings
+    )
+
+
+def test_llm_empty_steps_falls_back_to_default_steps(monkeypatch):
+    class FakeLLMClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def complete_structured(self, *_args):
+            return SimpleNamespace(workflow_title="", steps=[], warnings=[])
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", FakeLLMClient)
+    settings.AI_USE_LLM_PARSER = True
+    settings.OPENAI_API_KEY = "test-key"
+
+    req = _make_request("", title="Unstructured Runbook")
+    resp = parse_runbook_to_candidate(req)
+
+    assert resp.workflow_title == "Unstructured Runbook"
+    assert len(resp.steps) == 2
+    assert resp.steps[0].name == "Verify prerequisites"
+    assert (
+        "LLM parser returned no steps; using deterministic step extraction."
+        in resp.warnings
+    )
+    assert (
+        "No numbered steps detected in content; using default step structure."
+        in resp.warnings
+    )

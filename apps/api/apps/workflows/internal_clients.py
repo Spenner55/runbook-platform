@@ -22,6 +22,7 @@ from apps.runbooks.ai_client import (  # noqa: F401
     RunbookAiClient,
     WorkflowCandidate,
     WorkflowCandidateStep,
+    WorkflowEnrichment,
 )
 
 __all__ = [
@@ -88,12 +89,20 @@ class HttpWorkflowTransformClient:
         runbook_slug: str,
         raw_content: str,
     ) -> WorkflowCandidate:
-        return self._ai_client.parse_runbook_to_workflow_candidate(
-            request_id=str(uuid.uuid4()),
+        request_id = str(uuid.uuid4())
+        parsed = self._ai_client.parse_runbook_to_workflow_candidate(
+            request_id=request_id,
             runbook_id=runbook_slug,
             runbook_title=runbook_title,
             raw_content=raw_content,
         )
+        enrichment = self._ai_client.enrich_workflow_candidate(
+            request_id=request_id,
+            workflow_title=parsed.workflow_title,
+            steps=parsed.steps,
+            raw_content=raw_content,
+        )
+        return _merge_enrichment(parsed, enrichment)
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +147,7 @@ class StubWorkflowTransformClient:
                     step_type=step_type,
                     risk_level="medium",
                     requires_approval=False,
+                    command=command,
                 )
             )
 
@@ -172,3 +182,47 @@ class StubWorkflowTransformClient:
                 candidates.append((stripped, None))
 
         return candidates
+
+
+def _merge_enrichment(
+    parsed: WorkflowCandidate, enrichment: WorkflowEnrichment
+) -> WorkflowCandidate:
+    """Merge enrich-owned fields into parse-owned workflow structure by step key."""
+    parsed_keys = [step.step_key for step in parsed.steps]
+    enrich_keys = [step.step_key for step in enrichment.steps]
+
+    if len(enrich_keys) != len(set(enrich_keys)):
+        raise AiServiceContractError("AI enrich response contains duplicate step keys")
+
+    missing = sorted(set(parsed_keys) - set(enrich_keys))
+    extra = sorted(set(enrich_keys) - set(parsed_keys))
+    if missing:
+        raise AiServiceContractError(
+            f"AI enrich response missing step keys: {', '.join(missing)}"
+        )
+    if extra:
+        raise AiServiceContractError(
+            f"AI enrich response returned unknown step keys: {', '.join(extra)}"
+        )
+
+    enrichment_by_key = {step.step_key: step for step in enrichment.steps}
+    merged_steps = []
+    for step in parsed.steps:
+        enriched = enrichment_by_key[step.step_key]
+        merged_steps.append(
+            WorkflowCandidateStep(
+                step_key=step.step_key,
+                name=step.name,
+                step_type=step.step_type,
+                risk_level=enriched.risk_level,
+                requires_approval=enriched.requires_approval,
+                command=step.command,
+            )
+        )
+
+    return WorkflowCandidate(
+        request_id=parsed.request_id,
+        workflow_title=parsed.workflow_title,
+        steps=merged_steps,
+        warnings=[*parsed.warnings, *enrichment.warnings],
+    )

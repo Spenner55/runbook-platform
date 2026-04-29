@@ -5,6 +5,7 @@ from django.db import IntegrityError
 
 from apps.common.exceptions import (
     ConcurrencyConflictError,
+    DomainConflictError,
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
 )
@@ -39,14 +40,14 @@ def _candidate(steps=None, title="Deploy Service"):
             WorkflowCandidateStep(
                 step_key="step-1",
                 name="Verify prerequisites",
-                step_type="manual",
+                step_type="manual_task",
                 risk_level="low",
                 requires_approval=False,
             ),
             WorkflowCandidateStep(
                 step_key="step-2",
                 name="Execute main task",
-                step_type="manual",
+                step_type="manual_task",
                 risk_level="medium",
                 requires_approval=False,
             ),
@@ -129,7 +130,7 @@ def test_definition_maps_candidate_fields(runbook):
     step = workflow.definition["steps"][0]
     assert step["id"] == "step-1"
     assert step["name"] == "Verify prerequisites"
-    assert step["type"] == "manual"
+    assert step["type"] == "manual_task"
     assert step["risk"] == "low"
     assert "requiresApproval" in step
 
@@ -181,14 +182,14 @@ def test_duplicate_step_key_raises_invalid_definition_error(runbook):
         WorkflowCandidateStep(
             step_key="dup",
             name="Step A",
-            step_type="manual",
+            step_type="manual_task",
             risk_level="low",
             requires_approval=False,
         ),
         WorkflowCandidateStep(
             step_key="dup",
             name="Step B",
-            step_type="manual",
+            step_type="manual_task",
             risk_level="low",
             requires_approval=False,
         ),
@@ -204,7 +205,7 @@ def test_step_missing_name_raises_invalid_definition_error(runbook):
         WorkflowCandidateStep(
             step_key="s1",
             name="",
-            step_type="manual",
+            step_type="manual_task",
             risk_level="low",
             requires_approval=False,
         ),
@@ -251,6 +252,44 @@ def test_publish_workflow_rejects_non_draft(runbook):
     assert exc_info.value.code == "invalid_state_transition"
 
 
+@pytest.mark.django_db
+def test_publish_workflow_rejects_requires_review(runbook):
+    workflow = services.create_workflow(
+        runbook=runbook,
+        transform_client=_stub(),
+        requires_review=True,
+        parse_source=Workflow.ParseSource.AI_PARSE,
+    )
+    with pytest.raises(DomainConflictError) as exc_info:
+        services.publish_workflow(workflow=workflow)
+    assert exc_info.value.code == "workflow_requires_review"
+
+
+@pytest.mark.django_db
+def test_accept_review_allows_publish(runbook):
+    workflow = services.create_workflow(
+        runbook=runbook,
+        transform_client=_stub(),
+        requires_review=True,
+        parse_source=Workflow.ParseSource.AI_PARSE,
+    )
+    services.accept_review(workflow=workflow)
+    published = services.publish_workflow(workflow=workflow)
+    assert published.status == Workflow.Status.PUBLISHED
+
+
+@pytest.mark.django_db
+def test_reject_review_archives_workflow(runbook):
+    workflow = services.create_workflow(
+        runbook=runbook,
+        transform_client=_stub(),
+        requires_review=True,
+        parse_source=Workflow.ParseSource.AI_PARSE,
+    )
+    rejected = services.reject_review(workflow=workflow)
+    assert rejected.status == Workflow.Status.ARCHIVED
+
+
 # ---------------------------------------------------------------------------
 # create_workflow_from_runbook — AI boundary wiring
 # ---------------------------------------------------------------------------
@@ -290,8 +329,72 @@ def test_create_workflow_from_runbook_uses_http_client(runbook):
 
     assert workflow.version == 1
     assert workflow.status == Workflow.Status.DRAFT
+    assert workflow.requires_review is True
+    assert workflow.parse_source == Workflow.ParseSource.AI_PARSE
     mock_http_client.transform_runbook.assert_called_once_with(
         runbook_title=runbook.title,
         runbook_slug=runbook.slug,
         raw_content=runbook.raw_content,
     )
+
+
+# ---------------------------------------------------------------------------
+# Canonical schema and semantic validation
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_schema_rejects_invalid_workflow_structure():
+    with pytest.raises(InvalidWorkflowDefinitionError) as exc_info:
+        services._validate_workflow_definition({"name": "Missing steps"})
+    assert exc_info.value.code == "workflow_schema_violation"
+
+
+def test_semantic_validation_rejects_unknown_step_type():
+    definition = {
+        "name": "Bad",
+        "steps": [
+            {
+                "id": "step-1",
+                "name": "Do work",
+                "type": "unknown_type",
+                "risk": "low",
+                "requiresApproval": False,
+            }
+        ],
+    }
+    with pytest.raises(InvalidWorkflowDefinitionError):
+        services._validate_workflow_definition(definition)
+
+
+def test_semantic_validation_rejects_unknown_risk_level():
+    definition = {
+        "name": "Bad",
+        "steps": [
+            {
+                "id": "step-1",
+                "name": "Do work",
+                "type": "manual_task",
+                "risk": "extreme",
+                "requiresApproval": False,
+            }
+        ],
+    }
+    with pytest.raises(InvalidWorkflowDefinitionError):
+        services._validate_workflow_definition(definition)
+
+
+def test_semantic_validation_rejects_non_boolean_requires_approval():
+    definition = {
+        "name": "Bad",
+        "steps": [
+            {
+                "id": "step-1",
+                "name": "Do work",
+                "type": "manual_task",
+                "risk": "low",
+                "requiresApproval": "yes",
+            }
+        ],
+    }
+    with pytest.raises(InvalidWorkflowDefinitionError):
+        services._validate_workflow_definition(definition)

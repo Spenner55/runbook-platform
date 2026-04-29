@@ -4,11 +4,11 @@ description: Which implementation phases have been completed and verified
 type: project
 ---
 
-Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28 after readiness-audit remediation.
+Phase 10.7 (Backend Identity Foundation) is complete and verified as of 2026-04-29.
 
-**Why:** Phase 10.4 adds Django-controlled artifact storage and retrieval for execution outputs.
+**Why:** Phase 10.7 adds a custom UUID-based User model and JWT auth endpoints under `/api/v1/auth/`. This replaces Django's built-in `auth.User` as the `AUTH_USER_MODEL`.
 
-**How to apply:** Next phase is Phase 10.5 (Integrations). Do not re-implement artifact infrastructure. Use the grant-gated artifact download API and pass `organization_id` on public artifact calls until Phase 10.7 auth replaces explicit tenant scoping.
+**How to apply:** Next phase is org RBAC / membership. Do not touch runner auth or frontend auth yet. Use the `users.User` model for any new FK references — never `auth.User`. Auth endpoints: login (POST), refresh (POST, httpOnly cookie), logout (POST), me (GET), register (POST).
 
 ## Phase completion summary
 
@@ -23,6 +23,9 @@ Phase 10.4 (Artifacts) is complete and verified as of 2026-04-28 after readiness
 - Phase 10.2: Policies (policy evaluation, risk floor)
 - Phase 10.3: Audit trail (AuditEvent model, AuditService.emit)
 - Phase 10.4: Artifacts — **complete**
+- Phase 10.5: Integrations — **complete**
+- Phase 10.6: (audit/workflow fixes) — **complete**
+- Phase 10.7: Backend Identity Foundation (custom User, JWT auth endpoints) — **complete**
 
 ## Phase 10.4 final test counts (all passing)
 

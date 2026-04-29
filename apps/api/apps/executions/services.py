@@ -41,6 +41,12 @@ def create_execution(
             ),
         )
 
+    if workflow.requires_review:
+        raise DomainValidationError(
+            code="workflow_requires_review",
+            detail="Workflow requires human review before it can be executed.",
+        )
+
     definition = workflow.definition
     _validate_workflow_definition(definition)
 

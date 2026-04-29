@@ -75,7 +75,7 @@ class ApprovalDecision(BaseModel):
     decision = models.CharField(max_length=16, choices=Decision.choices)
     source_type = models.CharField(max_length=16, choices=SourceType.choices)
     decided_by_user = models.ForeignKey(
-        "auth.User",
+        "users.User",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

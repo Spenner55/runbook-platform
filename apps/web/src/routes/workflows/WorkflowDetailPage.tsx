@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useCreateExecution } from '../../features/executions/hooks/useCreateExecution'
 import { usePublishWorkflow } from '../../features/workflows/hooks/usePublishWorkflow'
@@ -40,6 +40,13 @@ export function WorkflowDetailPage() {
         <p className="banner banner--error">{getApiErrorMessage(workflowQuery.error)}</p>
       ) : null}
 
+      {workflowQuery.data?.requires_review ? (
+        <p className="banner banner--warning">
+          AI-generated workflow requires review before it can be published or executed.{' '}
+          <Link to={`/workflows/${workflowId}/review`}>Review now</Link>
+        </p>
+      ) : null}
+
       {workflowQuery.data ? (
         <>
           <div className="detail-grid">
@@ -75,7 +82,11 @@ export function WorkflowDetailPage() {
 
             <button
               className="button button--secondary"
-              disabled={createExecution.isPending || workflowQuery.data.status !== 'published'}
+              disabled={
+                createExecution.isPending ||
+                workflowQuery.data.status !== 'published' ||
+                workflowQuery.data.requires_review
+              }
               onClick={handleCreateExecution}
               type="button"
             >

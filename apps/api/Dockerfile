@@ -9,6 +9,7 @@ COPY apps/api/requirements/ /tmp/requirements/
 RUN pip install --no-cache-dir -r /tmp/requirements/dev.txt
 
 COPY apps/api /app
+COPY packages/workflow-schema /packages/workflow-schema
 
 EXPOSE 8000
 

@@ -6,7 +6,9 @@ Uses TestClient so no real network is needed.
 
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
+from app.services import workflow_parser
 
 client = TestClient(app)
 
@@ -81,6 +83,18 @@ def test_same_input_produces_same_output():
     r1 = client.post("/parse/runbook", json=_VALID_PAYLOAD)
     r2 = client.post("/parse/runbook", json=_VALID_PAYLOAD)
     assert r1.json()["steps"] == r2.json()["steps"]
+
+
+def test_normal_tests_force_deterministic_mode(monkeypatch):
+    def fail_if_llm_called(_request):
+        raise AssertionError("LLM parser must not run in normal tests")
+
+    monkeypatch.setattr(workflow_parser, "_llm_parse", fail_if_llm_called)
+    assert settings.AI_USE_LLM_PARSER is False
+
+    response = client.post("/parse/runbook", json=_VALID_PAYLOAD)
+    assert response.status_code == 200
+    assert len(response.json()["steps"]) == 3
 
 
 # ---------------------------------------------------------------------------

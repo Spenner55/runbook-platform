@@ -32,6 +32,7 @@ router.register("workflows", WorkflowViewSet, basename="workflow")
 router.register("executions", ExecutionViewSet, basename="execution")
 
 urlpatterns = [
+    path("auth/", include("apps.users.urls")),
     path("", include(router.urls)),
     path("approvals/", include("apps.approvals.urls")),
     path("policies/", include("apps.policies.urls")),

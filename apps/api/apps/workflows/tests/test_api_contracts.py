@@ -25,6 +25,17 @@ def draft_workflow(runbook):
     )
 
 
+@pytest.fixture
+def pending_review_workflow(runbook):
+    """Create an AI-style pending-review workflow without calling the AI service."""
+    return workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=StubWorkflowTransformClient(),
+        requires_review=True,
+        parse_source="ai_parse",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Create endpoint
 # ---------------------------------------------------------------------------
@@ -205,6 +216,51 @@ def test_publish_already_published_returns_409(draft_workflow):
     body = response.json()
     assert "errors" in body
     assert body["errors"][0]["code"] == "invalid_state_transition"
+
+
+@pytest.mark.django_db
+def test_publish_requires_review_returns_409(pending_review_workflow):
+    client = Client()
+    response = client.post(f"/api/v1/workflows/{pending_review_workflow.id}/publish/")
+    assert response.status_code == 409
+    body = response.json()
+    assert body["errors"][0]["code"] == "workflow_requires_review"
+
+
+@pytest.mark.django_db
+def test_accept_review_clears_requires_review(pending_review_workflow):
+    client = Client()
+    response = client.post(
+        f"/api/v1/workflows/{pending_review_workflow.id}/accept-review/"
+    )
+    assert response.status_code == 200
+    assert response.json()["requires_review"] is False
+    assert response.json()["status"] == "draft"
+
+
+@pytest.mark.django_db
+def test_accept_review_allows_publish(pending_review_workflow):
+    client = Client()
+    accept_response = client.post(
+        f"/api/v1/workflows/{pending_review_workflow.id}/accept-review/"
+    )
+    assert accept_response.status_code == 200
+
+    publish_response = client.post(
+        f"/api/v1/workflows/{pending_review_workflow.id}/publish/"
+    )
+    assert publish_response.status_code == 200
+    assert publish_response.json()["status"] == "published"
+
+
+@pytest.mark.django_db
+def test_reject_review_archives_workflow(pending_review_workflow):
+    client = Client()
+    response = client.post(
+        f"/api/v1/workflows/{pending_review_workflow.id}/reject-review/"
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "archived"
 
 
 # ---------------------------------------------------------------------------

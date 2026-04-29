@@ -114,6 +114,29 @@ def test_create_execution_requires_published_workflow(draft_workflow):
     assert exc_info.value.code == "workflow_not_published"
 
 
+@pytest.mark.django_db
+def test_create_execution_rejects_requires_review_workflow(draft_workflow):
+    draft_workflow.status = "published"
+    draft_workflow.requires_review = True
+    draft_workflow.save(update_fields=["status", "requires_review", "updated_at"])
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        services.create_execution(workflow=draft_workflow)
+    assert exc_info.value.code == "workflow_requires_review"
+
+
+@pytest.mark.django_db
+def test_rejected_review_workflow_cannot_be_executed(draft_workflow):
+    draft_workflow.requires_review = True
+    draft_workflow.parse_source = "ai_parse"
+    draft_workflow.save(update_fields=["requires_review", "parse_source", "updated_at"])
+    workflow_services.reject_review(workflow=draft_workflow)
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        services.create_execution(workflow=draft_workflow)
+    assert exc_info.value.code == "workflow_not_published"
+
+
 # ---------------------------------------------------------------------------
 # Definition validation
 # ---------------------------------------------------------------------------
