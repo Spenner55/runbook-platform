@@ -25,7 +25,7 @@ export function acceptWorkflowReview(workflowId: string) {
 }
 
 export function rejectWorkflowReview(workflowId: string) {
-  return apiRequest<void>(`/api/v1/workflows/${workflowId}/reject-review/`, {
+  return apiRequest<WorkflowDetail>(`/api/v1/workflows/${workflowId}/reject-review/`, {
     method: 'POST',
   })
 }

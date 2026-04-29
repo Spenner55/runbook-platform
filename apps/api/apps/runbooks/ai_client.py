@@ -62,6 +62,20 @@ class WorkflowCandidate:
 
 
 @dataclass
+class WorkflowEnrichmentStep:
+    step_key: str
+    risk_level: str
+    requires_approval: bool
+
+
+@dataclass
+class WorkflowEnrichment:
+    request_id: str
+    steps: list[WorkflowEnrichmentStep]
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ExecutionSummary:
     request_id: str
     summary: str
@@ -163,7 +177,7 @@ class RunbookAiClient:
         workflow_title: str,
         steps: list[WorkflowCandidateStep],
         raw_content: str | None = None,
-    ) -> WorkflowCandidate:
+    ) -> WorkflowEnrichment:
         """
         Call the AI service to enrich parsed steps with risk and approval metadata.
         """
@@ -212,7 +226,7 @@ class RunbookAiClient:
                 "AI service returned a non-JSON body"
             ) from exc
 
-        return _validate_and_map_candidate(data)
+        return _validate_and_map_enrichment(data)
 
     def summarize_execution(
         self,
@@ -324,6 +338,10 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
             raise AiServiceContractError(f"Step {i} missing 'step_type'")
         if not risk_level:
             raise AiServiceContractError(f"Step {i} missing 'risk_level'")
+        if not isinstance(requires_approval, bool):
+            raise AiServiceContractError(
+                f"Step {i} field 'requires_approval' must be a boolean"
+            )
         if step_key in seen_keys:
             raise AiServiceContractError(f"Duplicate step_key: '{step_key}'")
 
@@ -335,7 +353,7 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
                 name=name,
                 step_type=step_type,
                 risk_level=risk_level,
-                requires_approval=bool(requires_approval),
+                requires_approval=requires_approval,
                 command=command if isinstance(command, str) else None,
             )
         )
@@ -344,6 +362,56 @@ def _validate_and_map_candidate(data: object) -> WorkflowCandidate:
     return WorkflowCandidate(
         request_id=data.get("request_id", ""),
         workflow_title=workflow_title,
+        steps=steps,
+        warnings=warnings if isinstance(warnings, list) else [],
+    )
+
+
+def _validate_and_map_enrichment(data: object) -> WorkflowEnrichment:
+    """Validate raw enrich response dict and return typed enrichment data."""
+    if not isinstance(data, dict):
+        raise AiServiceContractError("AI enrich response is not a JSON object")
+
+    raw_steps = data.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        raise AiServiceContractError(
+            "AI enrich response 'steps' must be a non-empty list"
+        )
+
+    steps: list[WorkflowEnrichmentStep] = []
+    seen_keys: set[str] = set()
+
+    for i, raw_step in enumerate(raw_steps):
+        if not isinstance(raw_step, dict):
+            raise AiServiceContractError(f"Enrich step {i} is not a JSON object")
+
+        step_key = raw_step.get("step_key")
+        risk_level = raw_step.get("risk_level")
+        requires_approval = raw_step.get("requires_approval")
+
+        if not step_key:
+            raise AiServiceContractError(f"Enrich step {i} missing 'step_key'")
+        if step_key in seen_keys:
+            raise AiServiceContractError(f"Duplicate enrich step_key: '{step_key}'")
+        if not isinstance(risk_level, str) or not risk_level:
+            raise AiServiceContractError(f"Enrich step {i} missing 'risk_level'")
+        if not isinstance(requires_approval, bool):
+            raise AiServiceContractError(
+                f"Enrich step {i} field 'requires_approval' must be a boolean"
+            )
+
+        seen_keys.add(step_key)
+        steps.append(
+            WorkflowEnrichmentStep(
+                step_key=step_key,
+                risk_level=risk_level,
+                requires_approval=requires_approval,
+            )
+        )
+
+    warnings = data.get("warnings", [])
+    return WorkflowEnrichment(
+        request_id=data.get("request_id", ""),
         steps=steps,
         warnings=warnings if isinstance(warnings, list) else [],
     )

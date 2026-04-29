@@ -17,6 +17,11 @@ is an explicit, opt-in human decision.
 | `OPENAI_API_KEY` | *(empty)* | Not required. Missing key does not fail tests or startup. |
 | `AI_PARSE_MODEL` | *(empty)* | Not required. No model is assumed. |
 
+`docker-compose.yml` passes `OPENAI_API_KEY` only to the `ai` service. The
+`api`, `runner`, `web`, and `postgres` containers do not receive the key, so
+OpenAI billing is possible only from the AI container and only when LLM mode is
+explicitly enabled.
+
 ---
 
 ## How to enable LLM parsing (local dev only)
@@ -77,7 +82,8 @@ docker compose exec ai pytest -m llm
 ```
 
 Without these two variables, any test decorated with `@pytest.mark.llm` is **skipped**,
-not failed.
+not failed. Normal test runs force deterministic mode even if your local `.env`
+contains `AI_USE_LLM_PARSER=true` and an `OPENAI_API_KEY`.
 
 ---
 

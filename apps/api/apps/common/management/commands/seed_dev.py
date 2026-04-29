@@ -62,7 +62,7 @@ class Command(BaseCommand):
                 {
                     "id": "check-health",
                     "name": "Pre-deploy health check",
-                    "type": "shell",
+                    "type": "shell_command",
                     "risk": "low",
                     "command": "curl -sf http://internal/health || exit 1",
                     "requiresApproval": False,
@@ -70,7 +70,7 @@ class Command(BaseCommand):
                 {
                     "id": "deploy",
                     "name": "Run deployment script",
-                    "type": "shell",
+                    "type": "shell_command",
                     "risk": "high",
                     "command": "./scripts/deploy.sh --env production",
                     "requiresApproval": True,
@@ -78,7 +78,7 @@ class Command(BaseCommand):
                 {
                     "id": "smoke-test",
                     "name": "Post-deploy smoke test",
-                    "type": "shell",
+                    "type": "shell_command",
                     "risk": "low",
                     "command": "pytest tests/smoke/ -q",
                     "requiresApproval": False,

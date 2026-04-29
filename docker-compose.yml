@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_DB: runbook_platform
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-runbook_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
@@ -19,10 +19,39 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    env_file:
-      - .env
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-change-me}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,api}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/runbook_platform}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ai:8001}
+      AI_PARSE_MODEL: ${AI_PARSE_MODEL:-}
+      AI_CONNECT_TIMEOUT_SECONDS: ${AI_CONNECT_TIMEOUT_SECONDS:-1.0}
+      AI_READ_TIMEOUT_SECONDS: ${AI_READ_TIMEOUT_SECONDS:-60.0}
+      AI_WRITE_TIMEOUT_SECONDS: ${AI_WRITE_TIMEOUT_SECONDS:-5.0}
+      AI_POOL_TIMEOUT_SECONDS: ${AI_POOL_TIMEOUT_SECONDS:-1.0}
+      AI_MAX_INPUT_CHARS: ${AI_MAX_INPUT_CHARS:-100000}
+      INTEGRATION_FERNET_KEY: ${INTEGRATION_FERNET_KEY:-}
+      INTEGRATION_DISPATCH_TIMEOUT_SECONDS: ${INTEGRATION_DISPATCH_TIMEOUT_SECONDS:-3.0}
+      INTEGRATION_DISPATCH_BUDGET_SECONDS: ${INTEGRATION_DISPATCH_BUDGET_SECONDS:-10.0}
+      INTEGRATION_MAX_PER_TRIGGER: ${INTEGRATION_MAX_PER_TRIGGER:-25}
+      ARTIFACT_STORAGE_BACKEND: ${ARTIFACT_STORAGE_BACKEND:-local}
+      ARTIFACT_MEDIA_ROOT: ${ARTIFACT_MEDIA_ROOT:-/app/media/artifacts}
+      ARTIFACT_S3_BUCKET: ${ARTIFACT_S3_BUCKET:-}
+      ARTIFACT_S3_REGION: ${ARTIFACT_S3_REGION:-}
+      ARTIFACT_S3_PREFIX: ${ARTIFACT_S3_PREFIX:-artifacts/}
+      ARTIFACT_ALLOWED_MIME_TYPES: ${ARTIFACT_ALLOWED_MIME_TYPES:-}
+      ARTIFACT_REQUIRE_CHECKSUM: ${ARTIFACT_REQUIRE_CHECKSUM:-1}
+      ARTIFACT_MAX_UPLOAD_BYTES: ${ARTIFACT_MAX_UPLOAD_BYTES:-52428800}
+      ARTIFACT_MAX_ARTIFACTS_PER_STEP: ${ARTIFACT_MAX_ARTIFACTS_PER_STEP:-10}
+      ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION: ${ARTIFACT_MAX_TOTAL_BYTES_PER_EXECUTION:-262144000}
+      ARTIFACT_DAILY_BYTES_PER_RUNNER: ${ARTIFACT_DAILY_BYTES_PER_RUNNER:-1073741824}
+      ARTIFACT_DOWNLOAD_URL_TTL_SECONDS: ${ARTIFACT_DOWNLOAD_URL_TTL_SECONDS:-300}
+      ARTIFACT_MAX_METADATA_BYTES: ${ARTIFACT_MAX_METADATA_BYTES:-8192}
+      ARTIFACT_STDOUT_STDERR_MAX_BYTES: ${ARTIFACT_STDOUT_STDERR_MAX_BYTES:-5242880}
     volumes:
       - ./apps/api:/app
+      - ./packages/workflow-schema:/packages/workflow-schema:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -44,8 +73,15 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    env_file:
-      - .env
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+      RUNNER_ID: ${RUNNER_ID:-runner-dev}
+      RUNNER_VERSION: ${RUNNER_VERSION:-0.1.0}
+      RUNNER_REGISTRATION_TOKEN: ${RUNNER_REGISTRATION_TOKEN:-change-me}
+      RUNNER_POLL_INTERVAL_SECONDS: ${RUNNER_POLL_INTERVAL_SECONDS:-5}
+      RUNNER_HEARTBEAT_INTERVAL_SECONDS: ${RUNNER_HEARTBEAT_INTERVAL_SECONDS:-10}
+      RUNNER_FAKE_STEP_DELAY_SECONDS: ${RUNNER_FAKE_STEP_DELAY_SECONDS:-1.0}
+      RUNNER_LOG_LEVEL: ${RUNNER_LOG_LEVEL:-INFO}
     volumes:
       - ./apps/runner:/app
     depends_on:
@@ -55,8 +91,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-    env_file:
-      - .env
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     volumes:
       - ./apps/web:/app
       - /app/node_modules

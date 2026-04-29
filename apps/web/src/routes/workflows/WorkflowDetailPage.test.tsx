@@ -11,6 +11,8 @@ const DRAFT_WORKFLOW = {
   name: 'Rotate Creds',
   version: 1,
   status: 'draft',
+  requires_review: false,
+  parse_source: 'manual',
   definition: {
     name: 'Rotate Creds',
     steps: [
@@ -38,6 +40,12 @@ const DRAFT_WORKFLOW = {
 }
 
 const PUBLISHED_WORKFLOW = { ...DRAFT_WORKFLOW, status: 'published' }
+const PENDING_REVIEW_WORKFLOW = {
+  ...DRAFT_WORKFLOW,
+  status: 'published',
+  requires_review: true,
+  parse_source: 'ai_parse',
+}
 
 describe('WorkflowDetailPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
@@ -117,6 +125,22 @@ describe('WorkflowDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Create execution' })).not.toBeDisabled()
     })
+  })
+
+  it('create execution button is disabled for pending-review workflow', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(PENDING_REVIEW_WORKFLOW))
+
+    renderRoute(<WorkflowDetailPage />, {
+      path: '/workflows/:workflowId',
+      route: '/workflows/wf-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Create execution' })).toBeDisabled()
+    })
+    expect(
+      screen.getByText(/requires review before it can be published or executed/i)
+    ).toBeInTheDocument()
   })
 
   it('clicking create execution calls Django executions endpoint', async () => {

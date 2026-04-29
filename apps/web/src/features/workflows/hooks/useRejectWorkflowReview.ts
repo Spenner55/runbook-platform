@@ -9,8 +9,8 @@ export function useRejectWorkflowReview(workflowId: string | null) {
 
   return useMutation({
     mutationFn: async () => rejectWorkflowReview(workflowId ?? ''),
-    onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.workflow(workflowId ?? '') })
+    onSuccess: async (workflow) => {
+      queryClient.setQueryData(queryKeys.workflow(workflow.id), workflow)
     },
   })
 }

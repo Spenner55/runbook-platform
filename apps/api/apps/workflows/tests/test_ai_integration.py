@@ -23,11 +23,11 @@ from apps.runbooks.ai_client import (
     AiServiceBadResponseError,
     AiServiceContractError,
     AiServiceTimeoutError,
-    AiServiceUnavailableError,
     ExecutionSummary,
     RunbookAiClient,
     WorkflowCandidate,
     WorkflowCandidateStep,
+    WorkflowEnrichment,
 )
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import (
@@ -35,7 +35,6 @@ from apps.workflows.internal_clients import (
     StubWorkflowTransformClient,
 )
 from apps.workflows.models import Workflow
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,7 +76,6 @@ def _parse_response_body() -> dict:
 def _enrich_response_body() -> dict:
     return {
         "request_id": "req-2",
-        "workflow_title": "Deploy Service",
         "steps": [
             {
                 "step_key": "step-001",
@@ -135,7 +133,7 @@ def test_enrich_happy_path():
         workflow_title="Deploy Service",
         steps=steps,
     )
-    assert isinstance(result, WorkflowCandidate)
+    assert isinstance(result, WorkflowEnrichment)
     assert result.steps[0].risk_level == "critical"
     assert result.steps[0].requires_approval is True
     assert result.warnings == ["risk elevated by enrichment"]
@@ -180,9 +178,7 @@ def test_enrich_timeout_raises_timeout_error():
 
     client = _make_client(handler)
     with pytest.raises(AiServiceTimeoutError):
-        client.enrich_workflow_candidate(
-            request_id="r", workflow_title="T", steps=[]
-        )
+        client.enrich_workflow_candidate(request_id="r", workflow_title="T", steps=[])
 
 
 def test_enrich_non_200_raises_bad_response():
@@ -191,19 +187,167 @@ def test_enrich_non_200_raises_bad_response():
 
     client = _make_client(handler)
     with pytest.raises(AiServiceBadResponseError):
-        client.enrich_workflow_candidate(
-            request_id="r", workflow_title="T", steps=[]
-        )
+        client.enrich_workflow_candidate(request_id="r", workflow_title="T", steps=[])
 
 
 def test_enrich_missing_steps_raises_contract_error():
     def handler(request: httpx.Request) -> httpx.Response:
-        return _json_response({"request_id": "r", "workflow_title": "T"})
+        return _json_response({"request_id": "r"})
+
+    client = _make_client(handler)
+    with pytest.raises(AiServiceContractError):
+        client.enrich_workflow_candidate(request_id="r", workflow_title="T", steps=[])
+
+
+def test_enrich_non_boolean_requires_approval_raises_contract_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _enrich_response_body()
+        body["steps"][0]["requires_approval"] = "yes"
+        return _json_response(body)
 
     client = _make_client(handler)
     with pytest.raises(AiServiceContractError):
         client.enrich_workflow_candidate(
-            request_id="r", workflow_title="T", steps=[]
+            request_id="r",
+            workflow_title="T",
+            steps=[
+                WorkflowCandidateStep(
+                    step_key="step-001",
+                    name="Drain traffic",
+                    step_type="manual_task",
+                    risk_level="medium",
+                    requires_approval=False,
+                )
+            ],
+        )
+
+
+def test_enrich_contract_does_not_require_workflow_title():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = _enrich_response_body()
+        assert "workflow_title" not in body
+        return _json_response(body)
+
+    client = _make_client(handler)
+    result = client.enrich_workflow_candidate(
+        request_id="r",
+        workflow_title="Parse title owns this",
+        steps=[
+            WorkflowCandidateStep(
+                step_key="step-001",
+                name="Drain traffic",
+                step_type="manual_task",
+                risk_level="medium",
+                requires_approval=False,
+            )
+        ],
+    )
+    assert result.steps[0].step_key == "step-001"
+
+
+# ---------------------------------------------------------------------------
+# parse -> enrich pipeline
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_parse_enrich_pipeline_happy_path(runbook):
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/parse/runbook":
+            return _json_response(_parse_response_body())
+        if request.url.path == "/enrich/workflow":
+            return _json_response(_enrich_response_body())
+        return httpx.Response(404)
+
+    transform_client = HttpWorkflowTransformClient(ai_client=_make_client(handler))
+    workflow = workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=transform_client,
+        requires_review=True,
+        parse_source=Workflow.ParseSource.AI_PARSE,
+    )
+
+    assert seen_paths == ["/parse/runbook", "/enrich/workflow"]
+    assert workflow.definition["name"] == "Deploy Service"
+    assert workflow.definition["steps"][0]["risk"] == "critical"
+    assert workflow.definition["steps"][0]["requiresApproval"] is True
+    assert workflow.requires_review is True
+    assert workflow.parse_source == Workflow.ParseSource.AI_PARSE
+
+
+@pytest.mark.django_db
+def test_parse_enrich_missing_step_key_fails(runbook):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/parse/runbook":
+            body = _parse_response_body()
+            body["steps"].append(
+                {
+                    "step_key": "step-002",
+                    "name": "Validate health",
+                    "step_type": "manual_task",
+                    "risk_level": "low",
+                    "requires_approval": False,
+                }
+            )
+            return _json_response(body)
+        return _json_response(_enrich_response_body())
+
+    transform_client = HttpWorkflowTransformClient(ai_client=_make_client(handler))
+    with pytest.raises(AiServiceContractError):
+        workflow_services.create_workflow(
+            runbook=runbook,
+            transform_client=transform_client,
+            requires_review=True,
+            parse_source=Workflow.ParseSource.AI_PARSE,
+        )
+
+
+@pytest.mark.django_db
+def test_parse_enrich_extra_step_key_fails(runbook):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/parse/runbook":
+            return _json_response(_parse_response_body())
+        body = _enrich_response_body()
+        body["steps"].append(
+            {
+                "step_key": "step-extra",
+                "name": "Unexpected",
+                "step_type": "manual_task",
+                "risk_level": "low",
+                "requires_approval": False,
+            }
+        )
+        return _json_response(body)
+
+    transform_client = HttpWorkflowTransformClient(ai_client=_make_client(handler))
+    with pytest.raises(AiServiceContractError):
+        workflow_services.create_workflow(
+            runbook=runbook,
+            transform_client=transform_client,
+            requires_review=True,
+            parse_source=Workflow.ParseSource.AI_PARSE,
+        )
+
+
+@pytest.mark.django_db
+def test_parse_enrich_duplicate_step_key_fails(runbook):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/parse/runbook":
+            return _json_response(_parse_response_body())
+        body = _enrich_response_body()
+        body["steps"].append(dict(body["steps"][0]))
+        return _json_response(body)
+
+    transform_client = HttpWorkflowTransformClient(ai_client=_make_client(handler))
+    with pytest.raises(AiServiceContractError):
+        workflow_services.create_workflow(
+            runbook=runbook,
+            transform_client=transform_client,
+            requires_review=True,
+            parse_source=Workflow.ParseSource.AI_PARSE,
         )
 
 
@@ -319,8 +463,11 @@ def test_input_guard_allows_content_at_limit(runbook):
     mock_http_client = MagicMock(spec=HttpWorkflowTransformClient)
     mock_http_client.transform_runbook.return_value = fake_candidate
 
-    with patch("apps.workflows.services.settings") as mock_settings, patch.object(
-        HttpWorkflowTransformClient, "from_settings", return_value=mock_http_client
+    with (
+        patch("apps.workflows.services.settings") as mock_settings,
+        patch.object(
+            HttpWorkflowTransformClient, "from_settings", return_value=mock_http_client
+        ),
     ):
         mock_settings.AI_MAX_INPUT_CHARS = 100000
         workflow = workflow_services.create_workflow_from_runbook(runbook=runbook)
@@ -360,7 +507,10 @@ def test_schema_validation_rejects_missing_required_step_field(runbook):
     with patch.object(
         services,
         "_map_candidate_to_definition",
-        return_value={"name": "Deploy", "steps": [{"id": "step-001", "name": "Check", "type": "manual_task"}]},
+        return_value={
+            "name": "Deploy",
+            "steps": [{"id": "step-001", "name": "Check", "type": "manual_task"}],
+        },
     ):
         with pytest.raises(InvalidWorkflowDefinitionError) as exc_info:
             workflow_services.create_workflow(runbook=runbook, transform_client=client)

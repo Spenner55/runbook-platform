@@ -1,11 +1,15 @@
+import json
+from functools import lru_cache
+from pathlib import Path
+
+import jsonschema
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
-import jsonschema
-
 from apps.common.exceptions import (
     ConcurrencyConflictError,
+    DomainConflictError,
     DomainValidationError,
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
@@ -14,32 +18,8 @@ from apps.runbooks.models import Runbook
 from apps.workflows.internal_clients import WorkflowCandidate
 from apps.workflows.models import Workflow
 
-# Canonical workflow schema — must stay in sync with workflow.schema.json.
-_WORKFLOW_SCHEMA = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "WorkflowDefinition",
-    "type": "object",
-    "required": ["name", "steps"],
-    "properties": {
-        "name": {"type": "string"},
-        "steps": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["id", "name", "type", "risk"],
-                "properties": {
-                    "id": {"type": "string"},
-                    "name": {"type": "string"},
-                    "type": {"type": "string"},
-                    "risk": {"type": "string"},
-                    "command": {"type": "string"},
-                    "requiresApproval": {"type": "boolean"},
-                    "approvalTimeoutSeconds": {"type": "integer", "minimum": 1},
-                },
-            },
-        },
-    },
-}
+SUPPORTED_STEP_TYPES = {"manual_task", "shell_command", "approval"}
+SUPPORTED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
 # ---------------------------------------------------------------------------
 # Public service functions
@@ -66,7 +46,7 @@ def create_workflow(
     )
     _validate_candidate(candidate)
     definition = _map_candidate_to_definition(candidate)
-    _validate_definition_schema(definition)
+    _validate_workflow_definition(definition)
 
     try:
         with transaction.atomic():
@@ -158,6 +138,11 @@ def reject_review(*, workflow: Workflow) -> Workflow:
 
 def publish_workflow(*, workflow: Workflow) -> Workflow:
     """Transition a draft workflow to published status, superseding any currently published sibling."""
+    if workflow.requires_review:
+        raise DomainConflictError(
+            code="workflow_requires_review",
+            detail="Workflow requires human review before it can be published.",
+        )
     if workflow.status != Workflow.Status.DRAFT:
         raise InvalidStateTransitionError(
             code="invalid_state_transition",
@@ -221,12 +206,88 @@ def _validate_candidate(candidate: WorkflowCandidate) -> None:
 def _validate_definition_schema(definition: dict) -> None:
     """Validate the mapped definition against the canonical workflow JSON schema."""
     try:
-        jsonschema.validate(instance=definition, schema=_WORKFLOW_SCHEMA)
+        jsonschema.Draft7Validator(_workflow_schema()).validate(definition)
     except jsonschema.ValidationError as exc:
         raise InvalidWorkflowDefinitionError(
             code="workflow_schema_violation",
             detail=f"Workflow definition does not conform to schema: {exc.message}",
         ) from exc
+
+
+def _validate_definition_semantics(definition: dict) -> None:
+    """Validate workflow domain invariants not expressible in the v1 JSON schema."""
+    steps = definition.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise InvalidWorkflowDefinitionError(
+            code="invalid_workflow_definition",
+            detail="Workflow definition must contain at least one step.",
+        )
+
+    seen_ids: set[str] = set()
+    for position, step in enumerate(steps, start=1):
+        step_id = step.get("id")
+        if not isinstance(step_id, str) or not step_id:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step at position {position} is missing a stable id.",
+            )
+        if step_id in seen_ids:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Duplicate step id '{step_id}' in workflow definition.",
+            )
+        seen_ids.add(step_id)
+
+        step_type = step.get("type")
+        if step_type not in SUPPORTED_STEP_TYPES:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step '{step_id}' has unsupported type '{step_type}'.",
+            )
+
+        risk = step.get("risk")
+        if risk not in SUPPORTED_RISK_LEVELS:
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step '{step_id}' has unsupported risk level '{risk}'.",
+            )
+
+        requires_approval = step.get("requiresApproval")
+        if "requiresApproval" in step and not isinstance(requires_approval, bool):
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step '{step_id}' field 'requiresApproval' must be a boolean.",
+            )
+
+        command = step.get("command")
+        if "command" in step and not isinstance(command, str):
+            raise InvalidWorkflowDefinitionError(
+                code="invalid_workflow_definition",
+                detail=f"Step '{step_id}' field 'command' must be a string.",
+            )
+
+
+def _validate_workflow_definition(definition: dict) -> None:
+    _validate_definition_schema(definition)
+    _validate_definition_semantics(definition)
+
+
+@lru_cache(maxsize=1)
+def _workflow_schema() -> dict:
+    schema_path = _workflow_schema_path()
+    with schema_path.open("r", encoding="utf-8") as schema_file:
+        return json.load(schema_file)
+
+
+def _workflow_schema_path() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "packages" / "workflow-schema" / "workflow.schema.json"
+        if candidate.is_file():
+            return candidate
+    container_candidate = Path("/packages/workflow-schema/workflow.schema.json")
+    if container_candidate.is_file():
+        return container_candidate
+    raise RuntimeError("Could not locate packages/workflow-schema/workflow.schema.json")
 
 
 def _map_candidate_to_definition(candidate: WorkflowCandidate) -> dict:
