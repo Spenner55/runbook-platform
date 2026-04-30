@@ -32,7 +32,7 @@ export function WorkflowDetailPage() {
         <Link className="muted" to={`/runbooks/${runbookId}`}>
           ← Back to Runbook
         </Link>
-        
+
         <h2>Workflow detail</h2>
       </div>
 

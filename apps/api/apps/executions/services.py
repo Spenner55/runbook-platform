@@ -590,7 +590,11 @@ def complete_execution(
                 else None,
             },
         )
-    _ts = execution.finished_at.isoformat() if execution.finished_at else timezone.now().isoformat()
+    _ts = (
+        execution.finished_at.isoformat()
+        if execution.finished_at
+        else timezone.now().isoformat()
+    )
     _emit_on_commit(
         str(execution.id),
         StreamEvent(
@@ -653,7 +657,9 @@ def emit_step_waiting_for_approval_audit(
     )
 
 
-def emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep) -> None:
+def emit_step_status_changed_event(
+    *, execution: Execution, step: ExecutionStep
+) -> None:
     """Emit a stream event for a persisted execution step status transition."""
     _emit_step_status_changed_event(execution=execution, step=step)
 
@@ -668,7 +674,9 @@ def _emit_on_commit(execution_id: str, event: StreamEvent) -> None:
     transaction.on_commit(lambda: execution_event_bus.emit(execution_id, event))
 
 
-def _emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep) -> None:
+def _emit_step_status_changed_event(
+    *, execution: Execution, step: ExecutionStep
+) -> None:
     _ts = timezone.now().isoformat()
     _emit_on_commit(
         str(execution.id),
@@ -681,7 +689,9 @@ def _emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep
                 "status": step.status,
                 "timestamp": _ts,
                 "started_at": step.started_at.isoformat() if step.started_at else None,
-                "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+                "finished_at": step.finished_at.isoformat()
+                if step.finished_at
+                else None,
                 "exit_code": step.exit_code,
                 "error_message": step.error_message,
             },

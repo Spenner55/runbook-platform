@@ -6,6 +6,7 @@ All tests are synchronous (pytest-django TestCase style). The real emit() is
 a no-op in sync test environments (no ASGI loop), so we patch it to a
 MagicMock to inspect call arguments without needing an event loop.
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -108,7 +109,9 @@ def test_update_step_emits_step_status_changed(claimed_execution):
 
     # At minimum one call with step.status_changed
     step_calls = [
-        c for c in mock_emit.call_args_list if c[0][1].event_type == "step.status_changed"
+        c
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "step.status_changed"
     ]
     assert len(step_calls) == 1
     _, event = step_calls[0][0]
@@ -137,14 +140,20 @@ def test_update_step_emits_execution_running_on_first_step(claimed_execution):
     assert "step.status_changed" in event_types
     assert "execution.status_changed" in event_types
 
-    exec_events = [c for c in mock_emit.call_args_list if c[0][1].event_type == "execution.status_changed"]
+    exec_events = [
+        c
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "execution.status_changed"
+    ]
     assert len(exec_events) == 1
     _, ev = exec_events[0][0]
     assert ev.data["status"] == Execution.Status.RUNNING
 
 
 @pytest.mark.django_db
-def test_update_step_does_not_emit_execution_running_on_subsequent_step(claimed_execution):
+def test_update_step_does_not_emit_execution_running_on_subsequent_step(
+    claimed_execution,
+):
     """Second step going RUNNING must emit only step.status_changed (execution already RUNNING)."""
     execution = claimed_execution["execution"]
     steps = claimed_execution["steps"]
@@ -202,10 +211,18 @@ def test_complete_execution_emits_status_and_closed(claimed_execution):
     assert "execution.status_changed" in event_types
     assert "stream.closed" in event_types
 
-    status_event = next(c[0][1] for c in mock_emit.call_args_list if c[0][1].event_type == "execution.status_changed")
+    status_event = next(
+        c[0][1]
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "execution.status_changed"
+    )
     assert status_event.data["status"] == Execution.Status.SUCCEEDED
 
-    closed_event = next(c[0][1] for c in mock_emit.call_args_list if c[0][1].event_type == "stream.closed")
+    closed_event = next(
+        c[0][1]
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "stream.closed"
+    )
     assert closed_event.data["final_status"] == Execution.Status.SUCCEEDED
     assert closed_event.data["reason"] == "terminal_state"
 
@@ -227,7 +244,11 @@ def test_complete_execution_failed_emits_status_and_closed(claimed_execution):
     assert "execution.status_changed" in event_types
     assert "stream.closed" in event_types
 
-    status_event = next(c[0][1] for c in mock_emit.call_args_list if c[0][1].event_type == "execution.status_changed")
+    status_event = next(
+        c[0][1]
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "execution.status_changed"
+    )
     assert status_event.data["status"] == Execution.Status.FAILED
 
 
@@ -245,10 +266,18 @@ def test_cancel_execution_emits_status_and_closed(queued_execution):
     assert "execution.status_changed" in event_types
     assert "stream.closed" in event_types
 
-    status_event = next(c[0][1] for c in mock_emit.call_args_list if c[0][1].event_type == "execution.status_changed")
+    status_event = next(
+        c[0][1]
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "execution.status_changed"
+    )
     assert status_event.data["status"] == Execution.Status.CANCELLED
 
-    closed_event = next(c[0][1] for c in mock_emit.call_args_list if c[0][1].event_type == "stream.closed")
+    closed_event = next(
+        c[0][1]
+        for c in mock_emit.call_args_list
+        if c[0][1].event_type == "stream.closed"
+    )
     assert closed_event.data["final_status"] == Execution.Status.CANCELLED
     assert closed_event.data["reason"] == "terminal_state"
 

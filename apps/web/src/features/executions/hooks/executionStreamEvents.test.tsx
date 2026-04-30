@@ -151,9 +151,9 @@ describe('useExecutionStream', () => {
 
     expect(result.current.isStreaming).toBe(false)
     expect(result.current.streamClosed).toBe(true)
-    expect(queryClient.getQueryData<ExecutionDetail>(queryKeys.execution('execution-1'))?.status).toBe(
-      'succeeded'
-    )
+    expect(
+      queryClient.getQueryData<ExecutionDetail>(queryKeys.execution('execution-1'))?.status
+    ).toBe('succeeded')
   })
 
   it('3 failures activate polling fallback', async () => {

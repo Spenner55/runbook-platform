@@ -60,7 +60,9 @@ export function useExecutionStream({
   const isStreaming = Boolean(
     enabled && executionId && streamingExecutionId && streamingExecutionId === executionId
   )
-  const streamClosed = Boolean(executionId && closedExecutionId && closedExecutionId === executionId)
+  const streamClosed = Boolean(
+    executionId && closedExecutionId && closedExecutionId === executionId
+  )
 
   useEffect(() => {
     if (lastExecutionIdRef.current !== executionId) {

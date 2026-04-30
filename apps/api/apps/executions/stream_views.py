@@ -148,7 +148,9 @@ def _last_event_id_from_request(request) -> str | None:
 
 
 async def _get_execution_for_org(execution_id, organization_id):
-    return await sync_to_async(_get_execution_for_org_sync)(execution_id, organization_id)
+    return await sync_to_async(_get_execution_for_org_sync)(
+        execution_id, organization_id
+    )
 
 
 def _get_execution_for_org_sync(execution_id, organization_id):

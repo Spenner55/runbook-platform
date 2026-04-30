@@ -351,7 +351,9 @@ async def test_idle_heartbeat_event_is_streamed(streaming_setup, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_idle_stream_reconciles_missed_terminal_event(streaming_setup, monkeypatch):
+async def test_idle_stream_reconciles_missed_terminal_event(
+    streaming_setup, monkeypatch
+):
     monkeypatch.setattr("apps.executions.stream_views.HEARTBEAT_INTERVAL_SECONDS", 0.01)
     client = AsyncClient()
     execution = streaming_setup["execution"]

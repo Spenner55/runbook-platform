@@ -38,7 +38,9 @@ class SeedDevPolicyTest(TestCase):
         self._run_seed_policy(org)
 
         rules = PolicyRule.objects.filter(policy__organization=org).order_by("priority")
-        self.assertEqual(rules[0].condition_params, {"operator": "in", "values": ["high"]})
+        self.assertEqual(
+            rules[0].condition_params, {"operator": "in", "values": ["high"]}
+        )
         self.assertEqual(
             rules[1].condition_params,
             {"operator": "in", "values": ["low", "medium"]},
