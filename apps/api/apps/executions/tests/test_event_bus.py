@@ -5,7 +5,9 @@ Async tests use pytest-asyncio (already in dev deps via pytest-django's
 async support). Each async test gets its own fresh ExecutionEventBus so
 tests are fully isolated.
 """
+
 import asyncio
+import logging
 import uuid
 
 import pytest
@@ -42,8 +44,20 @@ def test_emit_no_subscribers_is_safe():
     """emit() with no loop and no subscribers must not raise."""
     bus = _bus()
     exec_id = _exec_id()
-    # No ASGI loop set — emit should silently no-op.
+    # No ASGI loop set — emit should no-op.
     bus.emit(exec_id, _event())
+
+
+def test_emit_without_loop_logs_dropped_event(monkeypatch, caplog):
+    bus = _bus()
+    exec_id = _exec_id()
+    ev = _event()
+    monkeypatch.setattr("apps.executions.event_bus._asgi_event_loop", None)
+    caplog.set_level(logging.WARNING, logger="apps.executions.event_bus")
+
+    bus.emit(exec_id, ev)
+
+    assert "execution_stream.event_dropped_no_loop" in caplog.messages
 
 
 def test_buffer_starts_empty():
@@ -120,6 +134,21 @@ async def test_subscribe_receives_emitted_event():
 
     received = await asyncio.wait_for(queue.get(), timeout=1.0)
     assert received is ev
+
+
+@pytest.mark.asyncio
+async def test_emit_async_logs_emitted_event(caplog):
+    bus = _bus()
+    exec_id = _exec_id()
+    queue = await bus.subscribe(exec_id, _org_id())
+    ev = _event()
+    caplog.set_level(logging.INFO, logger="apps.executions.event_bus")
+
+    await bus.emit_async(exec_id, ev)
+
+    received = await asyncio.wait_for(queue.get(), timeout=1.0)
+    assert received is ev
+    assert "execution_stream.event_emitted" in caplog.messages
 
 
 @pytest.mark.asyncio

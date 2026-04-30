@@ -1,7 +1,10 @@
 import logging
 import uuid
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
@@ -243,13 +246,43 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
             .order_by("created_at")
             .first()
         )
+        reclaimed = False
+        if execution is None:
+            stale_before = timezone.now() - timedelta(
+                seconds=settings.RUNNER_STALE_HEARTBEAT_SECONDS
+            )
+            waiting_step = ExecutionStep.objects.filter(
+                execution_id=OuterRef("pk"),
+                status=ExecutionStep.Status.WAITING_FOR_APPROVAL,
+            )
+            running_step = ExecutionStep.objects.filter(
+                execution_id=OuterRef("pk"),
+                status=ExecutionStep.Status.RUNNING,
+            )
+            execution = (
+                Execution.objects.select_for_update(skip_locked=True)
+                .annotate(
+                    has_waiting_step=Exists(waiting_step),
+                    has_running_step=Exists(running_step),
+                )
+                .filter(
+                    status__in=(Execution.Status.CLAIMED, Execution.Status.RUNNING),
+                    last_heartbeat_at__lt=stale_before,
+                    has_waiting_step=True,
+                    has_running_step=False,
+                )
+                .order_by("last_heartbeat_at", "created_at")
+                .first()
+            )
+            reclaimed = execution is not None
         if execution is None:
             return None
 
         claim_token = uuid.uuid4()
         now = timezone.now()
         previous_status = execution.status
-        execution.status = Execution.Status.CLAIMED
+        if execution.status != Execution.Status.RUNNING:
+            execution.status = Execution.Status.CLAIMED
         execution.claimed_by_runner_id = runner_id
         execution.claim_token = claim_token
         execution.claimed_at = now
@@ -277,6 +310,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                 "previous_status": previous_status,
                 "new_status": execution.status,
                 "claimed_at": now.isoformat(),
+                "reclaimed": reclaimed,
             },
         )
 
@@ -287,19 +321,24 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
             "claim_token": str(claim_token),
         }
 
-    execution_event_bus.emit(
-        str(execution.id),
-        StreamEvent(
-            event_type="execution.status_changed",
-            data={
-                "execution_id": str(execution.id),
-                "status": execution.status,
-                "timestamp": execution.claimed_at.isoformat(),
-                "started_at": None,
-                "finished_at": None,
-            },
-        ),
-    )
+    if previous_status != execution.status:
+        execution_event_bus.emit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": execution.claimed_at.isoformat(),
+                    "started_at": execution.started_at.isoformat()
+                    if execution.started_at
+                    else None,
+                    "finished_at": execution.finished_at.isoformat()
+                    if execution.finished_at
+                    else None,
+                },
+            ),
+        )
     return result
 
 

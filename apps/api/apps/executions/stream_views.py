@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
@@ -19,6 +20,8 @@ from apps.executions.event_bus import (
 from apps.executions.models import Execution
 from apps.organizations.models import Membership
 
+logger = logging.getLogger(__name__)
+
 HEARTBEAT_INTERVAL_SECONDS = 25
 SSE_RETRY_MILLISECONDS = 3000
 TERMINAL_STATUSES = {
@@ -32,31 +35,80 @@ class StreamExecutionView(View):
     """Authenticated Server-Sent Events stream for one execution."""
 
     async def get(self, request, execution_id):
+        logger.info(
+            "execution_stream.open_attempt",
+            extra={"execution_id": str(execution_id)},
+        )
         auth_result = await _authenticate_request(request)
         if auth_result is None:
+            logger.warning(
+                "execution_stream.auth_missing",
+                extra={"execution_id": str(execution_id)},
+            )
             return _json_error(
                 "Authentication credentials were not provided.",
                 status=401,
             )
         if isinstance(auth_result, JsonResponse):
+            logger.warning(
+                "execution_stream.auth_failed",
+                extra={"execution_id": str(execution_id)},
+            )
             return auth_result
         user = auth_result
 
         organization_id = _organization_id_from_request(request)
         if organization_id is None:
+            logger.warning(
+                "execution_stream.organization_missing",
+                extra={"execution_id": str(execution_id), "user_id": str(user.id)},
+            )
             return _json_error("X-Organization-Id header is required.", status=400)
 
         execution = await _get_execution(execution_id)
         if execution is None:
+            logger.warning(
+                "execution_stream.execution_not_found",
+                extra={
+                    "execution_id": str(execution_id),
+                    "organization_id": organization_id,
+                    "user_id": str(user.id),
+                },
+            )
             return _json_error("Not found.", status=404)
 
         if str(execution.organization_id) != organization_id:
+            logger.warning(
+                "execution_stream.organization_mismatch",
+                extra={
+                    "execution_id": str(execution.id),
+                    "organization_id": organization_id,
+                    "execution_organization_id": str(execution.organization_id),
+                    "user_id": str(user.id),
+                },
+            )
             return _json_error("You are not a member of this organization.", status=403)
 
         is_member = await _is_member(user_id=user.id, organization_id=organization_id)
         if not is_member:
+            logger.warning(
+                "execution_stream.membership_rejected",
+                extra={
+                    "execution_id": str(execution.id),
+                    "organization_id": organization_id,
+                    "user_id": str(user.id),
+                },
+            )
             return _json_error("You are not a member of this organization.", status=403)
 
+        logger.info(
+            "execution_stream.accepted",
+            extra={
+                "execution_id": str(execution.id),
+                "organization_id": organization_id,
+                "user_id": str(user.id),
+            },
+        )
         response = StreamingHttpResponse(
             _event_stream(
                 execution=execution,
@@ -149,11 +201,36 @@ async def _event_stream(
     if execution.status in TERMINAL_STATUSES:
         yield f"retry: {SSE_RETRY_MILLISECONDS}\n\n"
         for event in _terminal_events(execution):
+            logger.info(
+                "execution_stream.event_sent",
+                extra={
+                    "execution_id": str(execution.id),
+                    "organization_id": organization_id,
+                    "event_type": event.event_type,
+                    "event_id": event.id,
+                    "terminal_snapshot": True,
+                },
+            )
             yield _format_sse_event(event)
+        logger.info(
+            "execution_stream.closed",
+            extra={
+                "execution_id": str(execution.id),
+                "organization_id": organization_id,
+                "reason": "already_terminal",
+            },
+        )
         return
 
     queue = await execution_event_bus.subscribe(
         str(execution.id), organization_id=organization_id
+    )
+    logger.info(
+        "execution_stream.subscribed",
+        extra={
+            "execution_id": str(execution.id),
+            "organization_id": organization_id,
+        },
     )
     try:
         yield f"retry: {SSE_RETRY_MILLISECONDS}\n\n"
@@ -161,8 +238,51 @@ async def _event_stream(
         for event in execution_event_bus.get_buffered_events_after(
             str(execution.id), last_event_id
         ):
+            logger.info(
+                "execution_stream.event_sent",
+                extra={
+                    "execution_id": str(execution.id),
+                    "organization_id": organization_id,
+                    "event_type": event.event_type,
+                    "event_id": event.id,
+                    "replayed": True,
+                },
+            )
             yield _format_sse_event(event)
             if _closes_stream(event):
+                logger.info(
+                    "execution_stream.closed",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "reason": "replayed_closed_event",
+                    },
+                )
+                return
+            if _is_terminal_status_event(event):
+                close_event = _stream_closed_event(
+                    execution_id=str(execution.id),
+                    final_status=event.data["status"],
+                )
+                logger.info(
+                    "execution_stream.event_sent",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "event_type": close_event.event_type,
+                        "event_id": close_event.id,
+                        "replayed": True,
+                    },
+                )
+                yield _format_sse_event(close_event)
+                logger.info(
+                    "execution_stream.closed",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "reason": "replayed_terminal_status",
+                    },
+                )
                 return
 
         while True:
@@ -171,22 +291,95 @@ async def _event_stream(
                     queue.get(), timeout=HEARTBEAT_INTERVAL_SECONDS
                 )
             except TimeoutError:
+                reconciled = await _get_execution(execution.id)
+                if reconciled is not None and reconciled.status in TERMINAL_STATUSES:
+                    for terminal_event in _terminal_events(reconciled):
+                        logger.info(
+                            "execution_stream.event_sent",
+                            extra={
+                                "execution_id": str(reconciled.id),
+                                "organization_id": organization_id,
+                                "event_type": terminal_event.event_type,
+                                "event_id": terminal_event.id,
+                                "terminal_snapshot": True,
+                                "reconciled": True,
+                            },
+                        )
+                        yield _format_sse_event(terminal_event)
+                    logger.info(
+                        "execution_stream.closed",
+                        extra={
+                            "execution_id": str(execution.id),
+                            "organization_id": organization_id,
+                            "reason": "db_terminal_reconciled",
+                        },
+                    )
+                    return
+                logger.debug(
+                    "execution_stream.heartbeat_sent",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                    },
+                )
                 yield _format_heartbeat(str(execution.id))
                 continue
 
+            logger.info(
+                "execution_stream.event_sent",
+                extra={
+                    "execution_id": str(execution.id),
+                    "organization_id": organization_id,
+                    "event_type": event.event_type,
+                    "event_id": event.id,
+                    "replayed": False,
+                },
+            )
             yield _format_sse_event(event)
             if _closes_stream(event):
+                logger.info(
+                    "execution_stream.closed",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "reason": "closed_event",
+                    },
+                )
                 return
             if _is_terminal_status_event(event):
-                yield _format_sse_event(
-                    _stream_closed_event(
-                        execution_id=str(execution.id),
-                        final_status=event.data["status"],
-                    )
+                close_event = _stream_closed_event(
+                    execution_id=str(execution.id),
+                    final_status=event.data["status"],
+                )
+                logger.info(
+                    "execution_stream.event_sent",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "event_type": close_event.event_type,
+                        "event_id": close_event.id,
+                        "replayed": False,
+                    },
+                )
+                yield _format_sse_event(close_event)
+                logger.info(
+                    "execution_stream.closed",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "organization_id": organization_id,
+                        "reason": "terminal_status",
+                    },
                 )
                 return
     finally:
         await execution_event_bus.unsubscribe(str(execution.id), queue)
+        logger.info(
+            "execution_stream.unsubscribed",
+            extra={
+                "execution_id": str(execution.id),
+                "organization_id": organization_id,
+            },
+        )
 
 
 def _terminal_events(execution: Execution) -> list[StreamEvent]:

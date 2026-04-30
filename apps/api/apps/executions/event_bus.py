@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _MAX_BUFFER_SIZE = 128  # ring buffer per execution
 
@@ -28,9 +31,7 @@ class StreamEvent:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     event_type: str = ""
     data: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(tz=UTC).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(tz=UTC).isoformat())
 
 
 class ExecutionEventBus:
@@ -62,9 +63,7 @@ class ExecutionEventBus:
             self._subscribers[execution_id].add(queue)
             return queue
 
-    async def unsubscribe(
-        self, execution_id: str, queue: asyncio.Queue
-    ) -> None:
+    async def unsubscribe(self, execution_id: str, queue: asyncio.Queue) -> None:
         """Remove queue from the subscriber set; clean up empty entries."""
         async with self._lock:
             subs = self._subscribers.get(execution_id, set())
@@ -83,7 +82,27 @@ class ExecutionEventBus:
         """
         loop = _get_asgi_event_loop()
         if loop is None or loop.is_closed():
+            logger.warning(
+                "execution_stream.event_dropped_no_loop",
+                extra={
+                    "execution_id": execution_id,
+                    "event_type": event.event_type,
+                    "event_id": event.id,
+                },
+            )
             return
+        subscriber_count = len(self._subscribers.get(execution_id, set()))
+        has_buffer = execution_id in self._buffers
+        logger.info(
+            "execution_stream.event_scheduled",
+            extra={
+                "execution_id": execution_id,
+                "event_type": event.event_type,
+                "event_id": event.id,
+                "subscriber_count": subscriber_count,
+                "has_buffer": has_buffer,
+            },
+        )
         loop.call_soon_threadsafe(
             lambda: asyncio.ensure_future(
                 self._async_emit(execution_id, event), loop=loop
@@ -94,14 +113,23 @@ class ExecutionEventBus:
         """Emit from async context (async views, async tests)."""
         await self._async_emit(execution_id, event)
 
-    async def _async_emit(
-        self, execution_id: str, event: StreamEvent
-    ) -> None:
+    async def _async_emit(self, execution_id: str, event: StreamEvent) -> None:
         async with self._lock:
             buffer = self._buffers.get(execution_id)
             if buffer is not None:
                 buffer.append(event)
-            for queue in list(self._subscribers.get(execution_id, set())):
+            subscribers = list(self._subscribers.get(execution_id, set()))
+            logger.info(
+                "execution_stream.event_emitted",
+                extra={
+                    "execution_id": execution_id,
+                    "event_type": event.event_type,
+                    "event_id": event.id,
+                    "subscriber_count": len(subscribers),
+                    "buffered": buffer is not None,
+                },
+            )
+            for queue in subscribers:
                 await queue.put(event)
 
     def get_buffered_events_after(
@@ -117,7 +145,24 @@ class ExecutionEventBus:
         events = list(buffer)
         for i, ev in enumerate(events):
             if ev.id == last_event_id:
-                return events[i + 1 :]
+                replay_events = events[i + 1 :]
+                logger.info(
+                    "execution_stream.buffer_replay",
+                    extra={
+                        "execution_id": execution_id,
+                        "last_event_id": last_event_id,
+                        "replay_count": len(replay_events),
+                    },
+                )
+                return replay_events
+        logger.info(
+            "execution_stream.buffer_replay_miss",
+            extra={
+                "execution_id": execution_id,
+                "last_event_id": last_event_id,
+                "buffer_size": len(events),
+            },
+        )
         return []  # last_event_id not in buffer; client must re-fetch
 
 

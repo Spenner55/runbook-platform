@@ -105,6 +105,23 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "apps.common.api_errors.custom_exception_handler",
 }
 
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "apps.executions": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+    },
+}
+
 from datetime import timedelta  # noqa: E402
 
 SIMPLE_JWT = {
@@ -153,6 +170,9 @@ RUNNER_TOKENS = [
     or ([RUNNER_REGISTRATION_TOKEN] if RUNNER_REGISTRATION_TOKEN else [])
     if token
 ]
+RUNNER_STALE_HEARTBEAT_SECONDS = env.int(
+    "RUNNER_STALE_HEARTBEAT_SECONDS", default=60
+)
 ARTIFACT_STORAGE_BACKEND = env("ARTIFACT_STORAGE_BACKEND", default="local")
 ARTIFACT_MEDIA_ROOT = env(
     "ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts")

@@ -1,9 +1,13 @@
 import threading
+from datetime import timedelta
 
 import pytest
+from django.test import override_settings
+from django.utils import timezone
 
+from apps.approvals import services as approval_services
 from apps.executions import services
-from apps.executions.models import Execution
+from apps.executions.models import Execution, ExecutionStep
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
@@ -116,3 +120,45 @@ def test_two_concurrent_claims_on_two_executions_return_different_ids(
     assert r1["execution"].id != r2["execution"].id
     claimed_ids = {r1["execution"].id, r2["execution"].id}
     assert claimed_ids == {exe1.id, exe2.id}
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(RUNNER_STALE_HEARTBEAT_SECONDS=30)
+def test_claim_next_reclaims_stale_execution_waiting_on_resolved_approval(
+    published_workflow,
+):
+    execution = services.create_execution_from_workflow(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    assert claimed is not None
+    claim_token = claimed["claim_token"]
+    step = execution.steps.order_by("position").first()
+    approval_request, _ = approval_services.request_step_approval(
+        execution=execution,
+        step=step,
+        runner_id="runner-1",
+        claim_token=claim_token,
+        policy_driven=True,
+    )
+    approval_services.decide_approval(
+        approval_request=approval_request,
+        decision="approved",
+        actor_label="Test Op",
+    )
+
+    old_token = claimed["execution"].claim_token
+    stale_at = timezone.now() - timedelta(seconds=31)
+    Execution.objects.filter(pk=execution.pk).update(
+        status=Execution.Status.RUNNING,
+        started_at=stale_at,
+        last_heartbeat_at=stale_at,
+    )
+
+    reclaimed = services.claim_next_execution(runner_id="runner-2")
+
+    assert reclaimed is not None
+    reclaimed_execution = reclaimed["execution"]
+    assert reclaimed_execution.id == execution.id
+    assert reclaimed_execution.status == Execution.Status.RUNNING
+    assert reclaimed_execution.claimed_by_runner_id == "runner-2"
+    assert reclaimed_execution.claim_token != old_token
+    assert reclaimed["steps"][0].status == ExecutionStep.Status.WAITING_FOR_APPROVAL

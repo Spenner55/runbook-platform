@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 import pytest
 from django.test import AsyncClient
@@ -35,9 +36,7 @@ def streaming_setup(db):
     outsider = User.objects.create_user(
         email="outsider-streamer@example.com", password="s3cr3tpass!"
     )
-    Membership.objects.create(
-        organization=org, user=user, role=MembershipRole.VIEWER
-    )
+    Membership.objects.create(organization=org, user=user, role=MembershipRole.VIEWER)
     Membership.objects.create(
         organization=other_org, user=outsider, role=MembershipRole.VIEWER
     )
@@ -201,6 +200,43 @@ async def test_live_step_status_event_is_streamed(streaming_setup):
 
 
 @pytest.mark.asyncio
+async def test_stream_lifecycle_logs_accept_and_sent_event(streaming_setup, caplog):
+    caplog.set_level(logging.INFO, logger="apps.executions.stream_views")
+    client = AsyncClient()
+    execution = streaming_setup["execution"]
+    step = streaming_setup["step"]
+    response = await client.get(
+        _stream_url(execution),
+        headers=_headers(streaming_setup["user"], streaming_setup["org"]),
+    )
+    aiter = response.streaming_content.__aiter__()
+    await _next_chunk(aiter)  # retry/subscription setup
+
+    event = StreamEvent(
+        event_type="step.status_changed",
+        data={
+            "execution_id": str(execution.id),
+            "step_id": str(step.id),
+            "position": step.position,
+            "status": ExecutionStep.Status.RUNNING,
+            "timestamp": timezone.now().isoformat(),
+            "started_at": timezone.now().isoformat(),
+            "finished_at": None,
+            "exit_code": None,
+            "error_message": "",
+        },
+    )
+    await execution_event_bus.emit_async(str(execution.id), event)
+
+    chunk = await asyncio.wait_for(_next_chunk(aiter), timeout=1)
+    assert _event_names(chunk) == ["step.status_changed"]
+    assert "execution_stream.accepted" in caplog.messages
+    assert "execution_stream.subscribed" in caplog.messages
+    assert "execution_stream.event_sent" in caplog.messages
+    await aiter.aclose()
+
+
+@pytest.mark.asyncio
 async def test_terminal_execution_closes_stream(streaming_setup):
     client = AsyncClient()
     execution = streaming_setup["execution"]
@@ -232,7 +268,9 @@ async def test_terminal_execution_closes_stream(streaming_setup):
 
 
 @pytest.mark.asyncio
-async def test_already_terminal_execution_returns_final_events_then_closes(streaming_setup):
+async def test_already_terminal_execution_returns_final_events_then_closes(
+    streaming_setup,
+):
     execution = streaming_setup["execution"]
     execution.status = Execution.Status.FAILED
     execution.started_at = timezone.now()
@@ -295,9 +333,7 @@ async def test_last_event_id_replay_works(streaming_setup):
 
 @pytest.mark.asyncio
 async def test_idle_heartbeat_event_is_streamed(streaming_setup, monkeypatch):
-    monkeypatch.setattr(
-        "apps.executions.stream_views.HEARTBEAT_INTERVAL_SECONDS", 0.01
-    )
+    monkeypatch.setattr("apps.executions.stream_views.HEARTBEAT_INTERVAL_SECONDS", 0.01)
     client = AsyncClient()
     response = await client.get(
         _stream_url(streaming_setup["execution"]),
@@ -310,3 +346,32 @@ async def test_idle_heartbeat_event_is_streamed(streaming_setup, monkeypatch):
     assert _event_names(chunk) == ["execution.heartbeat"]
     assert "id: " not in chunk
     await aiter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_idle_stream_reconciles_missed_terminal_event(streaming_setup, monkeypatch):
+    monkeypatch.setattr("apps.executions.stream_views.HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    client = AsyncClient()
+    execution = streaming_setup["execution"]
+    response = await client.get(
+        _stream_url(execution),
+        headers=_headers(streaming_setup["user"], streaming_setup["org"]),
+    )
+    aiter = response.streaming_content.__aiter__()
+    await _next_chunk(aiter)  # retry
+
+    finished_at = timezone.now()
+    await Execution.objects.filter(pk=execution.pk).aupdate(
+        status=Execution.Status.SUCCEEDED,
+        started_at=finished_at,
+        finished_at=finished_at,
+    )
+
+    status_chunk = await asyncio.wait_for(_next_chunk(aiter), timeout=1)
+    closed_chunk = await asyncio.wait_for(_next_chunk(aiter), timeout=1)
+
+    assert _event_names(status_chunk) == ["execution.status_changed"]
+    assert _event_data(status_chunk)["status"] == Execution.Status.SUCCEEDED
+    assert _event_names(closed_chunk) == ["stream.closed"]
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(_next_chunk(aiter), timeout=1)
