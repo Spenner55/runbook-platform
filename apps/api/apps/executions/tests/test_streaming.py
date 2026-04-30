@@ -1,12 +1,14 @@
 import asyncio
 import json
 import logging
+import uuid
 
 import pytest
-from django.test import AsyncClient
+from django.test import AsyncClient, Client
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.executions import services as execution_services
 from apps.executions.event_bus import StreamEvent, execution_event_bus
 from apps.executions.models import Execution, ExecutionStep
 from apps.organizations.models import Membership, MembershipRole, Organization
@@ -375,3 +377,145 @@ async def test_idle_stream_reconciles_missed_terminal_event(streaming_setup, mon
     assert _event_names(closed_chunk) == ["stream.closed"]
     with pytest.raises(StopAsyncIteration):
         await asyncio.wait_for(_next_chunk(aiter), timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# Auth contract tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_org_execution_returns_404(streaming_setup):
+    """Execution that exists but belongs to a different org must return 404, not 403."""
+    client = AsyncClient()
+    # Request the execution using the other_org's id as the header org.
+    response = await client.get(
+        _stream_url(streaming_setup["execution"]),
+        headers={
+            "authorization": f"Bearer {_token(streaming_setup['user'])}",
+            "x-organization-id": str(streaming_setup["other_org"].id),
+        },
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_runner_bearer_token_cannot_open_user_stream(streaming_setup):
+    """Runner bearer tokens must be rejected from the SSE endpoint."""
+    client = AsyncClient()
+    response = await client.get(
+        _stream_url(streaming_setup["execution"]),
+        headers={
+            "authorization": "Bearer test-runner-token",
+            "x-organization-id": str(streaming_setup["org"].id),
+        },
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_missing_org_header_returns_400(streaming_setup):
+    client = AsyncClient()
+    response = await client.get(
+        _stream_url(streaming_setup["execution"]),
+        headers={"authorization": f"Bearer {_token(streaming_setup['user'])}"},
+    )
+
+    assert response.status_code == 400
+    body = json.loads(response.content)
+    assert "X-Organization-Id" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_org_header_returns_400(streaming_setup):
+    """A header value that is not a valid UUID must be treated as missing."""
+    client = AsyncClient()
+    response = await client.get(
+        _stream_url(streaming_setup["execution"]),
+        headers={
+            "authorization": f"Bearer {_token(streaming_setup['user'])}",
+            "x-organization-id": "not-a-uuid",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# E2E service-to-stream integration test
+# ---------------------------------------------------------------------------
+
+_RUNNER_TOKEN = "test-runner-token"
+_CLAIM_URL = "/api/v1/internal/executions/claim-next/"
+
+
+def _runner_client():
+    return Client(HTTP_AUTHORIZATION=f"Bearer {_RUNNER_TOKEN}")
+
+
+def _step_update_url(execution_id, step_id):
+    return f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/update/"
+
+
+@pytest.mark.asyncio
+async def test_step_update_via_service_delivers_stream_event(streaming_setup):
+    """
+    Real service path: claim execution → open SSE stream → update step via
+    services.update_execution_step() → assert event delivered through emit().
+
+    This test exercises the full sync service → on_commit → emit() → ASGI
+    loop → subscriber queue path.
+    """
+    execution = streaming_setup["execution"]
+    step = streaming_setup["step"]
+    runner_id = "e2e-runner-1"
+    claim_token = str(uuid.uuid4())
+
+    # Manually claim so we can call update_execution_step without HTTP.
+    now = timezone.now()
+    await Execution.objects.filter(pk=execution.pk).aupdate(
+        status=Execution.Status.CLAIMED,
+        claimed_by_runner_id=runner_id,
+        claim_token=claim_token,
+        claimed_at=now,
+        last_heartbeat_at=now,
+    )
+    await execution.arefresh_from_db()
+
+    # Open the SSE stream.
+    client = AsyncClient()
+    response = await client.get(
+        _stream_url(execution),
+        headers=_headers(streaming_setup["user"], streaming_setup["org"]),
+    )
+    aiter = response.streaming_content.__aiter__()
+    await _next_chunk(aiter)  # consume retry directive
+
+    # Give the ASGI event loop a tick to register the subscriber.
+    await asyncio.sleep(0)
+
+    # Call the sync service from async context via sync_to_async.
+    from asgiref.sync import sync_to_async
+
+    def _do_update():
+        execution_services.update_execution_step(
+            execution=execution,
+            step_id=str(step.id),
+            runner_id=runner_id,
+            claim_token=claim_token,
+            new_status=ExecutionStep.Status.RUNNING,
+        )
+
+    await sync_to_async(_do_update)()
+
+    # Allow the ASGI loop to process the call_soon_threadsafe callback.
+    await asyncio.sleep(0.05)
+
+    chunk = await asyncio.wait_for(_next_chunk(aiter), timeout=2)
+    assert _event_names(chunk) == ["step.status_changed"]
+    data = _event_data(chunk)
+    assert data["step_id"] == str(step.id)
+    assert data["status"] == ExecutionStep.Status.RUNNING
+    await aiter.aclose()

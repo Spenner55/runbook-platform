@@ -56,14 +56,11 @@ export function applyStreamEvent(
 
   if (streamEvent.event === 'step.status_changed') {
     const stepId = readString(streamEvent.data, 'step_id')
-    const position =
-      typeof streamEvent.data.position === 'number' ? streamEvent.data.position : undefined
 
     return {
       ...execution,
       steps: execution.steps.map((step) => {
-        const isMatch = step.id === stepId || (stepId === undefined && step.position === position)
-        return isMatch ? patchStep(step, streamEvent.data) : step
+        return step.id === stepId ? patchStep(step, streamEvent.data) : step
       }),
     }
   }

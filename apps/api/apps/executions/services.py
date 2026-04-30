@@ -151,7 +151,7 @@ def cancel_execution(
             },
         )
     _ts = execution.updated_at.isoformat()
-    execution_event_bus.emit(
+    _emit_on_commit(
         str(execution.id),
         StreamEvent(
             event_type="execution.status_changed",
@@ -164,7 +164,7 @@ def cancel_execution(
             },
         ),
     )
-    execution_event_bus.emit(
+    _emit_on_commit(
         str(execution.id),
         StreamEvent(
             event_type="stream.closed",
@@ -322,7 +322,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
         }
 
     if previous_status != execution.status:
-        execution_event_bus.emit(
+        _emit_on_commit(
             str(execution.id),
             StreamEvent(
                 event_type="execution.status_changed",
@@ -479,7 +479,7 @@ def update_execution_step(
     _ts = timezone.now().isoformat()
     _emit_step_status_changed_event(execution=execution, step=step)
     if execution_started:
-        execution_event_bus.emit(
+        _emit_on_commit(
             str(execution.id),
             StreamEvent(
                 event_type="execution.status_changed",
@@ -591,7 +591,7 @@ def complete_execution(
             },
         )
     _ts = execution.finished_at.isoformat() if execution.finished_at else timezone.now().isoformat()
-    execution_event_bus.emit(
+    _emit_on_commit(
         str(execution.id),
         StreamEvent(
             event_type="execution.status_changed",
@@ -608,7 +608,7 @@ def complete_execution(
             },
         ),
     )
-    execution_event_bus.emit(
+    _emit_on_commit(
         str(execution.id),
         StreamEvent(
             event_type="stream.closed",
@@ -658,9 +658,19 @@ def emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep)
     _emit_step_status_changed_event(execution=execution, step=step)
 
 
+def _emit_on_commit(execution_id: str, event: StreamEvent) -> None:
+    """Emit a stream event after the current transaction commits.
+
+    When called outside any atomic block, Django fires on_commit immediately.
+    When called inside a nested atomic (savepoint), the emit is deferred until
+    the outermost transaction commits, guaranteeing emit-after-commit.
+    """
+    transaction.on_commit(lambda: execution_event_bus.emit(execution_id, event))
+
+
 def _emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep) -> None:
     _ts = timezone.now().isoformat()
-    execution_event_bus.emit(
+    _emit_on_commit(
         str(execution.id),
         StreamEvent(
             event_type="step.status_changed",

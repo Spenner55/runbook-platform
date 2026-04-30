@@ -88,7 +88,6 @@ export function useExecutionStream({
         if (!response.ok || !contentType.includes(EventStreamContentType)) {
           throw new Error(`Execution stream failed with status ${response.status}.`)
         }
-        failureCountRef.current = 0
         setStreamingExecutionId(executionId)
       },
       onmessage(message) {
@@ -125,7 +124,9 @@ export function useExecutionStream({
           controller.abort()
           throw error
         }
-        return 0
+        // Return undefined to let fetch-event-source honor the server's
+        // retry interval (set to 3000ms via "retry: 3000" in the SSE stream).
+        return undefined
       },
     }).catch(() => {
       setStreamingExecutionId(null)

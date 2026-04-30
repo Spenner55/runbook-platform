@@ -16,7 +16,7 @@ from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
 
-_EMIT_PATH = "apps.executions.services.execution_event_bus.emit"
+_EMIT_PATH = "apps.executions.services._emit_on_commit"
 
 RUNNER_ID = "test-runner-1"
 

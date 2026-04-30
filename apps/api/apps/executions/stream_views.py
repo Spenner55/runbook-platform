@@ -65,7 +65,7 @@ class StreamExecutionView(View):
             )
             return _json_error("X-Organization-Id header is required.", status=400)
 
-        execution = await _get_execution(execution_id)
+        execution = await _get_execution_for_org(execution_id, organization_id)
         if execution is None:
             logger.warning(
                 "execution_stream.execution_not_found",
@@ -76,18 +76,6 @@ class StreamExecutionView(View):
                 },
             )
             return _json_error("Not found.", status=404)
-
-        if str(execution.organization_id) != organization_id:
-            logger.warning(
-                "execution_stream.organization_mismatch",
-                extra={
-                    "execution_id": str(execution.id),
-                    "organization_id": organization_id,
-                    "execution_organization_id": str(execution.organization_id),
-                    "user_id": str(user.id),
-                },
-            )
-            return _json_error("You are not a member of this organization.", status=403)
 
         is_member = await _is_member(user_id=user.id, organization_id=organization_id)
         if not is_member:
@@ -157,6 +145,21 @@ def _last_event_id_from_request(request) -> str | None:
         or request.headers.get("Last-Event-Id")
         or request.META.get("HTTP_LAST_EVENT_ID")
     )
+
+
+async def _get_execution_for_org(execution_id, organization_id):
+    return await sync_to_async(_get_execution_for_org_sync)(execution_id, organization_id)
+
+
+def _get_execution_for_org_sync(execution_id, organization_id):
+    try:
+        return (
+            Execution.objects.select_related("organization")
+            .filter(pk=execution_id, organization_id=organization_id)
+            .first()
+        )
+    finally:
+        close_old_connections()
 
 
 async def _get_execution(execution_id):

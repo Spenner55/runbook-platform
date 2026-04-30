@@ -215,4 +215,86 @@ describe('useExecutionStream', () => {
     expect(String(url)).not.toContain('access-token')
     expect(options.headers.Authorization).toBe('Bearer access-token')
   })
+
+  it('onerror returns undefined so the server retry interval is honored', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let options!: { onerror: (error: Error) => number | undefined | void }
+
+    fetchEventSourceMock.mockImplementation((_url, streamOptions) => {
+      options = streamOptions
+      return new Promise(() => {})
+    })
+
+    renderHook(
+      () =>
+        useExecutionStream({
+          accessToken: 'access-token',
+          enabled: true,
+          executionId: 'execution-1',
+          organizationId: 'org-1',
+        }),
+      { wrapper: createWrapper(queryClient) }
+    )
+
+    // First two failures should return undefined, not 0.
+    const result1 = options.onerror(new Error('failure 1'))
+    const result2 = options.onerror(new Error('failure 2'))
+    expect(result1).toBeUndefined()
+    expect(result2).toBeUndefined()
+  })
+
+  it('fallback activates after repeated premature stream closes', async () => {
+    // A premature close sequence: onopen (200) → onclose (throws) → onerror.
+    // Because onopen no longer resets the failure count, each premature close
+    // accumulates toward MAX_STREAM_FAILURES (3).
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onPollingFallback = vi.fn()
+    let options!: {
+      onopen: (response: Response) => Promise<void>
+      onclose: () => void
+      onerror: (error: Error) => number | undefined | void
+    }
+
+    fetchEventSourceMock.mockImplementation((_url, streamOptions) => {
+      options = streamOptions
+      return new Promise(() => {})
+    })
+
+    const { result } = renderHook(
+      () =>
+        useExecutionStream({
+          accessToken: 'access-token',
+          enabled: true,
+          executionId: 'execution-1',
+          onPollingFallback,
+          organizationId: 'org-1',
+        }),
+      { wrapper: createWrapper(queryClient) }
+    )
+
+    // Simulate 3 premature closes (MAX_STREAM_FAILURES): each opens (200) then immediately closes.
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        await options.onopen(streamResponse())
+      })
+      act(() => {
+        // onclose throws for premature close → library calls onerror
+        try {
+          options.onclose()
+        } catch {
+          // expected: onclose throws to signal failure
+        }
+        try {
+          options.onerror(new Error(`premature close ${i + 1}`))
+        } catch {
+          // onerror throws on final failure to stop retrying
+        }
+      })
+    }
+
+    await waitFor(() => {
+      expect(result.current.isPollingFallback).toBe(true)
+    })
+    expect(onPollingFallback).toHaveBeenCalledTimes(1)
+  })
 })

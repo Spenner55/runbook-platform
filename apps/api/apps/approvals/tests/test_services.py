@@ -53,7 +53,7 @@ def test_request_step_approval_emits_waiting_step_status_changed(
     claim_token = result["claim_token"]
     step = execution.steps.order_by("position").first()
 
-    with patch("apps.executions.services.execution_event_bus.emit") as mock_emit:
+    with patch("apps.executions.services._emit_on_commit") as mock_emit:
         services.request_step_approval(
             execution=execution,
             step=step,
@@ -326,7 +326,7 @@ def test_approval_requested_triggers_notify(
     step = execution.steps.order_by("position").first()
 
     with patch("apps.approvals.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             approval_request, created = services.request_step_approval(
                 execution=execution,
                 step=step,
@@ -335,7 +335,6 @@ def test_approval_requested_triggers_notify(
             )
 
     assert created is True
-    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "approval.requested"
@@ -354,7 +353,7 @@ def test_approval_decision_triggers_notify_and_excludes_notes(
     pending_approval, django_capture_on_commit_callbacks
 ):
     with patch("apps.approvals.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             decision = services.decide_approval(
                 approval_request=pending_approval,
                 decision="rejected",
@@ -362,7 +361,6 @@ def test_approval_decision_triggers_notify_and_excludes_notes(
                 actor_label="Test Operator",
             )
 
-    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "approval.decided"
