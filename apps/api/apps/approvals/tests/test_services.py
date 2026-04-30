@@ -45,6 +45,32 @@ def test_request_step_approval_creates_request(claimed_approval_execution):
 
 
 @pytest.mark.django_db
+def test_request_step_approval_emits_waiting_step_status_changed(
+    claimed_approval_execution,
+):
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    with patch("apps.executions.services.execution_event_bus.emit") as mock_emit:
+        services.request_step_approval(
+            execution=execution,
+            step=step,
+            runner_id="runner-1",
+            claim_token=claim_token,
+        )
+
+    mock_emit.assert_called_once()
+    execution_id, event = mock_emit.call_args[0]
+    assert execution_id == str(execution.id)
+    assert event.event_type == "step.status_changed"
+    assert event.data["execution_id"] == str(execution.id)
+    assert event.data["step_id"] == str(step.id)
+    assert event.data["status"] == ExecutionStep.Status.WAITING_FOR_APPROVAL
+
+
+@pytest.mark.django_db
 def test_request_step_approval_is_idempotent(claimed_approval_execution):
     result = claimed_approval_execution
     execution = result["execution"]

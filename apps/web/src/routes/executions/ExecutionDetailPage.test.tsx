@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -110,6 +110,127 @@ describe('ExecutionDetailPage', () => {
     })
 
     expect(executionFetchCount).toBe(1)
+  })
+
+  it('refetches canonical execution detail when the stream closes', async () => {
+    const runningExecution = {
+      id: 'execution-1',
+      status: 'running',
+      workflow_id: 'workflow-1',
+      organization_id: 'organization-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: '2026-04-15T10:00:10Z',
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [
+        {
+          id: 'step-1',
+          position: 1,
+          step_key: 'verify',
+          name: 'Verify prerequisites',
+          step_type: 'shell',
+          risk_level: 'low',
+          command: 'verify.sh',
+          requires_approval: false,
+          status: 'succeeded',
+          started_at: '2026-04-15T10:00:05Z',
+          finished_at: '2026-04-15T10:00:10Z',
+          exit_code: 0,
+          error_message: '',
+        },
+        {
+          id: 'step-2',
+          position: 2,
+          step_key: 'deploy',
+          name: 'Deploy service',
+          step_type: 'shell',
+          risk_level: 'high',
+          command: 'deploy.sh',
+          requires_approval: true,
+          status: 'waiting_for_approval',
+          started_at: null,
+          finished_at: null,
+          exit_code: null,
+          error_message: '',
+        },
+      ],
+    }
+    const finishedExecution = {
+      ...runningExecution,
+      status: 'succeeded',
+      finished_at: '2026-04-15T10:02:00Z',
+      steps: runningExecution.steps.map((step) => ({
+        ...step,
+        status: 'succeeded',
+        started_at: step.started_at ?? '2026-04-15T10:01:00Z',
+        finished_at: step.finished_at ?? '2026-04-15T10:01:30Z',
+        exit_code: step.exit_code ?? 0,
+      })),
+    }
+
+    let streamOptions!: {
+      onopen: (response: Response) => Promise<void>
+      onmessage: (message: { event: string; data: string }) => void
+    }
+    fetchEventSourceMock.mockImplementation((_url, options) => {
+      streamOptions = options
+      return new Promise(() => {})
+    })
+
+    let executionFetchCount = 0
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/audit/')) {
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      }
+      if (url.includes('/artifacts/')) {
+        return createJsonResponse(emptyArtifacts)
+      }
+      executionFetchCount += 1
+      return createJsonResponse(executionFetchCount === 1 ? runningExecution : finishedExecution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(streamOptions).toBeDefined()
+    })
+    await act(async () => {
+      await streamOptions.onopen({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+      } as Response)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Receiving live updates.')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      streamOptions.onmessage({
+        event: 'stream.closed',
+        data: JSON.stringify({
+          execution_id: 'execution-1',
+          final_status: 'succeeded',
+          reason: 'terminal_state',
+        }),
+      })
+    })
+
+    await waitFor(() => {
+      expect(executionFetchCount).toBeGreaterThanOrEqual(2)
+    })
+    expect(screen.getAllByText('succeeded').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('exit 0').length).toBeGreaterThan(0)
   })
 
   it('shows the polling fallback banner when streaming is unavailable', async () => {

@@ -477,23 +477,7 @@ def update_execution_step(
             error_message=error_message,
         )
     _ts = timezone.now().isoformat()
-    execution_event_bus.emit(
-        str(execution.id),
-        StreamEvent(
-            event_type="step.status_changed",
-            data={
-                "execution_id": str(execution.id),
-                "step_id": str(step.id),
-                "position": step.position,
-                "status": step.status,
-                "timestamp": _ts,
-                "started_at": step.started_at.isoformat() if step.started_at else None,
-                "finished_at": step.finished_at.isoformat() if step.finished_at else None,
-                "exit_code": step.exit_code,
-                "error_message": step.error_message,
-            },
-        ),
-    )
+    _emit_step_status_changed_event(execution=execution, step=step)
     if execution_started:
         execution_event_bus.emit(
             str(execution.id),
@@ -666,6 +650,32 @@ def emit_step_waiting_for_approval_audit(
         runner_id=runner_id,
         previous_status=previous_status,
         new_status=ExecutionStep.Status.WAITING_FOR_APPROVAL,
+    )
+
+
+def emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep) -> None:
+    """Emit a stream event for a persisted execution step status transition."""
+    _emit_step_status_changed_event(execution=execution, step=step)
+
+
+def _emit_step_status_changed_event(*, execution: Execution, step: ExecutionStep) -> None:
+    _ts = timezone.now().isoformat()
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="step.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "step_id": str(step.id),
+                "position": step.position,
+                "status": step.status,
+                "timestamp": _ts,
+                "started_at": step.started_at.isoformat() if step.started_at else None,
+                "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+                "exit_code": step.exit_code,
+                "error_message": step.error_message,
+            },
+        ),
     )
 
 

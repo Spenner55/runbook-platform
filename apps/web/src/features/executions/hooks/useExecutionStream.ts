@@ -106,6 +106,7 @@ export function useExecutionStream({
           closedByServer = true
           setClosedExecutionId(executionId)
           setStreamingExecutionId(null)
+          void queryClient.invalidateQueries({ queryKey: queryKeys.execution(executionId) })
           controller.abort()
         }
       },
