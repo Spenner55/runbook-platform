@@ -6,6 +6,13 @@ import { ExecutionDetailPage } from './ExecutionDetailPage'
 import { createJsonResponse } from '../../test/fetchResponse'
 import { renderRoute } from '../../test/renderRoute'
 
+const fetchEventSourceMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@microsoft/fetch-event-source', () => ({
+  EventStreamContentType: 'text/event-stream',
+  fetchEventSource: fetchEventSourceMock,
+}))
+
 const emptyArtifacts = { count: 0, next: null, previous: null, results: [] }
 
 describe('ExecutionDetailPage', () => {
@@ -13,14 +20,23 @@ describe('ExecutionDetailPage', () => {
 
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock)
+    fetchEventSourceMock.mockImplementation(async (_url, options) => {
+      await options.onopen({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+      } as Response)
+      return new Promise(() => {})
+    })
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
     fetchMock.mockReset()
+    fetchEventSourceMock.mockReset()
   })
 
-  it('renders execution detail and polls while the execution is active', async () => {
+  it('renders execution detail and shows the streaming banner while the execution is active', async () => {
     const runningExecution = {
       id: 'execution-1',
       status: 'running',
@@ -89,17 +105,62 @@ describe('ExecutionDetailPage', () => {
     expect(screen.getByText('Loading execution…')).toBeInTheDocument()
 
     await waitFor(() => {
-      expect(screen.getByText('Polling for runner updates…')).toBeInTheDocument()
+      expect(screen.getByText('Receiving live updates.')).toBeInTheDocument()
     })
 
-    await waitFor(
-      () => {
-        expect(executionFetchCount).toBe(2)
-      },
-      { timeout: 3000 }
-    )
+    expect(executionFetchCount).toBe(1)
+  })
 
-    expect(screen.getAllByText('succeeded').length).toBeGreaterThan(0)
+  it('shows the polling fallback banner when streaming is unavailable', async () => {
+    const runningExecution = {
+      id: 'execution-1',
+      status: 'running',
+      workflow_id: 'workflow-1',
+      organization_id: 'organization-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claimed_at: null,
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:00Z',
+      steps: [],
+    }
+
+    fetchEventSourceMock.mockImplementation((_url, options) => {
+      options.onerror(new Error('stream failed'))
+      options.onerror(new Error('stream failed'))
+      try {
+        options.onerror(new Error('stream failed'))
+      } catch {
+        // The hook throws on the third failure to stop fetch-event-source retries.
+      }
+      return Promise.resolve()
+    })
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/audit/')) {
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      }
+      if (url.includes('/artifacts/')) {
+        return createJsonResponse(emptyArtifacts)
+      }
+      return createJsonResponse(runningExecution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Polling for updates (streaming unavailable).')
+      ).toBeInTheDocument()
+    })
   })
 
   it('renders the Django error envelope when execution detail fails', async () => {

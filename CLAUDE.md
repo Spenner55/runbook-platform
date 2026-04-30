@@ -33,6 +33,8 @@ docker compose exec api python manage.py shell
 docker compose exec api python manage.py showmigrations
 ```
 
+The API container runs `uvicorn config.asgi:application --workers 1`. Phase 10.8 SSE uses a process-local event bus, so do not run multiple API workers until a later phase externalizes the stream bus.
+
 ### Django tests (pytest-django)
 ```bash
 docker compose exec api pytest                        # all tests

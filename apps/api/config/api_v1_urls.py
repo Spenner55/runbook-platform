@@ -20,6 +20,7 @@ from apps.executions.internal_views import (
     ExecutionStepStartView,
     ExecutionStepUpdateView,
 )
+from apps.executions.stream_views import StreamExecutionView
 from apps.executions.views import ExecutionViewSet
 from apps.organizations.views import OrganizationViewSet
 from apps.runbooks.views import RunbookViewSet
@@ -43,6 +44,11 @@ urlpatterns = [
         "executions/<uuid:execution_id>/audit/",
         ExecutionAuditEventListView.as_view(),
         name="execution-audit-event-list",
+    ),
+    path(
+        "executions/<uuid:execution_id>/stream/",
+        StreamExecutionView.as_view(),
+        name="execution-stream",
     ),
     path("internal/", include(artifact_internal_urlpatterns)),
     path(

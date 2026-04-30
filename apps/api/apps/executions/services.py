@@ -16,6 +16,7 @@ from apps.common.exceptions import (
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
 )
+from apps.executions.event_bus import StreamEvent, execution_event_bus
 from apps.executions.models import Execution, ExecutionStep
 from apps.integrations.services import IntegrationService
 from apps.workflows.models import Workflow
@@ -146,6 +147,32 @@ def cancel_execution(
                 "new_status": execution.status,
             },
         )
+    _ts = execution.updated_at.isoformat()
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": _ts,
+                "started_at": None,
+                "finished_at": None,
+            },
+        ),
+    )
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="stream.closed",
+            data={
+                "execution_id": str(execution.id),
+                "final_status": execution.status,
+                "timestamp": _ts,
+                "reason": "terminal_state",
+            },
+        ),
+    )
     _safe_notify_integration(
         event_type="execution.cancelled",
         organization=execution.organization,
@@ -254,11 +281,26 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
         )
 
         steps = list(execution.steps.order_by("position"))
-        return {
+        result = {
             "execution": execution,
             "steps": steps,
             "claim_token": str(claim_token),
         }
+
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": execution.claimed_at.isoformat(),
+                "started_at": None,
+                "finished_at": None,
+            },
+        ),
+    )
+    return result
 
 
 def _validate_runner_ownership(
@@ -395,6 +437,42 @@ def update_execution_step(
             new_status=new_status,
             error_message=error_message,
         )
+    _ts = timezone.now().isoformat()
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="step.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "step_id": str(step.id),
+                "position": step.position,
+                "status": step.status,
+                "timestamp": _ts,
+                "started_at": step.started_at.isoformat() if step.started_at else None,
+                "finished_at": step.finished_at.isoformat() if step.finished_at else None,
+                "exit_code": step.exit_code,
+                "error_message": step.error_message,
+            },
+        ),
+    )
+    if execution_started:
+        execution_event_bus.emit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": execution.started_at.isoformat()
+                    if execution.started_at
+                    else _ts,
+                    "started_at": execution.started_at.isoformat()
+                    if execution.started_at
+                    else None,
+                    "finished_at": None,
+                },
+            ),
+        )
     if execution_started:
         _safe_notify_integration(
             event_type="execution.started",
@@ -489,6 +567,36 @@ def complete_execution(
                 else None,
             },
         )
+    _ts = execution.finished_at.isoformat() if execution.finished_at else timezone.now().isoformat()
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": _ts,
+                "started_at": execution.started_at.isoformat()
+                if execution.started_at
+                else None,
+                "finished_at": execution.finished_at.isoformat()
+                if execution.finished_at
+                else None,
+            },
+        ),
+    )
+    execution_event_bus.emit(
+        str(execution.id),
+        StreamEvent(
+            event_type="stream.closed",
+            data={
+                "execution_id": str(execution.id),
+                "final_status": execution.status,
+                "timestamp": _ts,
+                "reason": "terminal_state",
+            },
+        ),
+    )
     event_type = (
         "execution.completed"
         if outcome == Execution.Status.SUCCEEDED

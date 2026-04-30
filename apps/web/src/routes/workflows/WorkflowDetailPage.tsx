@@ -11,6 +11,7 @@ export function WorkflowDetailPage() {
   const workflowQuery = useWorkflowDetail(workflowId ?? null)
   const publishWorkflow = usePublishWorkflow(workflowId ?? null)
   const createExecution = useCreateExecution()
+  const runbookId = workflowQuery.data?.runbook_id
 
   async function handlePublishWorkflow() {
     await publishWorkflow.mutateAsync()
@@ -28,6 +29,10 @@ export function WorkflowDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
+        <Link className="muted" to={`/runbooks/${runbookId}`}>
+          ← Back to Runbook
+        </Link>
+        
         <h2>Workflow detail</h2>
       </div>
 

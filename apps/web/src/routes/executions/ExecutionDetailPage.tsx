@@ -1,4 +1,5 @@
 import { useParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 
 import { useExecutionAuditTrail } from '../../features/audit/hooks/useExecutionAuditTrail'
 import type { AuditEvent } from '../../features/audit/types'
@@ -231,6 +232,10 @@ export function ExecutionDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
+        <Link className="muted" to="/executions">
+          ← Back to Executions
+        </Link>
+
         <h2>Execution detail</h2>
       </div>
 
@@ -272,8 +277,13 @@ export function ExecutionDetailPage() {
             </div>
           </div>
 
-          {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) ? (
-            <p className="banner banner--info">Polling for runner updates…</p>
+          {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) &&
+          (executionQuery.isStreaming || executionQuery.isPollingFallback) ? (
+            <p className="banner banner--info">
+              {executionQuery.isPollingFallback
+                ? 'Polling for updates (streaming unavailable).'
+                : 'Receiving live updates.'}
+            </p>
           ) : null}
 
           <div className="stack-md">
