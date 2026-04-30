@@ -110,6 +110,22 @@ def test_steps_execute_in_position_order():
     assert started_positions == sorted(started_positions)
 
 
+def test_resumed_execution_skips_completed_steps():
+    client = make_client()
+    executor = Executor(client)
+    completed = make_step(1)
+    completed.status = "succeeded"
+    pending = make_step(2)
+    execution = make_execution([completed, pending])
+
+    run_execution(executor, execution)
+
+    client.start_step.assert_called_once()
+    assert client.start_step.call_args.args[1] == pending.id
+    client.complete_execution.assert_called_once()
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+
+
 def test_fail_step_marker_triggers_failure_path():
     client = make_client()
     executor = Executor(client)

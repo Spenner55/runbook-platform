@@ -117,6 +117,7 @@ def request_step_approval(
         )
         created = True
 
+    execution_services.emit_step_status_changed_event(execution=execution, step=step)
     _safe_notify_integration(
         event_type="approval.requested",
         organization=execution.organization,

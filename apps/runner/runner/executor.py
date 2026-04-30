@@ -89,6 +89,24 @@ class Executor:
         outcome = "succeeded"
         try:
             for step in sorted(execution.steps, key=lambda s: s.position):
+                if step.status in {"succeeded", "skipped"}:
+                    logger.info(
+                        "Step %d/%s '%s': already %s — skipping",
+                        step.position,
+                        step.id,
+                        step.name,
+                        step.status,
+                    )
+                    continue
+                if step.status == "failed":
+                    logger.info(
+                        "Step %d/%s '%s': already failed",
+                        step.position,
+                        step.id,
+                        step.name,
+                    )
+                    outcome = "failed"
+                    break
                 step_failed = self._run_step(
                     execution_id, claim_token, step, heartbeat, uploader
                 )

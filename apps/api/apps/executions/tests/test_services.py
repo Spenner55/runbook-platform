@@ -211,7 +211,7 @@ def test_execution_completion_triggers_notify(
     execution = claimed["execution"]
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             completed = services.complete_execution(
                 execution=execution,
                 runner_id="runner-1",
@@ -219,7 +219,6 @@ def test_execution_completion_triggers_notify(
                 outcome=Execution.Status.SUCCEEDED,
             )
 
-    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution.completed"
@@ -239,7 +238,7 @@ def test_execution_failure_triggers_notify_and_excludes_secrets_and_output(
     execution = claimed["execution"]
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             failed = services.complete_execution(
                 execution=execution,
                 runner_id="runner-1",
@@ -247,7 +246,6 @@ def test_execution_failure_triggers_notify_and_excludes_secrets_and_output(
                 outcome=Execution.Status.FAILED,
             )
 
-    assert len(callbacks) == 1
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution.failed"
     assert kwargs["context"]["event_type"] == "execution.failed"
@@ -293,7 +291,7 @@ def test_step_failure_triggers_notify_with_step_identifiers(
     step = execution.steps.order_by("position").first()
 
     with patch("apps.executions.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             updated = services.update_execution_step(
                 execution=execution,
                 step_id=str(step.id),
@@ -303,7 +301,6 @@ def test_step_failure_triggers_notify_with_step_identifiers(
                 error_message="raw output should stay out",
             )
 
-    assert len(callbacks) == 1
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "execution_step.failed"
     assert kwargs["context"]["event_type"] == "execution_step.failed"

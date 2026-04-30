@@ -596,7 +596,7 @@ class Command(BaseCommand):
         )
         self._report("Policy", policy.name, created)
 
-        rule, r_created = PolicyRule.objects.get_or_create(
+        rule, r_created = PolicyRule.objects.update_or_create(
             policy=policy,
             name="High risk → approval required",
             defaults={
@@ -604,14 +604,14 @@ class Command(BaseCommand):
                 "is_active": True,
                 "priority": 10,
                 "condition_type": PolicyRule.ConditionType.RISK_LEVEL,
-                "condition_params": {"risk_levels": ["high"]},
+                "condition_params": {"operator": "in", "values": ["high"]},
                 "outcome": PolicyRule.Outcome.APPROVAL_REQUIRED,
                 "reason": "High-risk steps require human sign-off before execution.",
             },
         )
         self._report("PolicyRule", rule.name, r_created)
 
-        rule2, r2_created = PolicyRule.objects.get_or_create(
+        rule2, r2_created = PolicyRule.objects.update_or_create(
             policy=policy,
             name="Low/medium risk → auto approve",
             defaults={
@@ -619,7 +619,7 @@ class Command(BaseCommand):
                 "is_active": True,
                 "priority": 20,
                 "condition_type": PolicyRule.ConditionType.RISK_LEVEL,
-                "condition_params": {"risk_levels": ["low", "medium"]},
+                "condition_params": {"operator": "in", "values": ["low", "medium"]},
                 "outcome": PolicyRule.Outcome.AUTO_APPROVE,
                 "reason": "Low/medium risk steps are pre-approved by policy.",
             },

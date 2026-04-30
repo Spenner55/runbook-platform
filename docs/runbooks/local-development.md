@@ -26,6 +26,8 @@ Services:
 - AI service: `http://localhost:8001`
 - PostgreSQL: `localhost:5432`
 
+The Django API runs under `uvicorn config.asgi:application --workers 1`. Phase 10.8 live execution streaming uses a process-local in-memory event bus, so local development must stay single-worker until a later phase adds an external stream bus.
+
 ## Environment Variables
 
 Start from `.env.example`.

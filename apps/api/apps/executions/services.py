@@ -1,7 +1,10 @@
 import logging
 import uuid
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
@@ -16,6 +19,7 @@ from apps.common.exceptions import (
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
 )
+from apps.executions.event_bus import StreamEvent, execution_event_bus
 from apps.executions.models import Execution, ExecutionStep
 from apps.integrations.services import IntegrationService
 from apps.workflows.models import Workflow
@@ -146,6 +150,32 @@ def cancel_execution(
                 "new_status": execution.status,
             },
         )
+    _ts = execution.updated_at.isoformat()
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": _ts,
+                "started_at": None,
+                "finished_at": None,
+            },
+        ),
+    )
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="stream.closed",
+            data={
+                "execution_id": str(execution.id),
+                "final_status": execution.status,
+                "timestamp": _ts,
+                "reason": "terminal_state",
+            },
+        ),
+    )
     _safe_notify_integration(
         event_type="execution.cancelled",
         organization=execution.organization,
@@ -216,13 +246,43 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
             .order_by("created_at")
             .first()
         )
+        reclaimed = False
+        if execution is None:
+            stale_before = timezone.now() - timedelta(
+                seconds=settings.RUNNER_STALE_HEARTBEAT_SECONDS
+            )
+            waiting_step = ExecutionStep.objects.filter(
+                execution_id=OuterRef("pk"),
+                status=ExecutionStep.Status.WAITING_FOR_APPROVAL,
+            )
+            running_step = ExecutionStep.objects.filter(
+                execution_id=OuterRef("pk"),
+                status=ExecutionStep.Status.RUNNING,
+            )
+            execution = (
+                Execution.objects.select_for_update(skip_locked=True)
+                .annotate(
+                    has_waiting_step=Exists(waiting_step),
+                    has_running_step=Exists(running_step),
+                )
+                .filter(
+                    status__in=(Execution.Status.CLAIMED, Execution.Status.RUNNING),
+                    last_heartbeat_at__lt=stale_before,
+                    has_waiting_step=True,
+                    has_running_step=False,
+                )
+                .order_by("last_heartbeat_at", "created_at")
+                .first()
+            )
+            reclaimed = execution is not None
         if execution is None:
             return None
 
         claim_token = uuid.uuid4()
         now = timezone.now()
         previous_status = execution.status
-        execution.status = Execution.Status.CLAIMED
+        if execution.status != Execution.Status.RUNNING:
+            execution.status = Execution.Status.CLAIMED
         execution.claimed_by_runner_id = runner_id
         execution.claim_token = claim_token
         execution.claimed_at = now
@@ -250,15 +310,36 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                 "previous_status": previous_status,
                 "new_status": execution.status,
                 "claimed_at": now.isoformat(),
+                "reclaimed": reclaimed,
             },
         )
 
         steps = list(execution.steps.order_by("position"))
-        return {
+        result = {
             "execution": execution,
             "steps": steps,
             "claim_token": str(claim_token),
         }
+
+    if previous_status != execution.status:
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": execution.claimed_at.isoformat(),
+                    "started_at": execution.started_at.isoformat()
+                    if execution.started_at
+                    else None,
+                    "finished_at": execution.finished_at.isoformat()
+                    if execution.finished_at
+                    else None,
+                },
+            ),
+        )
+    return result
 
 
 def _validate_runner_ownership(
@@ -395,6 +476,26 @@ def update_execution_step(
             new_status=new_status,
             error_message=error_message,
         )
+    _ts = timezone.now().isoformat()
+    _emit_step_status_changed_event(execution=execution, step=step)
+    if execution_started:
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": execution.started_at.isoformat()
+                    if execution.started_at
+                    else _ts,
+                    "started_at": execution.started_at.isoformat()
+                    if execution.started_at
+                    else None,
+                    "finished_at": None,
+                },
+            ),
+        )
     if execution_started:
         _safe_notify_integration(
             event_type="execution.started",
@@ -489,6 +590,40 @@ def complete_execution(
                 else None,
             },
         )
+    _ts = (
+        execution.finished_at.isoformat()
+        if execution.finished_at
+        else timezone.now().isoformat()
+    )
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": _ts,
+                "started_at": execution.started_at.isoformat()
+                if execution.started_at
+                else None,
+                "finished_at": execution.finished_at.isoformat()
+                if execution.finished_at
+                else None,
+            },
+        ),
+    )
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="stream.closed",
+            data={
+                "execution_id": str(execution.id),
+                "final_status": execution.status,
+                "timestamp": _ts,
+                "reason": "terminal_state",
+            },
+        ),
+    )
     event_type = (
         "execution.completed"
         if outcome == Execution.Status.SUCCEEDED
@@ -519,6 +654,48 @@ def emit_step_waiting_for_approval_audit(
         runner_id=runner_id,
         previous_status=previous_status,
         new_status=ExecutionStep.Status.WAITING_FOR_APPROVAL,
+    )
+
+
+def emit_step_status_changed_event(
+    *, execution: Execution, step: ExecutionStep
+) -> None:
+    """Emit a stream event for a persisted execution step status transition."""
+    _emit_step_status_changed_event(execution=execution, step=step)
+
+
+def _emit_on_commit(execution_id: str, event: StreamEvent) -> None:
+    """Emit a stream event after the current transaction commits.
+
+    When called outside any atomic block, Django fires on_commit immediately.
+    When called inside a nested atomic (savepoint), the emit is deferred until
+    the outermost transaction commits, guaranteeing emit-after-commit.
+    """
+    transaction.on_commit(lambda: execution_event_bus.emit(execution_id, event))
+
+
+def _emit_step_status_changed_event(
+    *, execution: Execution, step: ExecutionStep
+) -> None:
+    _ts = timezone.now().isoformat()
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="step.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "step_id": str(step.id),
+                "position": step.position,
+                "status": step.status,
+                "timestamp": _ts,
+                "started_at": step.started_at.isoformat() if step.started_at else None,
+                "finished_at": step.finished_at.isoformat()
+                if step.finished_at
+                else None,
+                "exit_code": step.exit_code,
+                "error_message": step.error_message,
+            },
+        ),
     )
 
 

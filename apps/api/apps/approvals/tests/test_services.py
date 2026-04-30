@@ -45,6 +45,32 @@ def test_request_step_approval_creates_request(claimed_approval_execution):
 
 
 @pytest.mark.django_db
+def test_request_step_approval_emits_waiting_step_status_changed(
+    claimed_approval_execution,
+):
+    result = claimed_approval_execution
+    execution = result["execution"]
+    claim_token = result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    with patch("apps.executions.services._emit_on_commit") as mock_emit:
+        services.request_step_approval(
+            execution=execution,
+            step=step,
+            runner_id="runner-1",
+            claim_token=claim_token,
+        )
+
+    mock_emit.assert_called_once()
+    execution_id, event = mock_emit.call_args[0]
+    assert execution_id == str(execution.id)
+    assert event.event_type == "step.status_changed"
+    assert event.data["execution_id"] == str(execution.id)
+    assert event.data["step_id"] == str(step.id)
+    assert event.data["status"] == ExecutionStep.Status.WAITING_FOR_APPROVAL
+
+
+@pytest.mark.django_db
 def test_request_step_approval_is_idempotent(claimed_approval_execution):
     result = claimed_approval_execution
     execution = result["execution"]
@@ -300,7 +326,7 @@ def test_approval_requested_triggers_notify(
     step = execution.steps.order_by("position").first()
 
     with patch("apps.approvals.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             approval_request, created = services.request_step_approval(
                 execution=execution,
                 step=step,
@@ -309,7 +335,6 @@ def test_approval_requested_triggers_notify(
             )
 
     assert created is True
-    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "approval.requested"
@@ -328,7 +353,7 @@ def test_approval_decision_triggers_notify_and_excludes_notes(
     pending_approval, django_capture_on_commit_callbacks
 ):
     with patch("apps.approvals.services.IntegrationService.notify") as notify:
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with django_capture_on_commit_callbacks(execute=True):
             decision = services.decide_approval(
                 approval_request=pending_approval,
                 decision="rejected",
@@ -336,7 +361,6 @@ def test_approval_decision_triggers_notify_and_excludes_notes(
                 actor_label="Test Operator",
             )
 
-    assert len(callbacks) == 1
     notify.assert_called_once()
     kwargs = notify.call_args.kwargs
     assert kwargs["event_type"] == "approval.decided"
