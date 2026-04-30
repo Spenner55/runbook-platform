@@ -70,6 +70,39 @@ class AuditEvent(BaseModel):
                 name="audit_org_event_idx",
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    actor_type__in=[
+                        "user",
+                        "runner",
+                        "system",
+                        "api_client",
+                        "unknown",
+                    ]
+                ),
+                name="audit_actor_type_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    object_type__in=[
+                        "organization",
+                        "runbook",
+                        "workflow",
+                        "execution",
+                        "execution_step",
+                        "approval_request",
+                        "approval_decision",
+                        "policy",
+                        "policy_rule",
+                        "policy_evaluation",
+                        "artifact",
+                        "integration_connection",
+                    ]
+                ),
+                name="audit_object_type_valid_chk",
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         if self.pk and AuditEvent.objects.filter(pk=self.pk).exists():

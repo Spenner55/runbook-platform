@@ -19,6 +19,11 @@ from apps.common.exceptions import (
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
 )
+from apps.common.metrics import (
+    record_execution_event,
+    record_step_transition,
+    timed_execution_operation,
+)
 from apps.executions.event_bus import StreamEvent, execution_event_bus
 from apps.executions.models import Execution, ExecutionStep
 from apps.integrations.services import IntegrationService
@@ -31,6 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+@timed_execution_operation("create_execution")
 def create_execution(
     *, workflow: Workflow, actor: AuditActor | None = None
 ) -> Execution:
@@ -109,6 +115,7 @@ def create_execution(
                 previous_status="",
             ),
         )
+        record_execution_event(event="created", status=execution.status)
         return execution
     except IntegrityError as exc:
         raise InvalidWorkflowDefinitionError(
@@ -122,6 +129,7 @@ def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
     return create_execution(workflow=workflow)
 
 
+@timed_execution_operation("cancel_execution")
 def cancel_execution(
     *, execution: Execution, actor: AuditActor | None = None
 ) -> Execution:
@@ -185,12 +193,110 @@ def cancel_execution(
             previous_status=previous_status,
         ),
     )
+    record_execution_event(event="cancelled", status=execution.status)
     return execution
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+@timed_execution_operation("recover_stuck_executions")
+def recover_stuck_executions(*, stuck_threshold_seconds: int = 300) -> list[str]:
+    """
+    Sweep for executions in claimed/running whose last_heartbeat_at is older
+    than stuck_threshold_seconds. For each, transition the execution to failed,
+    fail any running steps, and emit an audit event.
+
+    Uses select_for_update(skip_locked=True) per execution so concurrent
+    invocations skip rows already being processed without double-failing them.
+    Returns a list of recovered execution IDs.
+    """
+    stale_before = timezone.now() - timedelta(seconds=stuck_threshold_seconds)
+    stuck_statuses = (Execution.Status.CLAIMED, Execution.Status.RUNNING)
+
+    candidate_ids = list(
+        Execution.objects.filter(
+            status__in=stuck_statuses,
+            last_heartbeat_at__lt=stale_before,
+        ).values_list("id", flat=True)
+    )
+
+    recovered: list[str] = []
+    for exec_id in candidate_ids:
+        with transaction.atomic():
+            execution = (
+                Execution.objects.select_for_update(skip_locked=True)
+                .filter(
+                    id=exec_id,
+                    status__in=stuck_statuses,
+                    last_heartbeat_at__lt=stale_before,
+                )
+                .first()
+            )
+            if execution is None:
+                continue
+
+            now = timezone.now()
+            previous_status = execution.status
+            execution.status = Execution.Status.FAILED
+            execution.finished_at = now
+            if not execution.started_at:
+                execution.started_at = now
+            execution.save(
+                update_fields=["status", "finished_at", "started_at", "updated_at"]
+            )
+
+            running_steps = list(
+                ExecutionStep.objects.select_for_update().filter(
+                    execution=execution,
+                    status=ExecutionStep.Status.RUNNING,
+                )
+            )
+            for step in running_steps:
+                step.status = ExecutionStep.Status.FAILED
+                step.finished_at = now
+                step.error_message = "Step marked failed by watchdog: heartbeat timeout"
+                step.save(
+                    update_fields=[
+                        "status",
+                        "finished_at",
+                        "error_message",
+                        "updated_at",
+                    ]
+                )
+
+            logger.warning(
+                "watchdog recovered stuck execution %s (was %s, %d running step(s) failed)",
+                execution.id,
+                previous_status,
+                len(running_steps),
+            )
+
+            AuditService.emit(
+                organization_id=execution.organization_id,
+                actor_type=system_actor().actor_type,
+                actor_id=system_actor().actor_id,
+                actor_label=system_actor().actor_label,
+                event_type="execution.failed",
+                object_type=AuditEvent.ObjectType.EXECUTION,
+                object_id=execution.id,
+                metadata={
+                    "previous_status": previous_status,
+                    "new_status": execution.status,
+                    "reason": "watchdog_heartbeat_timeout",
+                    "stuck_threshold_seconds": stuck_threshold_seconds,
+                    "running_steps_failed": len(running_steps),
+                },
+            )
+
+            recovered.append(str(execution.id))
+            record_execution_event(event="watchdog_recovered", status=execution.status)
+            for _step in running_steps:
+                record_step_transition(status=_step.status)
+
+    return recovered
 
 
 def _validate_workflow_definition(definition: dict) -> None:
@@ -232,6 +338,7 @@ def _validate_workflow_definition(definition: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+@timed_execution_operation("claim_next_execution")
 def claim_next_execution(*, runner_id: str) -> dict | None:
     """
     Atomically claim the oldest queued execution for the given runner.
@@ -339,6 +446,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                 },
             ),
         )
+    record_execution_event(event="claimed", status=execution.status)
     return result
 
 
@@ -358,6 +466,7 @@ def _validate_runner_ownership(
         )
 
 
+@timed_execution_operation("heartbeat_execution")
 def heartbeat_execution(
     *,
     execution: Execution,
@@ -392,6 +501,7 @@ _VALID_STEP_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+@timed_execution_operation("update_execution_step")
 def update_execution_step(
     *,
     execution: Execution,
@@ -496,6 +606,7 @@ def update_execution_step(
                 },
             ),
         )
+        record_execution_event(event="started", status=execution.status)
     if execution_started:
         _safe_notify_integration(
             event_type="execution.started",
@@ -527,9 +638,11 @@ def update_execution_step(
                 new_status=new_status,
             ),
         )
+    record_step_transition(status=step.status)
     return step
 
 
+@timed_execution_operation("complete_execution")
 def complete_execution(
     *,
     execution: Execution,
@@ -638,6 +751,7 @@ def complete_execution(
             previous_status=previous_status,
         ),
     )
+    record_execution_event(event=event_type, status=execution.status)
     return execution
 
 

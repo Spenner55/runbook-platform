@@ -1,4 +1,6 @@
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
@@ -179,3 +181,23 @@ def test_non_member_cannot_read_or_cancel_execution(execution, org, api_client_f
     assert client.get("/api/v1/executions/").json() == []
     assert client.get(f"/api/v1/executions/{execution.id}/").status_code == 404
     assert client.post(f"/api/v1/executions/{execution.id}/cancel/").status_code == 404
+
+
+@pytest.mark.django_db
+def test_list_execution_does_not_prefetch_steps(execution, api_client_for_org):
+    client = _client_for_execution(api_client_for_org, execution)
+
+    with CaptureQueriesContext(connection) as captured:
+        response = client.get("/api/v1/executions/")
+
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == str(execution.id)
+    assert "steps" not in response.json()[0]
+
+    step_table = "executions_executionstep"
+    step_queries = [
+        query["sql"]
+        for query in captured.captured_queries
+        if step_table in query["sql"].lower()
+    ]
+    assert step_queries == []

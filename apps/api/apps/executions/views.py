@@ -63,19 +63,16 @@ class ExecutionViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = (
-        Execution.objects.select_related("workflow", "organization")
-        .prefetch_related("steps")
-        .all()
-    )
+    queryset = Execution.objects.select_related("workflow", "organization").all()
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         organization_id = require_organization_id(self.request)
+        queryset = Execution.objects.select_related("workflow", "organization").all()
+        if self.action == "retrieve":
+            queryset = _build_detail_queryset()
         return user_active_organization_scoped(
-            Execution.objects.select_related("workflow", "organization")
-            .prefetch_related("steps")
-            .all(),
+            queryset,
             user=self.request.user,
             organization_id=organization_id,
         )

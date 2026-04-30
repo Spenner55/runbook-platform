@@ -33,6 +33,24 @@ class RunnerSettings(BaseModel):
             )
         return self
 
+    def validate_for_startup(self) -> None:
+        """Raise SystemExit(1) with clear messages if required config is missing."""
+        import sys
+
+        errors: list[str] = []
+        if not self.api_base_url.strip():
+            errors.append("API_BASE_URL is empty — set it to the Django API base URL")
+        if not self.runner_id.strip():
+            errors.append("RUNNER_ID is empty — set it to a unique runner identifier")
+        if self.registration_token.strip() in {"", "change-me"}:
+            errors.append(
+                "RUNNER_REGISTRATION_TOKEN must not be empty or the placeholder 'change-me'"
+            )
+        if errors:
+            for msg in errors:
+                print(f"CRITICAL startup validation failed: {msg}", file=sys.stderr)
+            raise SystemExit(1)
+
     @classmethod
     def from_env(cls) -> RunnerSettings:
         import os

@@ -40,8 +40,27 @@ class IntegrationConnection(BaseModel):
                 name="integ_conn_org_active_type_idx",
             ),
             models.Index(
+                fields=["organization", "is_active", "created_at"],
+                name="integ_conn_dispatch_idx",
+            ),
+            models.Index(
                 fields=["organization", "created_at"],
                 name="integ_conn_org_created_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    type__in=["slack_webhook", "generic_webhook", "pagerduty"]
+                ),
+                name="integ_conn_type_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(last_delivery_status="")
+                    | models.Q(last_delivery_status__in=["success", "failed"])
+                ),
+                name="integ_conn_last_status_chk",
             ),
         ]
 

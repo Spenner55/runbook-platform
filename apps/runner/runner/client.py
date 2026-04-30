@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -58,9 +58,17 @@ class ApiClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _request_headers(self) -> dict[str, str]:
+        """Build per-request headers: auth, runner identity, and a fresh request ID."""
+        return {
+            **self._auth_headers,
+            "X-Runner-ID": self._runner_id,
+            "X-Request-ID": str(uuid4()),
+        }
+
     def _post(self, path: str, payload: dict) -> dict:
         url = f"{self._base}{path}"
-        response = self._http.post(url, json=payload, headers=self._auth_headers)
+        response = self._http.post(url, json=payload, headers=self._request_headers())
         response.raise_for_status()
         return response.json()
 
@@ -205,7 +213,7 @@ class ApiClient:
             url,
             data=fields,
             files=files,
-            headers=self._auth_headers,
+            headers=self._request_headers(),
             timeout=timeout,
         )
         response.raise_for_status()

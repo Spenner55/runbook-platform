@@ -1,2 +1,2 @@
 -r base.txt
-gunicorn
+gunicorn>=22.0,<23.0

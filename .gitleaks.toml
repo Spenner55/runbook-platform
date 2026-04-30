@@ -1,0 +1,9 @@
+[allowlist]
+description = "Repository-local false positives for deterministic test placeholders."
+paths = [
+  '''(^|/)\.env$''',
+]
+regexes = [
+  '''claim_token=token''',
+  '''DJANGO_SECRET_KEY=test-prod-key-[0-9]+''',
+]

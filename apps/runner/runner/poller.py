@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import httpx
@@ -14,14 +15,39 @@ logger = logging.getLogger(__name__)
 
 
 class Poller:
-    def __init__(self, client: ApiClient, executor: Executor) -> None:
+    _MIN_EMPTY_BACKOFF: float = 2.0
+    _MIN_ERROR_BACKOFF: float = 5.0
+    _MAX_ERROR_BACKOFF: float = 60.0
+
+    def __init__(
+        self,
+        client: ApiClient,
+        executor: Executor,
+        *,
+        poll_interval_seconds: int = 5,
+        shutdown_event: threading.Event | None = None,
+    ) -> None:
         self._client = client
         self._executor = executor
+        self._max_empty_backoff = float(poll_interval_seconds)
+        self._shutdown_event = shutdown_event
+        self._empty_backoff = self._MIN_EMPTY_BACKOFF
+        self._error_backoff = self._MIN_ERROR_BACKOFF
+
+    def _sleep(self, duration: float) -> None:
+        """Sleep for duration, but wake early if shutdown is requested."""
+        if self._shutdown_event is not None:
+            self._shutdown_event.wait(timeout=duration)
+        else:
+            time.sleep(duration)
 
     def run_forever(self) -> None:
         """Poll indefinitely, executing one queued execution at a time."""
         logger.info("Poller started — waiting for queued executions")
         while True:
+            if self._shutdown_event is not None and self._shutdown_event.is_set():
+                logger.info("Shutdown requested — poller exiting cleanly")
+                break
             try:
                 self._poll_once()
             except KeyboardInterrupt:
@@ -35,16 +61,32 @@ class Poller:
         try:
             response = self._client.claim_next()
         except httpx.HTTPError as exc:
-            logger.warning("claim-next request failed: %s — retrying in 5s", exc)
-            time.sleep(5)
+            logger.warning(
+                "claim-next request failed: %s — retrying in %.0fs",
+                exc,
+                self._error_backoff,
+            )
+            self._sleep(self._error_backoff)
+            self._error_backoff = min(
+                self._error_backoff * 2, self._MAX_ERROR_BACKOFF
+            )
             return
+
+        # Successful HTTP call — reset error backoff
+        self._error_backoff = self._MIN_ERROR_BACKOFF
 
         if response.execution is None:
             logger.debug(
-                "No queued executions; sleeping %ds", response.poll_after_seconds
+                "No queued executions; sleeping %.0fs", self._empty_backoff
             )
-            time.sleep(response.poll_after_seconds)
+            self._sleep(self._empty_backoff)
+            self._empty_backoff = min(
+                self._empty_backoff * 2, self._max_empty_backoff
+            )
             return
+
+        # Work found — reset empty backoff
+        self._empty_backoff = self._MIN_EMPTY_BACKOFF
 
         execution = response.execution
         claim_token = response.claim_token

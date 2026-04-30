@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import environ
+import structlog
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -21,6 +22,7 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.
 AUTH_USER_MODEL = "users.User"
 
 INSTALLED_APPS = [
+    "django_prometheus",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -45,7 +47,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "csp.middleware.CSPMiddleware",
+    "apps.common.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -53,6 +58,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -108,21 +114,56 @@ REST_FRAMEWORK = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "plain_console": {
+            "()": "structlog.stdlib.ProcessorFormatter",
+            "processors": [
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                structlog.dev.ConsoleRenderer(),
+            ],
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "plain_console",
         },
     },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
     "loggers": {
-        "apps.executions": {
+        "django": {
             "handlers": ["console"],
             "level": "INFO",
-            "propagate": True,
+            "propagate": False,
+        },
+        "apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
 
-from datetime import timedelta  # noqa: E402
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+from datetime import timedelta
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -197,6 +238,9 @@ ARTIFACT_MAX_METADATA_BYTES = env.int("ARTIFACT_MAX_METADATA_BYTES", default=819
 ARTIFACT_STDOUT_STDERR_MAX_BYTES = env.int(
     "ARTIFACT_STDOUT_STDERR_MAX_BYTES", default=5242880
 )  # 5 MB
+WATCHDOG_STUCK_THRESHOLD_SECONDS = env.int(
+    "WATCHDOG_STUCK_THRESHOLD_SECONDS", default=300
+)
 if ARTIFACT_STORAGE_BACKEND not in {"local", "s3"}:
     raise ImproperlyConfigured(
         "ARTIFACT_STORAGE_BACKEND must be either 'local' or 's3'."

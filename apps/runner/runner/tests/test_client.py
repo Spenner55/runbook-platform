@@ -427,6 +427,76 @@ def test_complete_execution_raises_on_4xx():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Request ID and Runner ID headers
+# ---------------------------------------------------------------------------
+
+
+def test_claim_next_sends_x_request_id():
+    captured = {}
+    body = {"execution": None, "poll_after_seconds": 5}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_request_id"] = request.headers.get("X-Request-ID")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.claim_next()
+
+    assert captured["x_request_id"] is not None
+    # Must be a valid UUID
+    from uuid import UUID
+
+    UUID(captured["x_request_id"])
+
+
+def test_claim_next_sends_x_runner_id():
+    captured = {}
+    body = {"execution": None, "poll_after_seconds": 5}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_runner_id"] = request.headers.get("X-Runner-ID")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.claim_next()
+
+    assert captured["x_runner_id"] == "test-runner"
+
+
+def test_each_request_gets_unique_x_request_id():
+    ids = []
+    body = {"execution": None, "poll_after_seconds": 5}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ids.append(request.headers.get("X-Request-ID"))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.claim_next()
+    client.claim_next()
+
+    assert len(ids) == 2
+    assert ids[0] != ids[1], "Each request must carry a distinct X-Request-ID"
+
+
+# ---------------------------------------------------------------------------
+# upload_artifact
+# ---------------------------------------------------------------------------
+
+
 def test_upload_artifact_sends_multipart_shape():
     captured = {}
     execution_id = uuid4()
