@@ -38,3 +38,6 @@ tmp/
 # docker / local data
 postgres_data/
 *.pid
+
+# runtime media (artifacts written by the API container)
+apps/api/media/
