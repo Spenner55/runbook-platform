@@ -6,8 +6,8 @@ thorough manual testing. Covers: users, orgs, memberships, runbooks,
 workflows, executions (all status variants), steps, approvals, policies,
 integrations, and artifacts.
 
-Safe to run multiple times (idempotent via get_or_create). Aborts if
-DEBUG is False. Never calls any AI/LLM endpoints.
+Safe to run multiple times. Aborts if DEBUG is False. Never calls any
+AI/LLM endpoints.
 
 Usage:
     python manage.py seed_dev
@@ -16,6 +16,7 @@ Usage:
 import hashlib
 import os
 import uuid
+from copy import deepcopy
 from datetime import timedelta
 
 from django.conf import settings
@@ -286,15 +287,12 @@ class Command(BaseCommand):
         from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
-        snap = wf.definition
 
-        ex, created = Execution.objects.get_or_create(
-            organization=self._org,
+        ex, created = self._get_or_create_seed_execution(
+            seed_key="deploy-succeeded",
             workflow=wf,
-            workflow_version=wf.version,
             status=Execution.Status.SUCCEEDED,
             defaults={
-                "workflow_snapshot": snap,
                 "started_at": timezone.now() - timedelta(hours=2),
                 "finished_at": timezone.now() - timedelta(hours=1, minutes=50),
                 "claimed_by_runner_id": "seed-runner-01",
@@ -304,44 +302,40 @@ class Command(BaseCommand):
         )
         self._report("Execution", f"SUCCEEDED [{ex.id}]", created)
 
-        if created:
-            step_data = [
-                (
-                    "check-health",
-                    "Pre-deploy health check",
-                    "low",
-                    False,
-                    0,
-                    "succeeded",
-                    0,
-                ),
-                ("deploy", "Run deployment script", "high", True, 1, "succeeded", 0),
-                (
-                    "smoke-test",
-                    "Post-deploy smoke test",
-                    "low",
-                    False,
-                    2,
-                    "succeeded",
-                    0,
-                ),
-            ]
-            self._create_steps(ex, step_data)
-            self._seed_artifact(ex)
+        step_data = [
+            (
+                "check-health",
+                "Pre-deploy health check",
+                "low",
+                False,
+                0,
+                "succeeded",
+                0,
+            ),
+            ("deploy", "Run deployment script", "high", True, 1, "succeeded", 0),
+            (
+                "smoke-test",
+                "Post-deploy smoke test",
+                "low",
+                False,
+                2,
+                "succeeded",
+                0,
+            ),
+        ]
+        self._create_steps(ex, step_data)
+        self._seed_artifact(ex)
 
     def _seed_execution_failed(self):
         from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
-        snap = wf.definition
 
-        ex, created = Execution.objects.get_or_create(
-            organization=self._org,
+        ex, created = self._get_or_create_seed_execution(
+            seed_key="deploy-failed",
             workflow=wf,
-            workflow_version=wf.version,
             status=Execution.Status.FAILED,
             defaults={
-                "workflow_snapshot": snap,
                 "started_at": timezone.now() - timedelta(hours=5),
                 "finished_at": timezone.now() - timedelta(hours=4, minutes=55),
                 "claimed_by_runner_id": "seed-runner-01",
@@ -351,48 +345,45 @@ class Command(BaseCommand):
         )
         self._report("Execution", f"FAILED [{ex.id}]", created)
 
-        if created:
-            step_data = [
-                (
-                    "check-health",
-                    "Pre-deploy health check",
-                    "low",
-                    False,
-                    0,
-                    "succeeded",
-                    0,
-                ),
-                ("deploy", "Run deployment script", "high", True, 1, "failed", 1),
-                (
-                    "smoke-test",
-                    "Post-deploy smoke test",
-                    "low",
-                    False,
-                    2,
-                    "skipped",
-                    None,
-                ),
-            ]
-            self._create_steps(
-                ex,
-                step_data,
-                fail_message="Script exited with code 1: permission denied on /app/deploy",
-            )
+        step_data = [
+            (
+                "check-health",
+                "Pre-deploy health check",
+                "low",
+                False,
+                0,
+                "succeeded",
+                0,
+            ),
+            ("deploy", "Run deployment script", "high", True, 1, "failed", 1),
+            (
+                "smoke-test",
+                "Post-deploy smoke test",
+                "low",
+                False,
+                2,
+                "skipped",
+                None,
+            ),
+        ]
+        self._create_steps(
+            ex,
+            step_data,
+            fail_message="Script exited with code 1: permission denied on /app/deploy",
+        )
 
     def _seed_execution_waiting_approval(self):
         from apps.approvals.models import ApprovalRequest
         from apps.executions.models import Execution, ExecutionStep
 
         wf = self._workflows["incident"]
-        snap = wf.definition
+        snap = self._seed_workflow_snapshot(wf, "incident-awaiting-approval")
 
-        ex, created = Execution.objects.get_or_create(
-            organization=self._org,
+        ex, created = self._get_or_create_seed_execution(
+            seed_key="incident-awaiting-approval",
             workflow=wf,
-            workflow_version=wf.version,
             status=Execution.Status.RUNNING,
             defaults={
-                "workflow_snapshot": snap,
                 "started_at": timezone.now() - timedelta(minutes=5),
                 "claimed_by_runner_id": "seed-runner-01",
                 "claim_token": uuid.uuid4(),
@@ -401,64 +392,79 @@ class Command(BaseCommand):
         )
         self._report("Execution", f"RUNNING/awaiting-approval [{ex.id}]", created)
 
-        if created:
-            ExecutionStep.objects.create(
-                execution=ex,
-                position=0,
-                step_key="page-oncall",
-                name="Page on-call engineer",
-                step_type="shell_command",
-                risk_level="low",
-                command="pagerduty-cli trigger --severity critical",
-                requires_approval=False,
-                step_snapshot=snap["steps"][0],
-                status=ExecutionStep.Status.SUCCEEDED,
-                started_at=timezone.now() - timedelta(minutes=4),
-                finished_at=timezone.now() - timedelta(minutes=3),
-                exit_code=0,
-            )
-            step2 = ExecutionStep.objects.create(
-                execution=ex,
-                position=1,
-                step_key="restart-service",
-                name="Restart affected service",
-                step_type="shell_command",
-                risk_level="high",
-                command="kubectl rollout restart deployment/api",
-                requires_approval=True,
-                step_snapshot=snap["steps"][1],
-                status=ExecutionStep.Status.WAITING_FOR_APPROVAL,
-                started_at=timezone.now() - timedelta(minutes=3),
-            )
+        ExecutionStep.objects.update_or_create(
+            execution=ex,
+            position=0,
+            defaults={
+                "step_key": "page-oncall",
+                "name": "Page on-call engineer",
+                "step_type": "shell_command",
+                "risk_level": "low",
+                "command": "pagerduty-cli trigger --severity critical",
+                "requires_approval": False,
+                "step_snapshot": snap["steps"][0],
+                "status": ExecutionStep.Status.SUCCEEDED,
+                "started_at": timezone.now() - timedelta(minutes=4),
+                "finished_at": timezone.now() - timedelta(minutes=3),
+                "exit_code": 0,
+                "error_message": "",
+            },
+        )
+        step2, _ = ExecutionStep.objects.update_or_create(
+            execution=ex,
+            position=1,
+            defaults={
+                "step_key": "restart-service",
+                "name": "Restart affected service",
+                "step_type": "shell_command",
+                "risk_level": "high",
+                "command": "kubectl rollout restart deployment/api",
+                "requires_approval": True,
+                "step_snapshot": snap["steps"][1],
+                "status": ExecutionStep.Status.WAITING_FOR_APPROVAL,
+                "started_at": timezone.now() - timedelta(minutes=3),
+                "finished_at": None,
+                "exit_code": None,
+                "error_message": "",
+            },
+        )
 
-            # Pending approval request — this is what you'd approve/reject in the UI
-            ApprovalRequest.objects.get_or_create(
-                step=step2,
-                defaults={
-                    "organization": self._org,
-                    "execution": ex,
-                    "status": ApprovalRequest.Status.PENDING,
-                    "requested_by_runner_id": "seed-runner-01",
-                    "requested_at": timezone.now() - timedelta(minutes=3),
-                    "timeout_seconds": 3600,
-                    "expires_at": timezone.now() + timedelta(minutes=57),
-                },
-            )
-            self._report("ApprovalRequest", "PENDING for restart-service", True)
+        # Pending approval request — this is what you'd approve/reject in the UI
+        approval, approval_created = ApprovalRequest.objects.update_or_create(
+            step=step2,
+            defaults={
+                "organization": self._org,
+                "execution": ex,
+                "status": ApprovalRequest.Status.PENDING,
+                "requested_by_runner_id": "seed-runner-01",
+                "requested_at": timezone.now() - timedelta(minutes=3),
+                "timeout_seconds": 3600,
+                "expires_at": timezone.now() + timedelta(minutes=57),
+                "resolved_at": None,
+            },
+        )
+        self._report(
+            "ApprovalRequest",
+            f"PENDING for restart-service [{approval.id}]",
+            approval_created,
+        )
 
     def _seed_execution_queued(self):
         from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
-        snap = wf.definition
 
-        ex, created = Execution.objects.get_or_create(
-            organization=self._org,
+        ex, created = self._get_or_create_seed_execution(
+            seed_key="deploy-queued",
             workflow=wf,
-            workflow_version=wf.version,
             status=Execution.Status.QUEUED,
             defaults={
-                "workflow_snapshot": snap,
+                "started_at": None,
+                "finished_at": None,
+                "claimed_by_runner_id": "",
+                "claim_token": None,
+                "claimed_at": None,
+                "last_heartbeat_at": None,
             },
         )
         self._report("Execution", f"QUEUED [{ex.id}]", created)
@@ -467,15 +473,12 @@ class Command(BaseCommand):
         from apps.executions.models import Execution
 
         wf = self._workflows["deploy"]
-        snap = wf.definition
 
-        ex, created = Execution.objects.get_or_create(
-            organization=self._org,
+        ex, created = self._get_or_create_seed_execution(
+            seed_key="deploy-cancelled",
             workflow=wf,
-            workflow_version=wf.version,
             status=Execution.Status.CANCELLED,
             defaults={
-                "workflow_snapshot": snap,
                 "started_at": timezone.now() - timedelta(days=1),
                 "finished_at": timezone.now()
                 - timedelta(days=1)
@@ -486,6 +489,70 @@ class Command(BaseCommand):
             },
         )
         self._report("Execution", f"CANCELLED [{ex.id}]", created)
+
+    def _seed_workflow_snapshot(self, workflow, seed_key):
+        snapshot = deepcopy(workflow.definition)
+        snapshot["seed_dev_key"] = seed_key
+        return snapshot
+
+    def _get_or_create_seed_execution(
+        self, *, seed_key, workflow, status, defaults=None
+    ):
+        from apps.executions.models import Execution
+
+        defaults = defaults or {}
+        snapshot = self._seed_workflow_snapshot(workflow, seed_key)
+        base_lookup = {
+            "organization": self._org,
+            "workflow": workflow,
+            "workflow_version": workflow.version,
+        }
+        execution = (
+            Execution.objects.filter(
+                **base_lookup,
+                workflow_snapshot__seed_dev_key=seed_key,
+            )
+            .order_by("created_at", "id")
+            .first()
+        )
+        if execution is None:
+            candidates = Execution.objects.filter(
+                **base_lookup,
+                status=status,
+            ).order_by("created_at", "id")
+            for candidate in candidates:
+                candidate_seed_key = (candidate.workflow_snapshot or {}).get(
+                    "seed_dev_key"
+                )
+                if candidate_seed_key in (None, seed_key):
+                    execution = candidate
+                    break
+
+        if execution is None:
+            return (
+                Execution.objects.create(
+                    **base_lookup,
+                    status=status,
+                    workflow_snapshot=snapshot,
+                    **defaults,
+                ),
+                True,
+            )
+
+        update_fields = []
+        if execution.status != status:
+            execution.status = status
+            update_fields.append("status")
+        if execution.workflow_snapshot != snapshot:
+            execution.workflow_snapshot = snapshot
+            update_fields.append("workflow_snapshot")
+        for field, value in defaults.items():
+            if getattr(execution, field) != value:
+                setattr(execution, field, value)
+                update_fields.append(field)
+        if update_fields:
+            execution.save(update_fields=[*update_fields, "updated_at"])
+        return execution, False
 
     def _create_steps(self, execution, step_data, fail_message=""):
         from apps.executions.models import ExecutionStep
@@ -512,21 +579,23 @@ class Command(BaseCommand):
                 if status == "failed":
                     err = fail_message
 
-            ExecutionStep.objects.create(
+            ExecutionStep.objects.update_or_create(
                 execution=execution,
                 position=pos,
-                step_key=step_key,
-                name=name,
-                step_type="shell_command",
-                risk_level=risk,
-                command=snap.get("command", ""),
-                requires_approval=requires_approval,
-                step_snapshot=snap,
-                status=status,
-                started_at=started,
-                finished_at=finished,
-                exit_code=exit_code,
-                error_message=err,
+                defaults={
+                    "step_key": step_key,
+                    "name": name,
+                    "step_type": "shell_command",
+                    "risk_level": risk,
+                    "command": snap.get("command", ""),
+                    "requires_approval": requires_approval,
+                    "step_snapshot": snap,
+                    "status": status,
+                    "started_at": started,
+                    "finished_at": finished,
+                    "exit_code": exit_code,
+                    "error_message": err,
+                },
             )
 
     # ------------------------------------------------------------------
@@ -538,8 +607,23 @@ class Command(BaseCommand):
 
         content = b"=== Smoke test output ===\n3 passed in 0.42s\n"
         sha256 = hashlib.sha256(content).hexdigest()
-        artifact_id = uuid.uuid4()
         safe_name = "smoke_test.log"
+        media_root = getattr(settings, "ARTIFACT_MEDIA_ROOT", "/app/media/artifacts")
+
+        existing = (
+            Artifact.objects.filter(execution=execution, name=safe_name)
+            .order_by("created_at", "id")
+            .first()
+        )
+        if existing:
+            full_path = os.path.join(media_root, existing.storage_key)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "wb") as f:
+                f.write(content)
+            self._report("Artifact", safe_name, False)
+            return
+
+        artifact_id = uuid.uuid4()
         storage_key = (
             f"artifacts/org/{execution.organization_id}"
             f"/execution/{execution.id}"
@@ -549,33 +633,30 @@ class Command(BaseCommand):
         )
 
         # Write the file to local storage
-        media_root = getattr(settings, "ARTIFACT_MEDIA_ROOT", "/app/media/artifacts")
         full_path = os.path.join(media_root, storage_key)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "wb") as f:
             f.write(content)
 
-        artifact, created = Artifact.objects.get_or_create(
+        Artifact.objects.create(
+            id=artifact_id,
             execution=execution,
             name=safe_name,
-            defaults={
-                "id": artifact_id,
-                "organization": self._org,
-                "step": None,
-                "kind": Artifact.Kind.STDOUT,
-                "original_name": "smoke_test.log",
-                "mime_type": "text/plain; charset=utf-8",
-                "size_bytes": len(content),
-                "checksum_sha256": sha256,
-                "storage_key": storage_key,
-                "uploaded_by_runner_id": "seed-runner-01",
-                "upload_status": Artifact.UploadStatus.AVAILABLE,
-                "uploaded_at": execution.finished_at or timezone.now(),
-                "content_disposition": Artifact.ContentDisposition.INLINE,
-                "metadata": {"step": "smoke-test"},
-            },
+            organization=self._org,
+            step=None,
+            kind=Artifact.Kind.STDOUT,
+            original_name="smoke_test.log",
+            mime_type="text/plain; charset=utf-8",
+            size_bytes=len(content),
+            checksum_sha256=sha256,
+            storage_key=storage_key,
+            uploaded_by_runner_id="seed-runner-01",
+            upload_status=Artifact.UploadStatus.AVAILABLE,
+            uploaded_at=execution.finished_at or timezone.now(),
+            content_disposition=Artifact.ContentDisposition.INLINE,
+            metadata={"step": "smoke-test"},
         )
-        self._report("Artifact", safe_name, created)
+        self._report("Artifact", safe_name, True)
 
     # ------------------------------------------------------------------
     # Policy

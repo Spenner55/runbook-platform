@@ -1,7 +1,7 @@
 .PHONY: up up-d down restart reset logs logs-api logs-web logs-runner logs-ai \
         ps migrate makemigrations makemigrations-app \
         test-api test-api-v test-runner test-web seed-dev \
-        format lint bootstrap help \
+        format lint check-prod check-migrations security-scan hardening-check bootstrap help \
         api-shell ai-shell runner-shell web-shell db-shell \
         start-db stop-db start-api stop-api start-web stop-web start-runner stop-runner start-ai stop-ai
 
@@ -93,6 +93,31 @@ lint: ## Lint all Python and TypeScript code (read-only)
 	docker compose exec ai ruff check /app
 	docker compose exec runner ruff check /app
 	docker compose exec web npm run lint
+
+check-prod: ## Run Django production deployment checks with local-only env values
+	docker compose exec \
+	  -e DJANGO_SETTINGS_MODULE=config.settings.prod \
+	  -e DJANGO_SECRET_KEY=local-prod-check-secret-value-0123456789abcdefghijklmnopqrstuvwxyz-NOT-SECRET \
+	  -e DATABASE_URL=postgresql://postgres:postgres@pgbouncer:5432/runbook_platform \
+	  -e DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,api \
+	  -e CORS_ALLOWED_ORIGINS=http://localhost:5173 \
+	  -e RUNNER_REGISTRATION_TOKEN=local-prod-check-runner-token \
+	  -e INTEGRATION_FERNET_KEY=local-prod-check-fernet-key \
+	  api python manage.py check --deploy --settings=config.settings.prod
+
+check-migrations: ## Check model changes have migrations and no unapplied migrations remain
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api python manage.py makemigrations --check --dry-run
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api python manage.py migrate --check
+
+security-scan: ## Run local dependency, npm, secret, and filesystem vulnerability scans
+	docker compose exec api sh -c "python -m pip install --quiet pip-audit && pip-audit --progress-spinner off -r requirements/dev.txt && pip-audit --progress-spinner off -r requirements/prod.txt"
+	docker compose exec ai sh -c "python -m pip install --quiet pip-audit && pip-audit --progress-spinner off -r requirements/dev.txt"
+	docker compose exec runner sh -c "python -m pip install --quiet pip-audit && pip-audit --progress-spinner off -r requirements/dev.txt && pip-audit --progress-spinner off -r requirements.txt"
+	docker compose exec web npm audit --audit-level=high
+	docker run --rm -v "$$PWD:/repo" zricethezav/gitleaks:v8.24.2 detect --source=/repo --redact --no-git --verbose
+	docker run --rm -v "$$PWD:/repo" aquasec/trivy:0.58.2 fs --exit-code 1 --severity HIGH,CRITICAL --scanners vuln --ignore-unfixed /repo
+
+hardening-check: check-prod check-migrations security-scan ## Run all local hardening validation gates
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 

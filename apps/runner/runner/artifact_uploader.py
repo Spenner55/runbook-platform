@@ -26,6 +26,7 @@ _DEFAULT_MAX_BYTES = 52_428_800  # 50 MB, matches Django default
 _STDOUT_STDERR_MAX_BYTES = 5_242_880  # 5 MB per stream
 _MAX_RETRIES = 2
 _RETRY_BACKOFF_SECONDS = 1.0
+_UPLOAD_METHOD = "POST"
 
 
 def _compute_sha256(data: bytes) -> str:
@@ -42,6 +43,13 @@ def _truncate_output(data: bytes, max_bytes: int) -> tuple[bytes, dict]:
         "captured_size_bytes": max_bytes,
         "truncation_reason": "stream_limit",
     }
+
+
+def _request_id_from_error(exc: httpx.HTTPError) -> str:
+    request = getattr(exc, "_request", None)
+    if request is None:
+        return ""
+    return request.headers.get("X-Request-ID", "")
 
 
 class ArtifactUploader:
@@ -111,6 +119,13 @@ class ArtifactUploader:
             return None
 
         checksum = _compute_sha256(content)
+        path = (
+            f"/api/v1/internal/executions/{self._execution_id}"
+            f"/steps/{step_id}/artifacts/"
+        )
+        runner_id = getattr(self._client, "runner_id", "")
+        if not isinstance(runner_id, str):
+            runner_id = ""
 
         for attempt in range(1, _MAX_RETRIES + 1):
             file_obj = io.BytesIO(content)
@@ -142,6 +157,17 @@ class ArtifactUploader:
                         exc.response.status_code,
                         attempt,
                         _MAX_RETRIES,
+                        extra={
+                            "method": _UPLOAD_METHOD,
+                            "path": path,
+                            "attempt": attempt,
+                            "delay_seconds": 0,
+                            "status_code": exc.response.status_code,
+                            "exception_type": "",
+                            "exception_message": "",
+                            "runner_id": runner_id,
+                            "request_id": _request_id_from_error(exc),
+                        },
                     )
                     return None
                 logger.warning(
@@ -150,6 +176,19 @@ class ArtifactUploader:
                     exc.response.status_code,
                     attempt,
                     _MAX_RETRIES,
+                    extra={
+                        "method": _UPLOAD_METHOD,
+                        "path": path,
+                        "attempt": attempt,
+                        "delay_seconds": (
+                            _RETRY_BACKOFF_SECONDS if attempt < _MAX_RETRIES else 0
+                        ),
+                        "status_code": exc.response.status_code,
+                        "exception_type": "",
+                        "exception_message": "",
+                        "runner_id": runner_id,
+                        "request_id": _request_id_from_error(exc),
+                    },
                 )
             except httpx.HTTPError as exc:
                 logger.warning(
@@ -158,6 +197,19 @@ class ArtifactUploader:
                     attempt,
                     _MAX_RETRIES,
                     exc,
+                    extra={
+                        "method": _UPLOAD_METHOD,
+                        "path": path,
+                        "attempt": attempt,
+                        "delay_seconds": (
+                            _RETRY_BACKOFF_SECONDS if attempt < _MAX_RETRIES else 0
+                        ),
+                        "status_code": None,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                        "runner_id": runner_id,
+                        "request_id": _request_id_from_error(exc),
+                    },
                 )
 
             if attempt < _MAX_RETRIES:

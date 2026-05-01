@@ -25,6 +25,7 @@ Services:
 - Django API: `http://localhost:8000`
 - AI service: `http://localhost:8001`
 - PostgreSQL: `localhost:5432`
+- PgBouncer: internal Compose service `pgbouncer:5432`
 
 The Django API runs under `uvicorn config.asgi:application --workers 1`. Phase 10.8 live execution streaming uses a process-local in-memory event bus, so local development must stay single-worker until a later phase adds an external stream bus.
 
@@ -36,7 +37,7 @@ Important variables:
 
 | Variable | Used by | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | Django | Points to Compose PostgreSQL. |
+| `DATABASE_URL` | Django | Points to Compose PgBouncer by default; use direct Postgres only for troubleshooting. |
 | `DJANGO_SECRET_KEY` | Django | Local value may be non-production. |
 | `DJANGO_DEBUG` | Django | `1` for local development. |
 | `DJANGO_ALLOWED_HOSTS` | Django | Include `localhost`, `127.0.0.1`, and `api`. |
@@ -185,7 +186,9 @@ make logs-api
 make logs
 ```
 
-Confirm PostgreSQL is healthy and `.env` has `DATABASE_URL=postgresql://postgres:postgres@postgres:5432/runbook_platform`.
+Confirm PostgreSQL and PgBouncer are healthy and `.env` has
+`DATABASE_URL=postgresql://postgres:postgres@pgbouncer:5432/runbook_platform`
+unless you are intentionally bypassing PgBouncer for troubleshooting.
 
 ### Frontend Cannot Reach API
 

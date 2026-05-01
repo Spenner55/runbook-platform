@@ -1,3 +1,5 @@
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import get_object_or_404
@@ -12,6 +14,7 @@ from apps.common.querysets import (
     user_active_organization_scoped,
     user_organization_scoped,
 )
+from apps.common.rate_limits import rate_limited_response, setting_rate
 from apps.runbooks.models import Runbook
 from apps.workflows import services
 from apps.workflows.internal_clients import (
@@ -55,7 +58,18 @@ class WorkflowViewSet(
             return WorkflowArchiveSerializer
         return WorkflowListSerializer
 
+    @method_decorator(
+        ratelimit(
+            key="user",
+            rate=setting_rate("WORKFLOW_CREATE_RATE_LIMIT"),
+            method="POST",
+            block=False,
+        )
+    )
     def create(self, request):
+        if getattr(request, "limited", False):
+            return rate_limited_response()
+
         serializer = WorkflowCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         organization_id = require_organization_id(request)
@@ -74,7 +88,9 @@ class WorkflowViewSet(
 
         try:
             workflow = services.create_workflow_from_runbook(
-                runbook=runbook, actor=actor_from_request(request)
+                runbook=runbook,
+                actor=actor_from_request(request),
+                request_id=getattr(request, "request_id", None),
             )
         except (AiServiceUnavailableError, AiServiceTimeoutError) as exc:
             raise ExternalDependencyError(

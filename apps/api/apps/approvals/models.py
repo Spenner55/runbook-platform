@@ -44,12 +44,24 @@ class ApprovalRequest(BaseModel):
                 name="approval_req_org_status_idx",
             ),
             models.Index(
+                fields=["status", "requested_at"],
+                name="approval_req_status_req_idx",
+            ),
+            models.Index(
                 fields=["execution", "status"],
                 name="approval_req_exec_status_idx",
             ),
             models.Index(
                 fields=["status", "expires_at"],
                 name="approval_req_expires_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["pending", "approved", "rejected", "timed_out"]
+                ),
+                name="approval_req_status_valid_chk",
             ),
         ]
 
@@ -97,6 +109,16 @@ class ApprovalDecision(BaseModel):
             models.Index(
                 fields=["decided_by_user", "decided_at"],
                 name="approval_dec_user_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(decision__in=["approved", "rejected", "timed_out"]),
+                name="approval_dec_decision_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(source_type__in=["human", "system"]),
+                name="approval_dec_source_valid_chk",
             ),
         ]
 

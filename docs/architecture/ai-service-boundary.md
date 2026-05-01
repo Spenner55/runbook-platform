@@ -45,7 +45,7 @@ All future calls must remain advisory and return bounded schemas.
 
 | Method | Path | Status | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/health` | Implemented | Returns service health. |
+| `GET` | `/health` | Implemented | Returns AI process health plus OpenAI dependency status. |
 | `POST` | `/parse/runbook` | Implemented | Parses raw runbook content into a workflow candidate. |
 | `POST` | `/enrich/workflow` | Placeholder | Returns a static placeholder response; unused by Django. |
 | `POST` | `/summarize/failure` | Placeholder | Returns a static placeholder response; unused by Django. |
@@ -95,6 +95,43 @@ Django-side client behavior:
 - Workflow view maps these to `ExternalDependencyError` with HTTP 503.
 
 The AI call should happen outside a database transaction.
+
+## Health Contract
+
+`GET /health` always reports AI service process health with HTTP 200 when the
+FastAPI process can respond. Dependency degradation is informational for Django
+detailed health checks and operator dashboards; it is not an ALB readiness
+signal.
+
+Response shape:
+
+```json
+{
+  "status": "ok",
+  "service": "ai",
+  "checks": {
+    "openai": {
+      "status": "ok",
+      "mode": "connectivity_checked",
+      "detail": "OpenAI models endpoint reachable."
+    }
+  }
+}
+```
+
+OpenAI status behavior:
+
+- When `AI_USE_LLM_PARSER=false`, OpenAI is reported as `disabled` and the
+  overall AI status remains `ok`.
+- When LLM parsing is enabled without `OPENAI_API_KEY` or `AI_PARSE_MODEL`, the
+  overall AI status is `degraded` and the OpenAI check reports
+  `not_configured`.
+- When LLM parsing is enabled and configured, health checks the non-generative
+  OpenAI models endpoint with `AI_HEALTH_OPENAI_TIMEOUT_SECONDS`.
+- Connectivity results are cached for `AI_HEALTH_OPENAI_CACHE_SECONDS` to avoid
+  provider health-check amplification.
+- Health must not call chat completions, structured completions, parsing,
+  enrichment, or summarization code.
 
 ## Integration Rule For Workflow Parsing
 

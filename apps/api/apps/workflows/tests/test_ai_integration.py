@@ -253,9 +253,11 @@ def test_enrich_contract_does_not_require_workflow_title():
 @pytest.mark.django_db
 def test_parse_enrich_pipeline_happy_path(runbook):
     seen_paths: list[str] = []
+    seen_request_ids: list[str | None] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen_paths.append(request.url.path)
+        seen_request_ids.append(request.headers.get("X-Request-ID"))
         if request.url.path == "/parse/runbook":
             return _json_response(_parse_response_body())
         if request.url.path == "/enrich/workflow":
@@ -268,9 +270,11 @@ def test_parse_enrich_pipeline_happy_path(runbook):
         transform_client=transform_client,
         requires_review=True,
         parse_source=Workflow.ParseSource.AI_PARSE,
+        request_id="django-req-001",
     )
 
     assert seen_paths == ["/parse/runbook", "/enrich/workflow"]
+    assert seen_request_ids == ["django-req-001", "django-req-001"]
     assert workflow.definition["name"] == "Deploy Service"
     assert workflow.definition["steps"][0]["risk"] == "critical"
     assert workflow.definition["steps"][0]["requiresApproval"] is True

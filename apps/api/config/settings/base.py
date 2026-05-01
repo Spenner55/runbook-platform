@@ -1,7 +1,9 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import environ
+import structlog
 from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -21,6 +23,7 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.
 AUTH_USER_MODEL = "users.User"
 
 INSTALLED_APPS = [
+    "django_prometheus",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -45,7 +48,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "csp.middleware.CSPMiddleware",
+    "apps.common.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -53,6 +59,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -97,7 +104,7 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.users.authentication.CachedJWTAuthentication",
     ],
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
     "DEFAULT_VERSION": "v1",
@@ -105,24 +112,59 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "apps.common.api_errors.custom_exception_handler",
 }
 
+DJANGO_LOG_LEVEL = env("DJANGO_LOG_LEVEL", default="INFO").upper()
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "plain_console": {
+            "()": "structlog.stdlib.ProcessorFormatter",
+            "processors": [
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                structlog.processors.JSONRenderer(),
+            ],
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "plain_console",
         },
     },
+    "root": {
+        "handlers": ["console"],
+        "level": DJANGO_LOG_LEVEL,
+    },
     "loggers": {
-        "apps.executions": {
+        "django": {
             "handlers": ["console"],
-            "level": "INFO",
-            "propagate": True,
+            "level": DJANGO_LOG_LEVEL,
+            "propagate": False,
+        },
+        "apps": {
+            "handlers": ["console"],
+            "level": DJANGO_LOG_LEVEL,
+            "propagate": False,
         },
     },
 }
 
-from datetime import timedelta  # noqa: E402
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -145,7 +187,9 @@ CORS_ALLOW_HEADERS = [
     "x-csrftoken",
     "x-requested-with",
     "x-organization-id",
+    "x-request-id",
 ]
+CORS_EXPOSE_HEADERS = ["x-request-id"]
 
 # AI service settings
 AI_BASE_URL = env("AI_BASE_URL", default="http://ai:8001")
@@ -197,6 +241,20 @@ ARTIFACT_MAX_METADATA_BYTES = env.int("ARTIFACT_MAX_METADATA_BYTES", default=819
 ARTIFACT_STDOUT_STDERR_MAX_BYTES = env.int(
     "ARTIFACT_STDOUT_STDERR_MAX_BYTES", default=5242880
 )  # 5 MB
+WATCHDOG_STUCK_THRESHOLD_SECONDS = env.int(
+    "WATCHDOG_STUCK_THRESHOLD_SECONDS", default=300
+)
+EXECUTION_LIST_CACHE_SECONDS = env.int("EXECUTION_LIST_CACHE_SECONDS", default=5)
+EXECUTION_LIST_CACHE_STALE_SECONDS = env.int(
+    "EXECUTION_LIST_CACHE_STALE_SECONDS", default=60
+)
+JWT_USER_CACHE_SECONDS = env.int("JWT_USER_CACHE_SECONDS", default=60)
+PROMETHEUS_METRICS_ENABLED = env.bool("PROMETHEUS_METRICS_ENABLED", default=False)
+PROMETHEUS_METRICS_TOKEN = env("PROMETHEUS_METRICS_TOKEN", default="")
+DJANGO_ADMIN_ENABLED = env.bool("DJANGO_ADMIN_ENABLED", default=True)
+AUTH_LOGIN_RATE_LIMIT = env("AUTH_LOGIN_RATE_LIMIT", default="5/m")
+AUTH_REFRESH_RATE_LIMIT = env("AUTH_REFRESH_RATE_LIMIT", default="10/m")
+WORKFLOW_CREATE_RATE_LIMIT = env("WORKFLOW_CREATE_RATE_LIMIT", default="10/m")
 if ARTIFACT_STORAGE_BACKEND not in {"local", "s3"}:
     raise ImproperlyConfigured(
         "ARTIFACT_STORAGE_BACKEND must be either 'local' or 's3'."

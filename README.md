@@ -73,6 +73,7 @@ Use `make up-d` after the first setup when you want to start the stack in the ba
 | `make test-web` | Run frontend tests once. |
 | `make lint` | Run Python and TypeScript lint checks. |
 | `make format` | Format Python and TypeScript code. |
+| `make hardening-check` | Run local production settings, migration, dependency, secret, and filesystem security gates. |
 
 More detail is in [local development](docs/runbooks/local-development.md).
 
@@ -90,6 +91,7 @@ Key references:
 - [AI service boundary](docs/architecture/ai-service-boundary.md)
 - [Frontend](docs/architecture/frontend.md)
 - [AI-agent working guide](docs/runbooks/ai-agent-working-guide.md)
+- [Phase 10.9 hardening checks](docs/runbooks/phase-10-09-hardening-checks.md)
 - [Documentation maintenance](docs/runbooks/documentation-maintenance.md)
 
 ## Blueprints

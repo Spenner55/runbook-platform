@@ -19,11 +19,19 @@ This phase starts only after Phase 10.9 is verified. Production hardening is a h
 
 - Production Django settings that read secrets from environment variables.
 - Production-ready containers for API, AI, runner, and web.
-- Health endpoints that check real dependencies.
+- Split health endpoints: `/health/ready/` for ALB/API readiness and
+  `/health/` for operator dependency health.
+- PgBouncer or the Phase 10.10-approved production pooler contract.
+- Protected metrics exposure and explicit Django admin gating.
 - Structured logs and request IDs.
 - Runner SIGTERM handling for ECS rolling deployments.
 - Artifact storage support already wired through Django.
 - Security, authentication, authorization, and audit behavior already complete.
+
+Phase 10.10 must also preserve the Phase 10.8 streaming constraint: do not
+scale API tasks or workers for SSE-dependent behavior until a shared event
+transport is implemented, or until an explicit single-task availability tradeoff
+is documented and accepted.
 
 AWS deployment comes after hardening because infrastructure should deploy the platform's intended production behavior. It should not compensate for missing app hardening with console tweaks, sidecars, queues, or new routing paths.
 

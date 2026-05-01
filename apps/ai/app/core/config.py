@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Model selection is a human decision — no default is intentional.
     AI_PARSE_MODEL: str = ""
 
+    # Health checks use a non-generative OpenAI endpoint and cache the result
+    # briefly so container health probes do not amplify provider traffic.
+    AI_HEALTH_OPENAI_TIMEOUT_SECONDS: float = 2.0
+    AI_HEALTH_OPENAI_CACHE_SECONDS: float = 30.0
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

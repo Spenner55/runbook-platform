@@ -13,6 +13,7 @@ from apps.audit.services import (
     system_actor,
 )
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
+from apps.common.metrics import record_approval_latency
 from apps.executions import services as execution_services
 from apps.executions.models import Execution, ExecutionStep
 from apps.integrations.services import IntegrationService
@@ -168,7 +169,152 @@ def get_approval_status(*, approval_request: ApprovalRequest) -> ApprovalRequest
             approval_decision=approval_decision,
             actor=system_actor(),
         )
+        record_approval_latency(
+            outcome=locked.status,
+            requested_at=locked.requested_at,
+            resolved_at=locked.resolved_at,
+        )
         return locked
+
+
+def recover_expired_approvals(*, now=None, batch_size: int = 100) -> list[str]:
+    """
+    Resolve expired pending approvals and fail their blocked executions.
+
+    The watchdog owns this bulk path. It preserves the existing timeout decision
+    audit while adding explicit watchdog recovery events for operational triage.
+    Returns approval request IDs recovered by this call.
+    """
+    now = now or timezone.now()
+    if batch_size < 1:
+        return []
+
+    candidate_ids = list(
+        ApprovalRequest.objects.filter(
+            status=ApprovalRequest.Status.PENDING,
+            expires_at__isnull=False,
+            expires_at__lte=now,
+        )
+        .order_by("expires_at", "id")
+        .values_list("id", flat=True)[:batch_size]
+    )
+
+    recovered: list[str] = []
+    for approval_id in candidate_ids:
+        recovered_id = _recover_expired_approval(approval_id=approval_id, now=now)
+        if recovered_id:
+            recovered.append(recovered_id)
+    return recovered
+
+
+def _recover_expired_approval(*, approval_id, now) -> str | None:
+    with transaction.atomic():
+        locked = (
+            ApprovalRequest.objects.select_for_update(skip_locked=True)
+            .select_related("execution", "step", "organization")
+            .filter(
+                pk=approval_id,
+                status=ApprovalRequest.Status.PENDING,
+                expires_at__isnull=False,
+                expires_at__lte=now,
+            )
+            .first()
+        )
+        if locked is None:
+            return None
+
+        updated = ApprovalRequest.objects.filter(
+            pk=locked.pk,
+            status=ApprovalRequest.Status.PENDING,
+        ).update(
+            status=ApprovalRequest.Status.TIMED_OUT,
+            resolved_at=now,
+            updated_at=now,
+        )
+        if updated != 1:
+            return None
+
+        locked.status = ApprovalRequest.Status.TIMED_OUT
+        locked.resolved_at = now
+        locked.updated_at = now
+
+        approval_decision, created = ApprovalDecision.objects.get_or_create(
+            approval_request=locked,
+            defaults={
+                "decision": ApprovalDecision.Decision.TIMED_OUT,
+                "source_type": ApprovalDecision.SourceType.SYSTEM,
+                "decided_at": now,
+                "decided_by_label": "system",
+                "decided_by_label_source": "system",
+            },
+        )
+        if not created:
+            return None
+
+        audit_actor = system_actor()
+        _emit_approval_decision_audit(
+            approval_request=locked,
+            approval_decision=approval_decision,
+            actor=audit_actor,
+        )
+        AuditService.emit(
+            organization_id=locked.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="approval.timeout",
+            object_type=AuditEvent.ObjectType.APPROVAL_REQUEST,
+            object_id=locked.id,
+            metadata={
+                "approval_request_id": str(locked.id),
+                "execution_id": str(locked.execution_id),
+                "step_id": str(locked.step_id),
+                "expires_at": locked.expires_at.isoformat()
+                if locked.expires_at
+                else None,
+                "resolved_at": locked.resolved_at.isoformat()
+                if locked.resolved_at
+                else None,
+                "reason": "watchdog_approval_timeout",
+                "recovery_source": "watchdog",
+            },
+        )
+
+        execution_failed = execution_services.fail_execution_for_approval_timeout(
+            execution=locked.execution,
+            step=locked.step,
+            approval_request=locked,
+            now=now,
+        )
+
+        logger.warning(
+            "watchdog recovered expired approval",
+            extra={
+                "approval_id": str(locked.id),
+                "execution_id": str(locked.execution_id),
+                "step_id": str(locked.step_id),
+                "expires_at": locked.expires_at.isoformat()
+                if locked.expires_at
+                else None,
+                "execution_failed": execution_failed,
+            },
+        )
+        record_approval_latency(
+            outcome=locked.status,
+            requested_at=locked.requested_at,
+            resolved_at=locked.resolved_at,
+        )
+
+    _safe_notify_integration(
+        event_type="approval.timeout",
+        organization=locked.organization,
+        context=_approval_decision_context(
+            approval_request=locked,
+            approval_decision=approval_decision,
+            event_type="approval.timeout",
+        ),
+    )
+    return str(locked.id)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +360,11 @@ def decide_approval(
                 approval_decision=approval_decision,
                 actor=system_actor(),
             )
+            record_approval_latency(
+                outcome=locked.status,
+                requested_at=locked.requested_at,
+                resolved_at=locked.resolved_at,
+            )
             return approval_decision
 
         if locked.status != ApprovalRequest.Status.PENDING:
@@ -248,6 +399,11 @@ def decide_approval(
             approval_request=locked,
             approval_decision=approval_decision,
             actor=audit_actor,
+        )
+        record_approval_latency(
+            outcome=locked.status,
+            requested_at=locked.requested_at,
+            resolved_at=locked.resolved_at,
         )
     event_type = "approval.decided"
     _safe_notify_integration(

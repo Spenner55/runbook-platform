@@ -56,6 +56,7 @@ class WorkflowTransformClient(Protocol):
         runbook_title: str,
         runbook_slug: str,
         raw_content: str,
+        request_id: str | None = None,
     ) -> WorkflowCandidate:
         """Return a WorkflowCandidate derived from the given runbook fields."""
         ...
@@ -88,8 +89,9 @@ class HttpWorkflowTransformClient:
         runbook_title: str,
         runbook_slug: str,
         raw_content: str,
+        request_id: str | None = None,
     ) -> WorkflowCandidate:
-        request_id = str(uuid.uuid4())
+        request_id = request_id or str(uuid.uuid4())
         parsed = self._ai_client.parse_runbook_to_workflow_candidate(
             request_id=request_id,
             runbook_id=runbook_slug,
@@ -131,6 +133,7 @@ class StubWorkflowTransformClient:
         runbook_title: str,
         runbook_slug: str,
         raw_content: str,
+        request_id: str | None = None,
     ) -> WorkflowCandidate:
         candidates = self._extract_candidates(raw_content)
         if not candidates:
@@ -152,7 +155,7 @@ class StubWorkflowTransformClient:
             )
 
         return WorkflowCandidate(
-            request_id="stub",
+            request_id=request_id or "stub",
             workflow_title=runbook_title,
             steps=steps,
         )

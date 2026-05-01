@@ -17,6 +17,7 @@ calls `Poller.run_forever()`. No orchestration logic lives here.
 |---------|---------|---------|
 | `API_BASE_URL` | Base URL of the Django API | `http://api:8000` |
 | `RUNNER_REGISTRATION_TOKEN` | Used as the `runner_id` claim identity | `default-runner` |
+| `RUNNER_API_RETRIES_ENABLED` | Enables bounded retries for runner API network errors and HTTP 502/503/504 responses | `true` |
 
 ---
 
@@ -55,17 +56,33 @@ Background daemon thread that fires `ApiClient.heartbeat()` every
 
 ### `ApiClient` (`client.py`)
 
-Thin wrapper around a single `httpx.Client` (10 s timeout).
+Thin wrapper around a single `httpx.Client` with explicit timeout phases:
+
+- Standard runner API calls use connect `2 s`, read `10 s`, write `10 s`,
+  and pool `2 s`.
+- Artifact uploads intentionally use the same connect and pool limits but
+  read/write `60 s`, because stdout/stderr file transfer can legitimately take
+  longer than small JSON state-transition calls.
 
 | Method | Endpoint called |
 |--------|----------------|
 | `claim_next()` | `POST /api/v1/internal/executions/claim-next/` |
 | `heartbeat()` | `POST /api/v1/internal/executions/{id}/heartbeat/` |
 | `update_step()` | `POST /api/v1/internal/executions/{id}/steps/{step_id}/update/` |
+| `start_step()` | `POST /api/v1/internal/executions/{id}/steps/{step_id}/start/` |
+| `get_step_approval_status()` | `POST /api/v1/internal/executions/{id}/steps/{step_id}/approval-status/` |
 | `complete_execution()` | `POST /api/v1/internal/executions/{id}/complete/` |
+| `upload_artifact()` | `POST /api/v1/internal/executions/{id}/steps/{step_id}/artifacts/` |
 
-No automatic retry on mutating POSTs. Failed `claim_next` calls are retried
-by the poller after a 5 s delay.
+Standard runner API calls retry only transport errors and HTTP 502/503/504, with
+1 s, 2 s, then 4 s delays. HTTP 400/401/403/404/409 responses are not retried.
+State-transition retries rely on Django's existing claim-token and idempotency
+checks, so stale or conflicting transitions still fail closed. Retry logs include
+method, path, attempt, delay, exception or status, runner ID, and request ID.
+
+Artifact uploads keep their existing two-attempt uploader retry behavior. The
+upload-specific timeout deviation above is intentional and limited to file
+transfer.
 
 ---
 

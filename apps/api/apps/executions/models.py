@@ -51,6 +51,21 @@ class Execution(BaseModel):
                 fields=["workflow", "created_at"], name="exec_workflow_created_idx"
             ),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=[
+                        "queued",
+                        "claimed",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "cancelled",
+                    ]
+                ),
+                name="exec_status_valid_chk",
+            ),
+        ]
 
     def __str__(self):
         return f"Execution {self.id} [{self.status}]"
@@ -97,6 +112,19 @@ class ExecutionStep(BaseModel):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=[
+                        "pending",
+                        "waiting_for_approval",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                    ]
+                ),
+                name="step_status_valid_chk",
+            ),
             models.UniqueConstraint(
                 fields=["execution", "position"],
                 name="unique_step_position_per_execution",

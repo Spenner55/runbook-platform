@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor, AuditService, system_actor
+from apps.common.metrics import record_integration_dispatch_duration
 from apps.integrations.models import (
     IntegrationConnection,
     IntegrationDeliveryAttempt,
@@ -21,11 +22,13 @@ EVENT_EXECUTION_CREATED = "execution.created"
 EVENT_EXECUTION_STARTED = "execution.started"
 EVENT_EXECUTION_COMPLETED = "execution.completed"
 EVENT_EXECUTION_FAILED = "execution.failed"
+EVENT_EXECUTION_APPROVAL_TIMEOUT = "execution.approval_timeout"
 EVENT_EXECUTION_CANCELLED = "execution.cancelled"
 EVENT_EXECUTION_STEP_FAILED = "execution_step.failed"
 EVENT_EXECUTION_STEP_STARTED = "execution_step.started"
 EVENT_EXECUTION_STEP_WAITING_FOR_APPROVAL = "execution_step.waiting_for_approval"
 EVENT_APPROVAL_REQUESTED = "approval.requested"
+EVENT_APPROVAL_TIMEOUT = "approval.timeout"
 EVENT_APPROVAL_DECIDED = "approval.decided"
 EVENT_APPROVAL_APPROVED = "approval.approved"
 EVENT_APPROVAL_REJECTED = "approval.rejected"
@@ -36,11 +39,13 @@ SUPPORTED_EVENT_TYPES = {
     EVENT_EXECUTION_STARTED,
     EVENT_EXECUTION_COMPLETED,
     EVENT_EXECUTION_FAILED,
+    EVENT_EXECUTION_APPROVAL_TIMEOUT,
     EVENT_EXECUTION_CANCELLED,
     EVENT_EXECUTION_STEP_FAILED,
     EVENT_EXECUTION_STEP_STARTED,
     EVENT_EXECUTION_STEP_WAITING_FOR_APPROVAL,
     EVENT_APPROVAL_REQUESTED,
+    EVENT_APPROVAL_TIMEOUT,
     EVENT_APPROVAL_DECIDED,
     EVENT_APPROVAL_APPROVED,
     EVENT_APPROVAL_REJECTED,
@@ -237,6 +242,7 @@ class IntegrationService:
         event_type: str,
         context: dict,
     ) -> None:
+        started = time.monotonic()
         attempted_at = timezone.now()
         payload_preview = cls._payload_preview(event_type=event_type, context=context)
 
@@ -274,6 +280,11 @@ class IntegrationService:
             error_detail=error_detail,
             latency_ms=latency_ms,
             attempted_at=attempted_at,
+        )
+        record_integration_dispatch_duration(
+            integration_type=connection.type,
+            outcome="success" if success else "failure",
+            duration_seconds=time.monotonic() - started,
         )
 
     @classmethod

@@ -12,11 +12,13 @@ from unittest.mock import patch
 import pytest
 from django.db import connections
 from django.utils import timezone
+from prometheus_client import REGISTRY
 
 from apps.approvals import services
 from apps.approvals.models import ApprovalDecision, ApprovalRequest
+from apps.audit.models import AuditEvent
 from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
-from apps.executions.models import ExecutionStep
+from apps.executions.models import Execution, ExecutionStep
 
 # ---------------------------------------------------------------------------
 # request_step_approval
@@ -215,6 +217,14 @@ def pending_approval(claimed_approval_execution):
 
 @pytest.mark.django_db
 def test_decide_approval_approved(pending_approval):
+    before = (
+        REGISTRY.get_sample_value(
+            "runbook_approval_latency_seconds_count",
+            {"outcome": ApprovalRequest.Status.APPROVED},
+        )
+        or 0
+    )
+
     decision = services.decide_approval(
         approval_request=pending_approval,
         decision="approved",
@@ -229,6 +239,11 @@ def test_decide_approval_approved(pending_approval):
     pending_approval.refresh_from_db()
     assert pending_approval.status == ApprovalRequest.Status.APPROVED
     assert pending_approval.resolved_at is not None
+    after = REGISTRY.get_sample_value(
+        "runbook_approval_latency_seconds_count",
+        {"outcome": ApprovalRequest.Status.APPROVED},
+    )
+    assert after > before
 
 
 @pytest.mark.django_db
@@ -309,6 +324,133 @@ def test_get_approval_status_no_timeout_when_not_expired(pending_approval):
 
     resolved = services.get_approval_status(approval_request=pending_approval)
     assert resolved.status == ApprovalRequest.Status.PENDING
+
+
+# ---------------------------------------------------------------------------
+# recover_expired_approvals — watchdog timeout recovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recover_expired_approvals_fails_blocked_execution(pending_approval):
+    pending_approval.expires_at = timezone.now() - timedelta(seconds=1)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    recovered = services.recover_expired_approvals()
+
+    assert recovered == [str(pending_approval.id)]
+    pending_approval.refresh_from_db()
+    pending_approval.execution.refresh_from_db()
+    pending_approval.step.refresh_from_db()
+    assert pending_approval.status == ApprovalRequest.Status.TIMED_OUT
+    assert pending_approval.execution.status == Execution.Status.FAILED
+    assert pending_approval.step.status == ExecutionStep.Status.FAILED
+    assert "approval timeout" in pending_approval.step.error_message
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recover_expired_approvals_emits_audit_events(pending_approval):
+    pending_approval.expires_at = timezone.now() - timedelta(seconds=1)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    services.recover_expired_approvals()
+
+    event_types = set(
+        AuditEvent.objects.filter(
+            organization_id=pending_approval.organization_id,
+        ).values_list("event_type", flat=True)
+    )
+    assert "approval.timed_out" in event_types
+    assert "approval.timeout" in event_types
+    assert "execution.failed" in event_types
+    assert "execution.approval_timeout" in event_types
+
+    approval_timeout = AuditEvent.objects.get(event_type="approval.timeout")
+    assert approval_timeout.metadata["approval_request_id"] == str(pending_approval.id)
+    assert approval_timeout.metadata["recovery_source"] == "watchdog"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recover_expired_approvals_is_idempotent(pending_approval):
+    pending_approval.expires_at = timezone.now() - timedelta(seconds=1)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    first = services.recover_expired_approvals()
+    second = services.recover_expired_approvals()
+
+    assert first == [str(pending_approval.id)]
+    assert second == []
+    assert (
+        ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    )
+    assert (
+        AuditEvent.objects.filter(event_type="execution.approval_timeout").count() == 1
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recover_expired_approvals_leaves_non_expired_pending(pending_approval):
+    pending_approval.expires_at = timezone.now() + timedelta(seconds=3600)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    recovered = services.recover_expired_approvals()
+
+    assert recovered == []
+    pending_approval.refresh_from_db()
+    assert pending_approval.status == ApprovalRequest.Status.PENDING
+    assert pending_approval.execution.status != Execution.Status.FAILED
+
+
+@pytest.mark.django_db(transaction=True)
+def test_recover_expired_approvals_leaves_decided_request(pending_approval):
+    services.decide_approval(
+        approval_request=pending_approval,
+        decision=ApprovalDecision.Decision.APPROVED,
+        actor_label="Operator",
+    )
+    pending_approval.expires_at = timezone.now() - timedelta(seconds=1)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    recovered = services.recover_expired_approvals()
+
+    assert recovered == []
+    pending_approval.refresh_from_db()
+    assert pending_approval.status == ApprovalRequest.Status.APPROVED
+    assert (
+        ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_expired_approval_recovery_runs_once(pending_approval):
+    pending_approval.expires_at = timezone.now() - timedelta(seconds=1)
+    pending_approval.save(update_fields=["expires_at", "updated_at"])
+
+    results: list[list[str]] = [[], []]
+    barrier = threading.Barrier(2)
+
+    def run(index: int) -> None:
+        barrier.wait()
+        try:
+            results[index] = services.recover_expired_approvals()
+        finally:
+            connections.close_all()
+
+    t1 = threading.Thread(target=run, args=(0,))
+    t2 = threading.Thread(target=run, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    all_recovered = results[0] + results[1]
+    assert all_recovered.count(str(pending_approval.id)) == 1
+    assert (
+        ApprovalDecision.objects.filter(approval_request=pending_approval).count() == 1
+    )
+    assert (
+        AuditEvent.objects.filter(event_type="execution.approval_timeout").count() == 1
+    )
 
 
 # ---------------------------------------------------------------------------

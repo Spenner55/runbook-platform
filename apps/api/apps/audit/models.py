@@ -54,6 +54,10 @@ class AuditEvent(BaseModel):
                 name="audit_org_occurred_idx",
             ),
             models.Index(
+                fields=["organization_id", "-occurred_at"],
+                name="audit_org_occurred_desc_idx",
+            ),
+            models.Index(
                 fields=["object_type", "object_id", "occurred_at"],
                 name="audit_object_occurred_idx",
             ),
@@ -68,6 +72,39 @@ class AuditEvent(BaseModel):
             models.Index(
                 fields=["organization_id", "event_type", "occurred_at"],
                 name="audit_org_event_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    actor_type__in=[
+                        "user",
+                        "runner",
+                        "system",
+                        "api_client",
+                        "unknown",
+                    ]
+                ),
+                name="audit_actor_type_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    object_type__in=[
+                        "organization",
+                        "runbook",
+                        "workflow",
+                        "execution",
+                        "execution_step",
+                        "approval_request",
+                        "approval_decision",
+                        "policy",
+                        "policy_rule",
+                        "policy_evaluation",
+                        "artifact",
+                        "integration_connection",
+                    ]
+                ),
+                name="audit_object_type_valid_chk",
             ),
         ]
 

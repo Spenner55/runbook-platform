@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from prometheus_client import REGISTRY
 
 from apps.artifacts import services as artifact_services
 from apps.artifacts.models import Artifact
@@ -28,6 +29,8 @@ def test_create_from_runner_upload_success(
     org, claimed_execution, claim_token, step, artifact_media_root
 ):
     content = b"step output\n"
+    before = REGISTRY.get_sample_value("runbook_artifact_upload_bytes_count") or 0
+
     artifact = artifact_services.create_from_runner_upload(
         execution=claimed_execution,
         step=step,
@@ -48,6 +51,8 @@ def test_create_from_runner_upload_success(
     assert str(org.id) in artifact.storage_key
     assert str(claimed_execution.id) in artifact.storage_key
     assert str(artifact.id) in artifact.storage_key
+    after = REGISTRY.get_sample_value("runbook_artifact_upload_bytes_count")
+    assert after > before
 
 
 @pytest.mark.django_db

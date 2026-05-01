@@ -35,6 +35,7 @@ def create_workflow(
     requires_review: bool = False,
     parse_source: str = Workflow.ParseSource.MANUAL,
     actor: AuditActor | None = None,
+    request_id: str | None = None,
 ) -> Workflow:
     """
     Create a draft Workflow from a Runbook via the transform client boundary.
@@ -46,6 +47,7 @@ def create_workflow(
         runbook_title=runbook.title,
         runbook_slug=runbook.slug,
         raw_content=runbook.raw_content,
+        request_id=request_id,
     )
     _validate_candidate(candidate)
     definition = _map_candidate_to_definition(candidate)
@@ -96,7 +98,7 @@ def create_workflow(
 
 
 def create_workflow_from_runbook(
-    *, runbook: Runbook, actor: AuditActor | None = None
+    *, runbook: Runbook, actor: AuditActor | None = None, request_id: str | None = None
 ) -> Workflow:
     """Create a draft Workflow via the AI service boundary with input guard."""
     from apps.workflows.internal_clients import HttpWorkflowTransformClient
@@ -117,6 +119,7 @@ def create_workflow_from_runbook(
         requires_review=True,
         parse_source=Workflow.ParseSource.AI_PARSE,
         actor=actor,
+        request_id=request_id,
     )
 
 

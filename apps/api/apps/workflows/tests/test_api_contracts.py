@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
 import pytest
+from django.core.cache import caches
+from django.test import override_settings
 
 from apps.common.exceptions import ConcurrencyConflictError
 from apps.runbooks import services as runbook_services
@@ -114,6 +116,35 @@ def test_create_workflow_version_conflict_returns_409(runbook, api_client_for_or
     body = response.json()
     assert "errors" in body
     assert body["errors"][0]["code"] == "workflow_version_conflict"
+
+
+@pytest.mark.django_db
+@override_settings(RATELIMIT_ENABLE=True, WORKFLOW_CREATE_RATE_LIMIT="1/m")
+def test_create_workflow_rate_limit_returns_429(runbook, api_client_for_org):
+    caches["default"].clear()
+    stub_workflow = workflow_services.create_workflow(
+        runbook=runbook,
+        transform_client=StubWorkflowTransformClient(),
+    )
+    client = _client_for_runbook(api_client_for_org, runbook)
+
+    with patch(
+        "apps.workflows.views.services.create_workflow_from_runbook",
+        return_value=stub_workflow,
+    ):
+        response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+        limited_response = client.post(
+            "/api/v1/workflows/",
+            data={"runbook_id": str(runbook.id)},
+            content_type="application/json",
+        )
+
+    assert response.status_code == 201
+    assert limited_response.status_code == 429
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,7 @@
+import time
+
+from django.conf import settings
+from django.core.cache import cache
 from django.db.models import F, Prefetch, Window
 from django.db.models.functions import RowNumber
 from rest_framework import mixins, status, viewsets
@@ -25,6 +29,21 @@ from apps.executions.serializers import (
     ExecutionListSerializer,
 )
 from apps.workflows.models import Workflow
+
+EXECUTION_LIST_FIELDS = [
+    "id",
+    "status",
+    "workflow_id",
+    "organization_id",
+    "workflow_version",
+    "claimed_by_runner_id",
+    "claimed_at",
+    "last_heartbeat_at",
+    "started_at",
+    "finished_at",
+    "created_at",
+    "updated_at",
+]
 
 
 def _build_detail_queryset():
@@ -63,19 +82,21 @@ class ExecutionViewSet(
     mixins.RetrieveModelMixin,
     viewsets.GenericViewSet,
 ):
-    queryset = (
-        Execution.objects.select_related("workflow", "organization")
-        .prefetch_related("steps")
-        .all()
-    )
+    queryset = Execution.objects.select_related("workflow", "organization").all()
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         organization_id = require_organization_id(self.request)
+        if self.action == "retrieve":
+            queryset = _build_detail_queryset()
+        elif self.action == "list":
+            queryset = Execution.objects.only(*EXECUTION_LIST_FIELDS)
+        else:
+            queryset = Execution.objects.select_related(
+                "workflow", "organization"
+            ).all()
         return user_active_organization_scoped(
-            Execution.objects.select_related("workflow", "organization")
-            .prefetch_related("steps")
-            .all(),
+            queryset,
             user=self.request.user,
             organization_id=organization_id,
         )
@@ -98,6 +119,49 @@ class ExecutionViewSet(
             pk=kwargs["pk"],
         )
         return Response(ExecutionDetailSerializer(execution).data)
+
+    def list(self, request, *args, **kwargs):
+        organization_id = require_organization_id(request)
+        cache_seconds = getattr(settings, "EXECUTION_LIST_CACHE_SECONDS", 0)
+        if cache_seconds <= 0:
+            return super().list(request, *args, **kwargs)
+
+        cache_key = (
+            "executions:list:v1:"
+            f"user:{request.user.pk}:org:{organization_id}:"
+            f"query:{request.META.get('QUERY_STRING', '')}"
+        )
+        lock_key = f"{cache_key}:refreshing"
+        now = time.time()
+        cached_entry = cache.get(cache_key)
+        if cached_entry is not None and cached_entry["fresh_until"] > now:
+            return Response(cached_entry["data"])
+
+        stale_seconds = getattr(settings, "EXECUTION_LIST_CACHE_STALE_SECONDS", 60)
+        lock_acquired = cache.add(lock_key, "1", timeout=5)
+        if cached_entry is not None and not lock_acquired:
+            return Response(cached_entry["data"])
+
+        if cached_entry is None and not lock_acquired:
+            for _ in range(10):
+                time.sleep(0.01)
+                cached_entry = cache.get(cache_key)
+                if cached_entry is not None:
+                    return Response(cached_entry["data"])
+
+        response = super().list(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            cache.set(
+                cache_key,
+                {
+                    "data": response.data,
+                    "fresh_until": time.time() + cache_seconds,
+                },
+                timeout=cache_seconds + stale_seconds,
+            )
+        if lock_acquired:
+            cache.delete(lock_key)
+        return response
 
     def create(self, request):
         serializer = ExecutionCreateSerializer(data=request.data)
