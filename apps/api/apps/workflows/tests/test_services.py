@@ -148,6 +148,7 @@ def test_transform_client_receives_correct_runbook_fields(runbook):
         runbook_title=runbook.title,
         runbook_slug=runbook.slug,
         raw_content=runbook.raw_content,
+        request_id=None,
     )
 
 
@@ -335,6 +336,7 @@ def test_create_workflow_from_runbook_uses_http_client(runbook):
         runbook_title=runbook.title,
         runbook_slug=runbook.slug,
         raw_content=runbook.raw_content,
+        request_id=None,
     )
 
 

@@ -47,3 +47,47 @@ def test_different_requests_get_different_ids(factory):
     middleware(r2)
 
     assert r1.request_id != r2.request_id
+
+
+def test_logs_request_completion(factory, caplog):
+    middleware = _make_middleware()
+    request = factory.post("/runbooks/")
+
+    with caplog.at_level("INFO"):
+        response = middleware(request)
+
+    assert response.status_code == 200
+    record = next(
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict)
+        and record.msg.get("event") == "request_completed"
+    )
+    assert record["request_id"] == request.request_id
+    assert record["method"] == "POST"
+    assert record["path"] == "/runbooks/"
+    assert record["status_code"] == 200
+    assert record["duration_ms"] >= 0
+
+
+def test_logs_request_completion_when_view_raises(factory, caplog):
+    def boom(_request):
+        raise RuntimeError("boom")
+
+    middleware = _make_middleware(boom)
+    request = factory.get("/explode/")
+
+    with caplog.at_level("INFO"), pytest.raises(RuntimeError):
+        middleware(request)
+
+    record = next(
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, dict)
+        and record.msg.get("event") == "request_completed"
+    )
+    assert record["request_id"] == request.request_id
+    assert record["method"] == "GET"
+    assert record["path"] == "/explode/"
+    assert record["status_code"] == 500
+    assert record["duration_ms"] >= 0

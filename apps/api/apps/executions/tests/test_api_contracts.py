@@ -1,5 +1,7 @@
 import pytest
+from django.core.cache import cache
 from django.db import connection
+from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 
 from apps.executions import services as execution_services
@@ -201,3 +203,44 @@ def test_list_execution_does_not_prefetch_steps(execution, api_client_for_org):
         if step_table in query["sql"].lower()
     ]
     assert step_queries == []
+
+
+@pytest.mark.django_db
+def test_list_execution_uses_lightweight_membership_scope(
+    execution, api_client_for_org
+):
+    client = _client_for_execution(api_client_for_org, execution)
+
+    with CaptureQueriesContext(connection) as captured:
+        response = client.get("/api/v1/executions/")
+
+    assert response.status_code == 200
+    execution_queries = [
+        query["sql"].lower()
+        for query in captured.captured_queries
+        if "executions_execution" in query["sql"].lower()
+    ]
+    assert len(execution_queries) == 1
+    list_query = execution_queries[0]
+    assert "distinct" not in list_query
+    assert "workflow_snapshot" not in list_query
+    assert "join \"workflows_workflow\"" not in list_query
+    assert "join \"organizations_organization\"" not in list_query
+    assert "exists" in list_query
+
+
+@pytest.mark.django_db
+@override_settings(EXECUTION_LIST_CACHE_SECONDS=1)
+def test_list_execution_uses_short_response_cache(execution, api_client_for_org):
+    cache.clear()
+    client = _client_for_execution(api_client_for_org, execution)
+
+    first = client.get("/api/v1/executions/")
+    assert first.status_code == 200
+
+    with CaptureQueriesContext(connection) as captured:
+        second = client.get("/api/v1/executions/")
+
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert captured.captured_queries == []

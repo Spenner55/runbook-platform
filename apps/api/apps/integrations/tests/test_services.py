@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from prometheus_client import REGISTRY
 
 from apps.audit.models import AuditEvent
 from apps.integrations.crypto import encrypt_credentials
@@ -60,6 +61,17 @@ def test_successful_dispatch_creates_success_attempt(
 ):
     connection = _connection(org=org, integration_fernet_key=integration_fernet_key)
     requests = []
+    labels = {
+        "integration_type": IntegrationConnection.Type.GENERIC_WEBHOOK,
+        "outcome": "success",
+    }
+    before = (
+        REGISTRY.get_sample_value(
+            "runbook_integration_dispatch_duration_seconds_count",
+            labels,
+        )
+        or 0
+    )
 
     def handler(request):
         requests.append(request)
@@ -96,6 +108,11 @@ def test_successful_dispatch_creates_success_attempt(
         connection.last_delivery_status
         == IntegrationConnection.LastDeliveryStatus.SUCCESS
     )
+    after = REGISTRY.get_sample_value(
+        "runbook_integration_dispatch_duration_seconds_count",
+        labels,
+    )
+    assert after > before
 
 
 @pytest.mark.django_db

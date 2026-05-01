@@ -87,6 +87,10 @@ class ExecutionSummary:
 # ---------------------------------------------------------------------------
 
 
+def _request_headers(request_id: str) -> dict[str, str]:
+    return {"X-Request-ID": request_id}
+
+
 class RunbookAiClient:
     """
     Thin synchronous HTTP client for the internal AI parse service.
@@ -142,7 +146,9 @@ class RunbookAiClient:
         }
 
         try:
-            response = self._client.post(url, json=payload)
+            response = self._client.post(
+                url, json=payload, headers=_request_headers(request_id)
+            )
         except httpx.ConnectError as exc:
             raise AiServiceUnavailableError(
                 f"AI service unreachable at {url}: {exc}"
@@ -200,7 +206,9 @@ class RunbookAiClient:
         }
 
         try:
-            response = self._client.post(url, json=payload)
+            response = self._client.post(
+                url, json=payload, headers=_request_headers(request_id)
+            )
         except httpx.ConnectError as exc:
             raise AiServiceUnavailableError(
                 f"AI service unreachable at {url}: {exc}"
@@ -250,7 +258,9 @@ class RunbookAiClient:
         }
 
         try:
-            response = self._client.post(url, json=payload)
+            response = self._client.post(
+                url, json=payload, headers=_request_headers(request_id)
+            )
         except httpx.ConnectError as exc:
             raise AiServiceUnavailableError(
                 f"AI service unreachable at {url}: {exc}"

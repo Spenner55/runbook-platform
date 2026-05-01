@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
-import pytest
 
 from runner.poller import Poller
 from runner.schemas import ClaimedExecution, ClaimedStep, ClaimNextResponse
@@ -275,8 +274,6 @@ def test_sleep_wakes_early_on_shutdown():
 
     t = threading.Thread(target=_set_after_short_delay)
     t.start()
-
-    import time as time_module
 
     start = time_module.monotonic()
     poller._sleep(10.0)

@@ -26,7 +26,11 @@ if not globals().get("INTEGRATION_FERNET_KEY"):
     raise ImproperlyConfigured("INTEGRATION_FERNET_KEY is required in production.")
 
 # Fail-closed: if Prometheus metrics are enabled, a scrape token must be configured.
-if env.bool("PROMETHEUS_METRICS_ENABLED", default=False):  # noqa: F405
+PROMETHEUS_METRICS_ENABLED = env.bool(  # noqa: F405
+    "PROMETHEUS_METRICS_ENABLED", default=False
+)
+PROMETHEUS_METRICS_TOKEN = env("PROMETHEUS_METRICS_TOKEN", default="")  # noqa: F405
+if PROMETHEUS_METRICS_ENABLED:
     _require_env("PROMETHEUS_METRICS_TOKEN")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -70,7 +74,10 @@ CONTENT_SECURITY_POLICY = {
     "DIRECTIVES": {
         "default-src": ["'self'"],
         "script-src": ["'self'"],
-        "style-src": ["'self'", "'unsafe-inline'"],  # Vite inlines critical CSS; tighten in Phase 10.10
+        "style-src": [
+            "'self'",
+            "'unsafe-inline'",
+        ],  # Vite inlines critical CSS; tighten in Phase 10.10
         "img-src": ["'self'", "data:"],
         "font-src": ["'self'"],
         "connect-src": ["'self'"],
@@ -95,6 +102,11 @@ DATABASES["default"]["CONN_HEALTH_CHECKS"] = True  # noqa: F405
 
 RATELIMIT_ENABLE = True
 RATELIMIT_USE_CACHE = "default"
+AUTH_LOGIN_RATE_LIMIT = env("AUTH_LOGIN_RATE_LIMIT", default="5/m")  # noqa: F405
+AUTH_REFRESH_RATE_LIMIT = env("AUTH_REFRESH_RATE_LIMIT", default="10/m")  # noqa: F405
+WORKFLOW_CREATE_RATE_LIMIT = env(  # noqa: F405
+    "WORKFLOW_CREATE_RATE_LIMIT", default="10/m"
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Django admin — disabled by default in production; enable via env var only

@@ -10,6 +10,7 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
+from config.urls import build_urlpatterns
 
 # ──────────────────────────────────────────────────────────────────────────────
 # _require_env validation logic
@@ -23,6 +24,11 @@ def _require_env_logic(value: str, key: str) -> str:
             f"Required environment variable {key!r} is not set or has default value."
         )
     return value
+
+
+def _validate_prometheus_settings_logic(*, enabled: bool, token: str) -> None:
+    if enabled:
+        _require_env_logic(token, "PROMETHEUS_METRICS_TOKEN")
 
 
 class TestRequireEnvLogic:
@@ -54,6 +60,31 @@ class TestRequireEnvLogic:
         """Each key required in prod.py raises ImproperlyConfigured when empty."""
         with pytest.raises(ImproperlyConfigured):
             _require_env_logic("", key)
+
+
+def test_prometheus_metrics_startup_validation_fails_when_enabled_without_token():
+    with pytest.raises(ImproperlyConfigured, match="PROMETHEUS_METRICS_TOKEN"):
+        _validate_prometheus_settings_logic(enabled=True, token="")
+
+
+def test_prometheus_metrics_startup_validation_allows_disabled_without_token():
+    _validate_prometheus_settings_logic(enabled=False, token="")
+
+
+def _route_strings(patterns) -> set[str]:
+    return {str(pattern.pattern) for pattern in patterns}
+
+
+def test_admin_url_is_absent_when_disabled():
+    routes = _route_strings(build_urlpatterns(admin_enabled=False))
+
+    assert "admin/" not in routes
+
+
+def test_admin_url_is_present_when_enabled():
+    routes = _route_strings(build_urlpatterns(admin_enabled=True))
+
+    assert "admin/" in routes
 
 
 # ──────────────────────────────────────────────────────────────────────────────

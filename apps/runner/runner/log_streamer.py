@@ -9,6 +9,32 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+_STANDARD_LOG_RECORD_ATTRS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "message",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "taskName",
+    "thread",
+    "threadName",
+}
+
 
 def _utcnow() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -28,6 +54,13 @@ class _JsonFormatter(logging.Formatter):
         # Merge any extra context fields attached by LoggerAdapter
         extra = getattr(record, "_extra", {})
         base.update(extra)
+        base.update(
+            {
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in _STANDARD_LOG_RECORD_ATTRS and key != "_extra"
+            }
+        )
 
         if record.exc_info:
             base["exc_info"] = self.formatException(record.exc_info)

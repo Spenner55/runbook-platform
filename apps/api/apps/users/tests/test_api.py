@@ -1,4 +1,6 @@
 import pytest
+from django.core.cache import caches
+from django.test import override_settings
 from rest_framework.test import APIClient
 
 from apps.organizations import services as organization_services
@@ -38,6 +40,19 @@ def test_login_bad_credentials(client, user):
 
 
 @pytest.mark.django_db
+@override_settings(RATELIMIT_ENABLE=True, AUTH_LOGIN_RATE_LIMIT="2/m")
+def test_login_rate_limit_returns_429(client, user):
+    caches["default"].clear()
+    payload = {"email": "alice@example.com", "password": "wrong!"}
+
+    assert client.post("/api/v1/auth/login/", payload).status_code == 401
+    assert client.post("/api/v1/auth/login/", payload).status_code == 401
+    resp = client.post("/api/v1/auth/login/", payload)
+
+    assert resp.status_code == 429
+
+
+@pytest.mark.django_db
 def test_refresh_success(client, user):
     login = client.post(
         "/api/v1/auth/login/", {"email": "alice@example.com", "password": "s3cr3tpass!"}
@@ -53,6 +68,17 @@ def test_refresh_success(client, user):
 def test_refresh_missing_cookie(client):
     resp = client.post("/api/v1/auth/refresh/")
     assert resp.status_code == 401
+
+
+@pytest.mark.django_db
+@override_settings(RATELIMIT_ENABLE=True, AUTH_REFRESH_RATE_LIMIT="1/m")
+def test_refresh_rate_limit_returns_429(client):
+    caches["default"].clear()
+
+    assert client.post("/api/v1/auth/refresh/").status_code == 401
+    resp = client.post("/api/v1/auth/refresh/")
+
+    assert resp.status_code == 429
 
 
 @pytest.mark.django_db

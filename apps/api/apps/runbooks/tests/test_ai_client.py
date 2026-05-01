@@ -16,6 +16,7 @@ from apps.runbooks.ai_client import (
     AiServiceUnavailableError,
     RunbookAiClient,
     WorkflowCandidate,
+    WorkflowCandidateStep,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,81 @@ def test_sends_correct_request_payload():
     assert body["runbook"]["id"] == "deploy-service"
     assert body["runbook"]["title"] == "Deploy Service"
     assert body["runbook"]["raw_content"] == "Verify prerequisites\nRun deployment"
+
+
+def test_parse_sends_x_request_id_header():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_request_id"] = request.headers.get("X-Request-ID")
+        return _json_response(_VALID_RESPONSE)
+
+    client = _make_client(handler)
+    _call(client)
+
+    assert captured["x_request_id"] == "req-001"
+
+
+def test_enrich_sends_x_request_id_header():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_request_id"] = request.headers.get("X-Request-ID")
+        return _json_response(
+            {
+                "request_id": "enrich-001",
+                "steps": [
+                    {
+                        "step_key": "step-001",
+                        "risk_level": "high",
+                        "requires_approval": True,
+                    }
+                ],
+                "warnings": [],
+            }
+        )
+
+    client = _make_client(handler)
+    client.enrich_workflow_candidate(
+        request_id="enrich-001",
+        workflow_title="Deploy Service",
+        steps=[
+            WorkflowCandidateStep(
+                step_key="step-001",
+                name="Deploy",
+                step_type="shell_command",
+                risk_level="medium",
+                requires_approval=False,
+            )
+        ],
+    )
+
+    assert captured["x_request_id"] == "enrich-001"
+
+
+def test_summarize_sends_x_request_id_header():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_request_id"] = request.headers.get("X-Request-ID")
+        return _json_response(
+            {
+                "request_id": "sum-001",
+                "summary": "Execution succeeded.",
+                "key_outcomes": ["Deployment completed"],
+            }
+        )
+
+    client = _make_client(handler)
+    client.summarize_execution(
+        request_id="sum-001",
+        execution_id="exec-001",
+        workflow_title="Deploy Service",
+        status="succeeded",
+        steps=[],
+    )
+
+    assert captured["x_request_id"] == "sum-001"
 
 
 # ---------------------------------------------------------------------------

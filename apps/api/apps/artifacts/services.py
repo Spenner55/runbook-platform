@@ -29,6 +29,7 @@ from apps.common.exceptions import (
     InvalidStateTransitionError,
     PayloadTooLargeError,
 )
+from apps.common.metrics import record_artifact_upload_bytes
 from apps.executions.models import Execution
 from apps.executions.services import _validate_runner_ownership
 from apps.integrations.services import IntegrationService
@@ -376,6 +377,7 @@ def create_from_runner_upload(
         raise
 
     _increment_runner_daily_quota(runner_id, size_bytes)
+    record_artifact_upload_bytes(size_bytes)
 
     _safe_notify_integration(
         event_type="artifact.uploaded",

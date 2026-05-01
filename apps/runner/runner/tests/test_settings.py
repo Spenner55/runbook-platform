@@ -77,3 +77,14 @@ def test_validate_for_startup_from_env_with_valid_env(monkeypatch):
 
     settings = RunnerSettings.from_env()
     settings.validate_for_startup()  # must not raise
+
+
+def test_from_env_allows_disabling_api_retries(monkeypatch):
+    monkeypatch.setenv("API_BASE_URL", "http://api:8000")
+    monkeypatch.setenv("RUNNER_ID", "runner-ci")
+    monkeypatch.setenv("RUNNER_REGISTRATION_TOKEN", "secure-token-abc")
+    monkeypatch.setenv("RUNNER_API_RETRIES_ENABLED", "false")
+
+    settings = RunnerSettings.from_env()
+
+    assert settings.api_retries_enabled is False

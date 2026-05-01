@@ -24,6 +24,7 @@ make migrate
 
 | Command | What it checks |
 | --- | --- |
+| `docker compose config` | Validates the local runtime graph, including PgBouncer, healthchecks, and runner shutdown grace. |
 | `make check-prod` | Runs `python manage.py check --deploy --settings=config.settings.prod` inside the API container with local-only production-like environment values. |
 | `make check-migrations` | Runs `makemigrations --check --dry-run` and `migrate --check` to catch model drift and unapplied migrations. |
 | `make security-scan` | Runs `pip-audit`, `npm audit --audit-level=high`, Gitleaks secret scanning, and Trivy filesystem vulnerability scanning. |
@@ -37,11 +38,20 @@ running containers. It does not modify repository files.
 The Step 8 verification commands are:
 
 ```sh
+docker compose config
+docker compose ps
+docker compose exec api python manage.py check
+docker compose exec api python manage.py migrate --check
+docker compose exec pgbouncer sh -c 'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1 -p 5432 -U "$POSTGRESQL_USERNAME" -d pgbouncer -c "SHOW DATABASES;"'
 docker compose exec api python manage.py check --deploy --settings=config.settings.prod
 docker compose exec api python manage.py makemigrations --check --dry-run
 docker compose exec api pytest
 cd apps/web && npm run build
 ```
+
+`docker compose ps` should show healthy `postgres`, `pgbouncer`, `api`, and
+`ai` services. The API healthcheck must use `/health/ready/`, while `/health/`
+remains the operator dependency-health endpoint.
 
 For the production settings check, use `make check-prod` unless your shell already
 exports all production-required environment variables. The target supplies local

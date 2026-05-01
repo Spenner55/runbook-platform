@@ -54,6 +54,10 @@ class AuditEvent(BaseModel):
                 name="audit_org_occurred_idx",
             ),
             models.Index(
+                fields=["organization_id", "-occurred_at"],
+                name="audit_org_occurred_desc_idx",
+            ),
+            models.Index(
                 fields=["object_type", "object_id", "occurred_at"],
                 name="audit_object_occurred_idx",
             ),

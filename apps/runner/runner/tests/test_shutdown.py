@@ -6,9 +6,11 @@ import signal
 import threading
 import time
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from runner.main import _install_sigterm_handler
-
+from runner.poller import Poller
+from runner.schemas import ClaimedExecution, ClaimedStep, ClaimNextResponse
 
 # ---------------------------------------------------------------------------
 # _install_sigterm_handler
@@ -61,9 +63,6 @@ def test_sigterm_handler_is_idempotent():
 
 def test_shutdown_event_prevents_new_poll_after_current_finishes():
     """Simulate: runner receives SIGTERM mid-execution and stops after executor.run()."""
-    from runner.poller import Poller
-    from runner.schemas import ClaimNextResponse
-
     shutdown = threading.Event()
     client = MagicMock()
     executor = MagicMock()
@@ -74,9 +73,6 @@ def test_shutdown_event_prevents_new_poll_after_current_finishes():
         polls.append(len(polls) + 1)
         if len(polls) == 1:
             # First poll: return work, set shutdown during "execution"
-            from runner.schemas import ClaimedExecution, ClaimedStep, ClaimNextResponse
-            from uuid import uuid4
-
             step = ClaimedStep(
                 id=uuid4(),
                 position=1,

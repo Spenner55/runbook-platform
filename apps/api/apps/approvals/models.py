@@ -44,6 +44,10 @@ class ApprovalRequest(BaseModel):
                 name="approval_req_org_status_idx",
             ),
             models.Index(
+                fields=["status", "requested_at"],
+                name="approval_req_status_req_idx",
+            ),
+            models.Index(
                 fields=["execution", "status"],
                 name="approval_req_exec_status_idx",
             ),

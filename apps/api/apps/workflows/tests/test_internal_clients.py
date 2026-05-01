@@ -165,3 +165,16 @@ def test_crlf_line_endings_normalised(stub):
 def test_single_step_workflow(stub):
     result = _transform(stub, "Only one step here")
     assert len(result.steps) == 1
+
+
+def test_request_id_is_preserved_when_provided(stub):
+    result = _transform(stub, "Only one step here", title="Deploy")
+    assert result.request_id == "stub"
+
+    correlated = stub.transform_runbook(
+        runbook_title="Deploy",
+        runbook_slug="deploy",
+        raw_content="Only one step here",
+        request_id="django-req-001",
+    )
+    assert correlated.request_id == "django-req-001"

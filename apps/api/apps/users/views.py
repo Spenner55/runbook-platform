@@ -1,4 +1,6 @@
 from django.conf import settings
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -6,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.common.rate_limits import rate_limited_response, setting_rate
 from apps.users import services
 from apps.users.serializers import LoginSerializer, UserSerializer
 
@@ -28,7 +31,18 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    @method_decorator(
+        ratelimit(
+            key="ip",
+            rate=setting_rate("AUTH_LOGIN_RATE_LIMIT"),
+            method="POST",
+            block=False,
+        )
+    )
     def post(self, request):
+        if getattr(request, "limited", False):
+            return rate_limited_response()
+
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -53,7 +67,18 @@ class LoginView(APIView):
 class RefreshView(APIView):
     permission_classes = [AllowAny]
 
+    @method_decorator(
+        ratelimit(
+            key="ip",
+            rate=setting_rate("AUTH_REFRESH_RATE_LIMIT"),
+            method="POST",
+            block=False,
+        )
+    )
     def post(self, request):
+        if getattr(request, "limited", False):
+            return rate_limited_response()
+
         raw = request.COOKIES.get(REFRESH_COOKIE)
         if not raw:
             return Response(

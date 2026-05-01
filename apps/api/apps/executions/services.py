@@ -21,7 +21,9 @@ from apps.common.exceptions import (
 )
 from apps.common.metrics import (
     record_execution_event,
+    record_step_duration,
     record_step_transition,
+    record_stuck_execution_recovery,
     timed_execution_operation,
 )
 from apps.executions.event_bus import StreamEvent, execution_event_bus
@@ -293,10 +295,185 @@ def recover_stuck_executions(*, stuck_threshold_seconds: int = 300) -> list[str]
 
             recovered.append(str(execution.id))
             record_execution_event(event="watchdog_recovered", status=execution.status)
+            record_stuck_execution_recovery(
+                reason="heartbeat_timeout",
+                status=execution.status,
+            )
             for _step in running_steps:
                 record_step_transition(status=_step.status)
+                _record_step_duration_if_available(_step)
 
     return recovered
+
+
+@timed_execution_operation("fail_execution_for_approval_timeout")
+def fail_execution_for_approval_timeout(
+    *,
+    execution: Execution,
+    step: ExecutionStep,
+    approval_request,
+    now=None,
+) -> bool:
+    """
+    Fail an execution blocked on an expired approval request.
+
+    Returns True when this call performed the execution failure. Returns False
+    when the execution was already terminal or no longer in the approval wait
+    state, which keeps watchdog retries idempotent.
+    """
+    now = now or timezone.now()
+
+    with transaction.atomic():
+        execution = Execution.objects.select_for_update().get(pk=execution.pk)
+        step = ExecutionStep.objects.select_for_update().get(
+            pk=step.pk,
+            execution=execution,
+        )
+
+        active_execution_statuses = (
+            Execution.Status.CLAIMED,
+            Execution.Status.RUNNING,
+        )
+        if execution.status not in active_execution_statuses:
+            return False
+
+        if step.status != ExecutionStep.Status.WAITING_FOR_APPROVAL:
+            return False
+
+        previous_execution_status = execution.status
+        previous_step_status = step.status
+
+        step.status = ExecutionStep.Status.FAILED
+        step.finished_at = now
+        step.error_message = "Step marked failed by watchdog: approval timeout"
+        step.save(
+            update_fields=[
+                "status",
+                "finished_at",
+                "error_message",
+                "updated_at",
+            ]
+        )
+
+        execution.status = Execution.Status.FAILED
+        execution.finished_at = now
+        if not execution.started_at:
+            execution.started_at = now
+        execution.save(
+            update_fields=["status", "finished_at", "started_at", "updated_at"]
+        )
+
+        audit_actor = system_actor()
+        common_metadata = {
+            "approval_request_id": str(approval_request.id),
+            "execution_id": str(execution.id),
+            "step_id": str(step.id),
+            "expires_at": approval_request.expires_at.isoformat()
+            if approval_request.expires_at
+            else None,
+            "reason": "watchdog_approval_timeout",
+            "recovery_source": "watchdog",
+        }
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="execution_step.failed",
+            object_type=AuditEvent.ObjectType.EXECUTION_STEP,
+            object_id=step.id,
+            metadata={
+                **common_metadata,
+                "step_key": step.step_key,
+                "position": step.position,
+                "previous_status": previous_step_status,
+                "new_status": step.status,
+                "error_message": step.error_message,
+            },
+        )
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="execution.failed",
+            object_type=AuditEvent.ObjectType.EXECUTION,
+            object_id=execution.id,
+            metadata={
+                **common_metadata,
+                "previous_status": previous_execution_status,
+                "new_status": execution.status,
+            },
+        )
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="execution.approval_timeout",
+            object_type=AuditEvent.ObjectType.EXECUTION,
+            object_id=execution.id,
+            metadata={
+                **common_metadata,
+                "previous_status": previous_execution_status,
+                "new_status": execution.status,
+            },
+        )
+
+    _emit_step_status_changed_event(execution=execution, step=step)
+    _ts = execution.finished_at.isoformat() if execution.finished_at else now.isoformat()
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="execution.status_changed",
+            data={
+                "execution_id": str(execution.id),
+                "status": execution.status,
+                "timestamp": _ts,
+                "started_at": execution.started_at.isoformat()
+                if execution.started_at
+                else None,
+                "finished_at": execution.finished_at.isoformat()
+                if execution.finished_at
+                else None,
+            },
+        ),
+    )
+    _emit_on_commit(
+        str(execution.id),
+        StreamEvent(
+            event_type="stream.closed",
+            data={
+                "execution_id": str(execution.id),
+                "final_status": execution.status,
+                "timestamp": _ts,
+                "reason": "approval_timeout",
+            },
+        ),
+    )
+    _safe_notify_integration(
+        event_type="execution_step.failed",
+        organization=execution.organization,
+        context=_step_context(
+            execution=execution,
+            step=step,
+            event_type="execution_step.failed",
+            previous_status=previous_step_status,
+            new_status=step.status,
+        ),
+    )
+    _safe_notify_integration(
+        event_type="execution.failed",
+        organization=execution.organization,
+        context=_execution_context(
+            execution=execution,
+            event_type="execution.failed",
+            previous_status=previous_execution_status,
+        ),
+    )
+    record_step_transition(status=step.status)
+    record_execution_event(event="approval_timeout", status=execution.status)
+    return True
 
 
 def _validate_workflow_definition(definition: dict) -> None:
@@ -639,6 +816,8 @@ def update_execution_step(
             ),
         )
     record_step_transition(status=step.status)
+    if new_status in (ExecutionStep.Status.SUCCEEDED, ExecutionStep.Status.FAILED):
+        _record_step_duration_if_available(step)
     return step
 
 
@@ -857,6 +1036,17 @@ def _emit_step_transition_audit(
         object_type=AuditEvent.ObjectType.EXECUTION_STEP,
         object_id=step.id,
         metadata=metadata,
+    )
+
+
+def _record_step_duration_if_available(step: ExecutionStep) -> None:
+    if not step.started_at or not step.finished_at:
+        return
+    record_step_duration(
+        step_type=step.step_type,
+        risk_level=step.risk_level,
+        outcome=step.status,
+        duration_seconds=(step.finished_at - step.started_at).total_seconds(),
     )
 
 

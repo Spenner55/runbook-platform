@@ -87,6 +87,68 @@ Before deploying to AWS:
 - decide whether to bind `request_id` into Django log context for every request;
 - document the CloudWatch Logs Insights queries used during incidents.
 
+## Log Redaction Guidance
+
+Structured logs must not store secrets or high-risk external payloads. Treat the
+following as sensitive and redact before logging:
+
+- authorization headers, cookies, refresh tokens, access tokens, runner tokens,
+  claim tokens, webhook URLs, and provider API keys;
+- external response bodies from Slack, PagerDuty, generic webhooks, OpenAI, or
+  any future provider;
+- raw exception text when it may include request headers, URLs, credentials, or
+  customer-supplied command output;
+- artifact storage keys and signed URLs.
+
+Safe log fields are stable identifiers and bounded status data: `request_id`,
+`runner_id`, `execution_id`, `step_id`, `organization_id`, endpoint path,
+HTTP status, provider type, latency, and sanitized error code. If an exception
+message is needed for diagnosis, log a short normalized error class or code and
+capture the raw value only in a secure incident note after review.
+
+## CloudWatch Logs Insights Examples
+
+Use these as starting points after Phase 10.10 confirms the final JSON field
+names in CloudWatch.
+
+Trace one request ID across services:
+
+```sql
+fields @timestamp, @logStream, service, level, message, request_id, runner_id, execution_id
+| filter request_id = "REQUEST_ID_HERE"
+| sort @timestamp asc
+| limit 100
+```
+
+Find failed execution transitions:
+
+```sql
+fields @timestamp, service, level, message, execution_id, organization_id, status, error_code
+| filter execution_id = "EXECUTION_ID_HERE" or message like /execution/i
+| filter level in ["error", "warning"] or status = "failed"
+| sort @timestamp asc
+| limit 100
+```
+
+Inspect runner internal API calls:
+
+```sql
+fields @timestamp, service, level, message, runner_id, request_id, path, status_code, duration_ms
+| filter service = "runner" or ispresent(runner_id)
+| sort @timestamp desc
+| limit 100
+```
+
+Inspect AI dependency failures without exposing provider bodies:
+
+```sql
+fields @timestamp, service, level, message, request_id, error_code, provider, status_code, duration_ms
+| filter service = "ai" or message like /AI|OpenAI|parse|enrich|summarize/
+| filter level in ["error", "warning"] or status_code >= 500
+| sort @timestamp desc
+| limit 100
+```
+
 ## Useful Smoke Commands
 
 API health with headers:

@@ -1,5 +1,8 @@
+import logging
 import time
+import uuid
 
+import structlog
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -10,7 +13,21 @@ from app.api.routes.health import router as health_router
 from app.api.routes.parse import router as parse_router
 from app.api.routes.summarize import router as summarize_router
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
 app = FastAPI(title="Runbook Platform AI Service")
+logger = structlog.get_logger("app.request")
 
 
 AI_REQUESTS_TOTAL = Counter(
@@ -28,6 +45,27 @@ AI_ERRORS_TOTAL = Counter(
     "AI service domain error count.",
     ("operation", "method"),
 )
+AI_PARSE_REQUEST_DURATION_SECONDS = Histogram(
+    "ai_parse_request_duration_seconds",
+    "Blueprint-compatible parse request duration.",
+    ("outcome",),
+)
+AI_ENRICH_REQUEST_DURATION_SECONDS = Histogram(
+    "ai_enrich_request_duration_seconds",
+    "Blueprint-compatible enrich request duration.",
+    ("outcome",),
+)
+AI_SUMMARIZE_REQUEST_DURATION_SECONDS = Histogram(
+    "ai_summarize_request_duration_seconds",
+    "Blueprint-compatible summarize request duration.",
+    ("outcome",),
+)
+
+AI_OPERATION_DURATION_HISTOGRAMS = {
+    "parse": AI_PARSE_REQUEST_DURATION_SECONDS,
+    "enrich": AI_ENRICH_REQUEST_DURATION_SECONDS,
+    "summarize": AI_SUMMARIZE_REQUEST_DURATION_SECONDS,
+}
 
 
 def _metrics_operation(path: str) -> str | None:
@@ -41,6 +79,38 @@ def _metrics_operation(path: str) -> str | None:
 
 
 @app.middleware("http")
+async def request_id_context(request: Request, call_next):
+    structlog.contextvars.clear_contextvars()
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    method = request.method
+    path = request.url.path
+    structlog.contextvars.bind_contextvars(
+        request_id=request_id,
+        method=method,
+        path=path,
+    )
+
+    started = time.monotonic()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        duration_ms = round((time.monotonic() - started) * 1000, 2)
+        logger.info(
+            "request_completed",
+            request_id=request_id,
+            method=method,
+            path=path,
+            status_code=status_code,
+            duration_ms=duration_ms,
+        )
+        structlog.contextvars.clear_contextvars()
+
+
+@app.middleware("http")
 async def record_ai_metrics(request: Request, call_next):
     operation = _metrics_operation(request.url.path)
     if operation is None:
@@ -51,19 +121,24 @@ async def record_ai_metrics(request: Request, call_next):
         response = await call_next(request)
     except Exception:
         AI_ERRORS_TOTAL.labels(operation=operation, method=request.method).inc()
-        AI_REQUEST_LATENCY_SECONDS.labels(operation=operation).observe(
-            time.monotonic() - started
+        duration_seconds = time.monotonic() - started
+        AI_REQUEST_LATENCY_SECONDS.labels(operation=operation).observe(duration_seconds)
+        AI_OPERATION_DURATION_HISTOGRAMS[operation].labels(outcome="error").observe(
+            duration_seconds
         )
         raise
 
     status_code = str(response.status_code)
+    duration_seconds = time.monotonic() - started
     AI_REQUESTS_TOTAL.labels(
         operation=operation,
         method=request.method,
         status_code=status_code,
     ).inc()
-    AI_REQUEST_LATENCY_SECONDS.labels(operation=operation).observe(
-        time.monotonic() - started
+    AI_REQUEST_LATENCY_SECONDS.labels(operation=operation).observe(duration_seconds)
+    outcome = "error" if response.status_code >= 500 else "success"
+    AI_OPERATION_DURATION_HISTOGRAMS[operation].labels(outcome=outcome).observe(
+        duration_seconds
     )
     if response.status_code >= 500:
         AI_ERRORS_TOTAL.labels(operation=operation, method=request.method).inc()

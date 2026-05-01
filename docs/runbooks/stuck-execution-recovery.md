@@ -7,7 +7,8 @@ the runner never edits the database directly.
 ## What The Watchdog Does
 
 `check_stuck_executions` calls `recover_stuck_executions(...)` in
-`apps/api/apps/executions/services.py`.
+`apps/api/apps/executions/services.py` and `recover_expired_approvals(...)` in
+`apps/api/apps/approvals/services.py`.
 
 For each execution whose `last_heartbeat_at` is older than the configured
 threshold and whose status is `claimed` or `running`, the service:
@@ -20,6 +21,16 @@ threshold and whose status is `claimed` or `running`, the service:
 
 The command is idempotent. Running it repeatedly after recovery should report no
 additional stuck executions.
+
+The same command also resolves expired pending approvals. For each approval
+whose `expires_at` has passed, the watchdog:
+
+- locks and marks the approval request `timed_out`;
+- creates the system `ApprovalDecision`;
+- marks the waiting step `failed`;
+- marks the blocked execution `failed`;
+- records both existing timeout/failure audit events and explicit
+  `approval.timeout` / `execution.approval_timeout` watchdog events.
 
 ## Standard Recovery
 
@@ -38,7 +49,16 @@ docker compose exec api python manage.py check_stuck_executions --threshold-seco
 Expected outputs:
 
 - `Recovered N stuck execution(s): ...` when stale executions were recovered.
+- `Recovered N expired approval(s): ...` when approval timeouts were recovered.
 - `No stuck executions found.` when no rows require action.
+- `No expired approvals found.` when no pending approvals are expired.
+
+If a production data issue requires temporarily disabling the approval sweep,
+run the heartbeat-only recovery path:
+
+```sh
+docker compose exec api python manage.py check_stuck_executions --skip-expired-approvals
+```
 
 ## Local Drill Recovery
 

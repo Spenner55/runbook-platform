@@ -98,7 +98,7 @@ check-prod: ## Run Django production deployment checks with local-only env value
 	docker compose exec \
 	  -e DJANGO_SETTINGS_MODULE=config.settings.prod \
 	  -e DJANGO_SECRET_KEY=local-prod-check-secret-value-0123456789abcdefghijklmnopqrstuvwxyz-NOT-SECRET \
-	  -e DATABASE_URL=postgresql://postgres:postgres@postgres:5432/runbook_platform \
+	  -e DATABASE_URL=postgresql://postgres:postgres@pgbouncer:5432/runbook_platform \
 	  -e DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,api \
 	  -e CORS_ALLOWED_ORIGINS=http://localhost:5173 \
 	  -e RUNNER_REGISTRATION_TOKEN=local-prod-check-runner-token \

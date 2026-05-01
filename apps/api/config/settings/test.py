@@ -4,6 +4,9 @@ DEBUG = False
 RUNNER_REGISTRATION_TOKEN = "test-runner-token"
 RUNNER_TOKENS = [RUNNER_REGISTRATION_TOKEN]
 RATELIMIT_ENABLE = False
+EXECUTION_LIST_CACHE_SECONDS = 0
+EXECUTION_LIST_CACHE_STALE_SECONDS = 0
+JWT_USER_CACHE_SECONDS = 0
 
 # Use a plain logging config in tests so pytest caplog can capture records.
 # The structlog ProcessorFormatter with propagate=False breaks caplog because

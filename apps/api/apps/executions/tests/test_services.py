@@ -1,6 +1,9 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
+from prometheus_client import REGISTRY
 
 from apps.common.exceptions import (
     DomainValidationError,
@@ -46,9 +49,23 @@ def draft_workflow(runbook):
 
 @pytest.mark.django_db
 def test_create_execution_creates_execution_row(published_workflow):
+    before = (
+        REGISTRY.get_sample_value(
+            "runbook_executions_total",
+            {"event": "created", "status": Execution.Status.QUEUED},
+        )
+        or 0
+    )
+
     execution = services.create_execution(workflow=published_workflow)
+
     assert Execution.objects.filter(pk=execution.pk).exists()
     assert execution.status == Execution.Status.QUEUED
+    after = REGISTRY.get_sample_value(
+        "runbook_executions_total",
+        {"event": "created", "status": Execution.Status.QUEUED},
+    )
+    assert after > before
 
 
 @pytest.mark.django_db
@@ -56,6 +73,44 @@ def test_create_execution_creates_correct_step_count(published_workflow):
     execution = services.create_execution(workflow=published_workflow)
     expected = len(published_workflow.definition["steps"])
     assert ExecutionStep.objects.filter(execution=execution).count() == expected
+
+
+@pytest.mark.django_db
+def test_terminal_step_update_records_step_duration_metric(published_workflow):
+    execution = services.create_execution(workflow=published_workflow)
+    claim = services.claim_next_execution(runner_id="runner-1")
+    assert claim is not None
+    claim_token = claim["claim_token"]
+    step = execution.steps.order_by("position").first()
+    labels = {
+        "step_type": step.step_type or "unknown",
+        "risk_level": step.risk_level or "unknown",
+        "outcome": ExecutionStep.Status.SUCCEEDED,
+    }
+    before = (
+        REGISTRY.get_sample_value("runbook_step_duration_seconds_count", labels) or 0
+    )
+
+    started_at = timezone.now() - timedelta(seconds=2)
+    services.update_execution_step(
+        execution=execution,
+        step_id=str(step.id),
+        runner_id="runner-1",
+        claim_token=claim_token,
+        new_status=ExecutionStep.Status.RUNNING,
+        started_at=started_at,
+    )
+    services.update_execution_step(
+        execution=execution,
+        step_id=str(step.id),
+        runner_id="runner-1",
+        claim_token=claim_token,
+        new_status=ExecutionStep.Status.SUCCEEDED,
+        finished_at=timezone.now(),
+    )
+
+    after = REGISTRY.get_sample_value("runbook_step_duration_seconds_count", labels)
+    assert after > before
 
 
 @pytest.mark.django_db

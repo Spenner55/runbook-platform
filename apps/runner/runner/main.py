@@ -11,7 +11,7 @@ import time
 
 import httpx
 
-from runner.client import ApiClient
+from runner.client import RUNNER_API_TIMEOUT, ApiClient
 from runner.executor import Executor
 from runner.log_streamer import LogStreamer, configure_logging
 from runner.poller import Poller
@@ -75,14 +75,15 @@ def main() -> None:
     shutdown_event = threading.Event()
     _install_sigterm_handler(shutdown_event)
 
-    timeout = httpx.Timeout(10.0)
-    with httpx.Client(timeout=timeout) as http_client:
+    with httpx.Client(timeout=RUNNER_API_TIMEOUT) as http_client:
         api_client = ApiClient(
             base_url=settings.api_base_url,
             runner_id=settings.runner_id,
             runner_token=settings.registration_token,
             runner_version=settings.runner_version,
             http_client=http_client,
+            api_retries_enabled=settings.api_retries_enabled,
+            retry_sleep=shutdown_event.wait,
         )
         executor = Executor(client=api_client)
         poller = Poller(

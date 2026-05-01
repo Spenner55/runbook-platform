@@ -18,6 +18,7 @@ class RunnerSettings(BaseModel):
     runner_id: str
     runner_version: str = "0.1.0"
     registration_token: str = ""
+    api_retries_enabled: bool = True
     poll_interval_seconds: int = 5
     heartbeat_interval_seconds: int = 10
     fake_step_delay_seconds: float = 1.0
@@ -55,6 +56,12 @@ class RunnerSettings(BaseModel):
     def from_env(cls) -> RunnerSettings:
         import os
 
+        def _env_bool(name: str, default: bool) -> bool:
+            raw = os.environ.get(name)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+
         return cls(
             api_base_url=os.environ.get("API_BASE_URL", "http://api:8000"),
             runner_id=os.environ.get(
@@ -62,6 +69,7 @@ class RunnerSettings(BaseModel):
             ),
             runner_version=os.environ.get("RUNNER_VERSION", "0.1.0"),
             registration_token=os.environ.get("RUNNER_REGISTRATION_TOKEN", ""),
+            api_retries_enabled=_env_bool("RUNNER_API_RETRIES_ENABLED", True),
             poll_interval_seconds=int(
                 os.environ.get("RUNNER_POLL_INTERVAL_SECONDS", "5")
             ),

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import uuid4
 
 import httpx
 import pytest
 
-from runner.client import ApiClient
+from runner.client import (
+    ARTIFACT_UPLOAD_TIMEOUT,
+    RETRY_DELAYS_SECONDS,
+    RUNNER_API_TIMEOUT,
+    ApiClient,
+)
 from runner.schemas import (
     ApprovalStatusResponse,
     ClaimNextResponse,
@@ -34,7 +40,7 @@ def _make_transport(status_code: int, body: dict) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-def make_client(transport: httpx.MockTransport) -> ApiClient:
+def make_client(transport: httpx.MockTransport, **kwargs) -> ApiClient:
     http = httpx.Client(transport=transport)
     return ApiClient(
         base_url="http://api:8000",
@@ -42,6 +48,7 @@ def make_client(transport: httpx.MockTransport) -> ApiClient:
         runner_token="test-runner-token",
         runner_version="0.1.0",
         http_client=http,
+        **kwargs,
     )
 
 
@@ -57,6 +64,284 @@ def _step_dict() -> dict:
         "requires_approval": False,
         "status": "pending",
     }
+
+
+class _RecordingHttpClient:
+    def __init__(self) -> None:
+        self.timeouts = []
+
+    def post(self, url: str, **kwargs) -> httpx.Response:
+        self.timeouts.append(kwargs["timeout"])
+        path = httpx.URL(url).path
+        execution_id = str(uuid4())
+        step_id = str(uuid4())
+        if path.endswith("/claim-next/"):
+            body = {"execution": None, "poll_after_seconds": 5}
+            status_code = 200
+        elif path.endswith("/heartbeat/"):
+            body = {
+                "execution_id": execution_id,
+                "status": "claimed",
+                "last_heartbeat_at": "2026-01-01T00:00:00Z",
+            }
+            status_code = 200
+        elif path.endswith("/update/"):
+            body = {
+                "execution_id": execution_id,
+                "step": {
+                    "id": step_id,
+                    "status": "succeeded",
+                    "started_at": None,
+                    "finished_at": None,
+                    "exit_code": 0,
+                    "error_message": "",
+                },
+                "execution_status": "running",
+            }
+            status_code = 200
+        elif path.endswith("/start/"):
+            body = {
+                "execution_id": execution_id,
+                "execution_status": "running",
+                "step": {"id": step_id, "status": "running"},
+                "runner_action": "run",
+                "poll_after_seconds": 0,
+            }
+            status_code = 200
+        elif path.endswith("/approval-status/"):
+            body = {
+                "execution_id": execution_id,
+                "execution_status": "running",
+                "step_id": step_id,
+                "step_status": "running",
+                "approval_request": None,
+                "runner_action": "run",
+                "poll_after_seconds": 0,
+            }
+            status_code = 200
+        elif path.endswith("/complete/"):
+            body = {
+                "id": execution_id,
+                "status": "succeeded",
+                "finished_at": "2026-01-01T00:00:00Z",
+            }
+            status_code = 200
+        elif path.endswith("/artifacts/"):
+            body = {
+                "id": str(uuid4()),
+                "execution_id": execution_id,
+                "step_id": step_id,
+                "kind": "stdout",
+                "name": "stdout.txt",
+                "mime_type": "text/plain",
+                "size_bytes": 5,
+                "checksum_sha256": "a" * 64,
+                "uploaded_by_runner_id": "test-runner",
+                "uploaded_at": "2026-01-01T00:00:00Z",
+            }
+            status_code = 201
+        else:
+            body = {"error": "unexpected path"}
+            status_code = 500
+        return httpx.Response(
+            status_code, json=body, request=httpx.Request("POST", url)
+        )
+
+    def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Timeout and retry policy
+# ---------------------------------------------------------------------------
+
+
+def test_runner_api_timeout_uses_explicit_phases():
+    assert RUNNER_API_TIMEOUT.connect == 2.0
+    assert RUNNER_API_TIMEOUT.read == 10.0
+    assert RUNNER_API_TIMEOUT.write == 10.0
+    assert RUNNER_API_TIMEOUT.pool == 2.0
+
+
+def test_standard_runner_methods_use_same_timeout_object():
+    http = _RecordingHttpClient()
+    client = ApiClient(
+        base_url="http://api:8000",
+        runner_id="test-runner",
+        runner_token="test-runner-token",
+        runner_version="0.1.0",
+        http_client=http,  # type: ignore[arg-type]
+    )
+    execution_id = uuid4()
+    step_id = uuid4()
+    claim_token = uuid4()
+
+    client.claim_next()
+    client.heartbeat(execution_id, claim_token)
+    client.update_step(execution_id, step_id, claim_token, status="succeeded")
+    client.start_step(execution_id, step_id, claim_token)
+    client.get_step_approval_status(execution_id, step_id, claim_token)
+    client.complete_execution(execution_id, claim_token, final_status="succeeded")
+
+    assert http.timeouts == [RUNNER_API_TIMEOUT] * 6
+
+
+def test_upload_artifact_uses_upload_specific_timeout():
+    http = _RecordingHttpClient()
+    client = ApiClient(
+        base_url="http://api:8000",
+        runner_id="test-runner",
+        runner_token="test-runner-token",
+        runner_version="0.1.0",
+        http_client=http,  # type: ignore[arg-type]
+    )
+
+    client.upload_artifact(
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        kind="stdout",
+        name="stdout.txt",
+        file_obj=b"hello",
+        mime_type="text/plain",
+        checksum_sha256="a" * 64,
+    )
+
+    assert http.timeouts == [ARTIFACT_UPLOAD_TIMEOUT]
+    assert ARTIFACT_UPLOAD_TIMEOUT.read == 60.0
+    assert ARTIFACT_UPLOAD_TIMEOUT.write == 60.0
+
+
+def test_claim_next_retries_503_with_bounded_delays():
+    attempts = 0
+    sleeps = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 4:
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(200, json={"execution": None, "poll_after_seconds": 5})
+
+    client = make_client(
+        httpx.MockTransport(handler), retry_sleep=lambda delay: sleeps.append(delay)
+    )
+
+    client.claim_next()
+
+    assert attempts == 4
+    assert sleeps == list(RETRY_DELAYS_SECONDS)
+
+
+def test_claim_next_retries_transport_error():
+    attempts = 0
+    sleeps = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json={"execution": None, "poll_after_seconds": 5})
+
+    client = make_client(
+        httpx.MockTransport(handler), retry_sleep=lambda delay: sleeps.append(delay)
+    )
+
+    client.claim_next()
+
+    assert attempts == 2
+    assert sleeps == [1.0]
+
+
+def test_409_conflict_is_not_retried():
+    attempts = 0
+    sleeps = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            409, json={"errors": [{"code": "invalid_state_transition"}]}
+        )
+
+    client = make_client(
+        httpx.MockTransport(handler), retry_sleep=lambda delay: sleeps.append(delay)
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.complete_execution(uuid4(), uuid4(), final_status="succeeded")
+
+    assert attempts == 1
+    assert sleeps == []
+
+
+def test_retry_wrapper_can_be_disabled():
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"error": "unavailable"})
+
+    client = make_client(
+        httpx.MockTransport(handler),
+        api_retries_enabled=False,
+        retry_sleep=lambda delay: None,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.claim_next()
+
+    assert attempts == 1
+
+
+def test_retry_log_includes_required_context(caplog):
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(200, json={"execution": None, "poll_after_seconds": 5})
+
+    client = make_client(httpx.MockTransport(handler), retry_sleep=lambda delay: None)
+
+    with caplog.at_level(logging.WARNING, logger="runner.client"):
+        client.claim_next()
+
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "runner_api_request_retrying"
+    )
+    assert record.method == "POST"
+    assert record.path == "/api/v1/internal/executions/claim-next/"
+    assert record.attempt == 1
+    assert record.delay_seconds == 1.0
+    assert record.status_code == 503
+    assert record.runner_id == "test-runner"
+    assert record.request_id
+
+
+def test_retry_sleep_can_be_interrupted():
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"error": "unavailable"})
+
+    client = make_client(
+        httpx.MockTransport(handler),
+        retry_sleep=lambda delay: True,
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.claim_next()
+
+    assert attempts == 1
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +755,36 @@ def test_claim_next_sends_x_runner_id():
     client.claim_next()
 
     assert captured["x_runner_id"] == "test-runner"
+
+
+def test_claim_next_logs_structured_request_context(caplog):
+    captured = {}
+    body = {"execution": None, "poll_after_seconds": 5}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_request_id"] = request.headers.get("X-Request-ID")
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    with caplog.at_level(logging.INFO, logger="runner.client"):
+        client.claim_next()
+
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "runner_api_request_completed"
+    )
+    assert record.request_id == captured["x_request_id"]
+    assert record.runner_id == "test-runner"
+    assert record.runner_version == "0.1.0"
+    assert record.method == "POST"
+    assert record.path == "/api/v1/internal/executions/claim-next/"
+    assert record.status_code == 200
+    assert record.duration_ms >= 0
 
 
 def test_each_request_gets_unique_x_request_id():
