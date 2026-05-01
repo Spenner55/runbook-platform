@@ -49,6 +49,12 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
         serializer.is_valid(raise_exception=True)
         runner_id = serializer.validated_data["runner_id"]
 
+        try:
+            from apps.changes import services as change_services
+            change_services.promote_due_scheduled_changes()
+        except Exception:
+            logger.exception("promote_due_scheduled_changes failed during claim-next")
+
         result = services.claim_next_execution(runner_id=runner_id)
         if result is None:
             return Response({"execution": None, "poll_after_seconds": 5})

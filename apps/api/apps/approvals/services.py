@@ -20,6 +20,42 @@ from apps.integrations.services import IntegrationService
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Change-level approval request creation
+# ---------------------------------------------------------------------------
+
+
+def create_change_approval_request(
+    *,
+    change_record,
+    organization,
+    ttl_seconds=None,
+    actor=None,
+) -> "ApprovalRequest":
+    """Create an ApprovalRequest for a change record (not execution-step-scoped)."""
+    from apps.audit.services import AuditActor  # noqa: F401
+
+    now = timezone.now()
+    expires_at = None
+    if ttl_seconds is not None:
+        expires_at = now + timedelta(seconds=int(ttl_seconds))
+
+    approval_request = ApprovalRequest.objects.create(
+        organization=organization,
+        subject_type=ApprovalRequest.SubjectType.CHANGE_RECORD,
+        subject_id=change_record.id,
+        execution=None,
+        step=None,
+        status=ApprovalRequest.Status.PENDING,
+        requested_by_runner_id="",
+        requested_at=now,
+        timeout_seconds=ttl_seconds,
+        expires_at=expires_at,
+    )
+    return approval_request
+
+
 # ---------------------------------------------------------------------------
 # Runner-facing service: create/reuse an approval request for a step
 # ---------------------------------------------------------------------------
@@ -211,7 +247,7 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
     with transaction.atomic():
         locked = (
             ApprovalRequest.objects.select_for_update(skip_locked=True)
-            .select_related("execution", "step", "organization")
+            .select_related("organization")
             .filter(
                 pk=approval_id,
                 status=ApprovalRequest.Status.PENDING,
@@ -257,6 +293,21 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
             approval_decision=approval_decision,
             actor=audit_actor,
         )
+        timeout_meta: dict = {
+            "approval_request_id": str(locked.id),
+            "subject_type": locked.subject_type,
+            "expires_at": locked.expires_at.isoformat() if locked.expires_at else None,
+            "resolved_at": locked.resolved_at.isoformat() if locked.resolved_at else None,
+            "reason": "watchdog_approval_timeout",
+            "recovery_source": "watchdog",
+        }
+        if locked.execution_id:
+            timeout_meta["execution_id"] = str(locked.execution_id)
+        if locked.step_id:
+            timeout_meta["step_id"] = str(locked.step_id)
+        if locked.subject_id:
+            timeout_meta["subject_id"] = str(locked.subject_id)
+
         AuditService.emit(
             organization_id=locked.organization_id,
             actor_type=audit_actor.actor_type,
@@ -265,37 +316,30 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
             event_type="approval.timeout",
             object_type=AuditEvent.ObjectType.APPROVAL_REQUEST,
             object_id=locked.id,
-            metadata={
-                "approval_request_id": str(locked.id),
-                "execution_id": str(locked.execution_id),
-                "step_id": str(locked.step_id),
-                "expires_at": locked.expires_at.isoformat()
-                if locked.expires_at
-                else None,
-                "resolved_at": locked.resolved_at.isoformat()
-                if locked.resolved_at
-                else None,
-                "reason": "watchdog_approval_timeout",
-                "recovery_source": "watchdog",
-            },
+            metadata=timeout_meta,
         )
 
-        execution_failed = execution_services.fail_execution_for_approval_timeout(
-            execution=locked.execution,
-            step=locked.step,
-            approval_request=locked,
-            now=now,
-        )
+        execution_failed = False
+        if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD:
+            _handle_change_approval_decision(
+                approval_request=locked,
+                decision="timed_out",
+                actor=audit_actor,
+            )
+        elif locked.execution_id and locked.step_id:
+            execution_failed = execution_services.fail_execution_for_approval_timeout(
+                execution=locked.execution,
+                step=locked.step,
+                approval_request=locked,
+                now=now,
+            )
 
         logger.warning(
             "watchdog recovered expired approval",
             extra={
                 "approval_id": str(locked.id),
-                "execution_id": str(locked.execution_id),
-                "step_id": str(locked.step_id),
-                "expires_at": locked.expires_at.isoformat()
-                if locked.expires_at
-                else None,
+                "subject_type": locked.subject_type,
+                "expires_at": locked.expires_at.isoformat() if locked.expires_at else None,
                 "execution_failed": execution_failed,
             },
         )
@@ -305,15 +349,16 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
             resolved_at=locked.resolved_at,
         )
 
-    _safe_notify_integration(
-        event_type="approval.timeout",
-        organization=locked.organization,
-        context=_approval_decision_context(
-            approval_request=locked,
-            approval_decision=approval_decision,
+    if locked.subject_type != ApprovalRequest.SubjectType.CHANGE_RECORD:
+        _safe_notify_integration(
             event_type="approval.timeout",
-        ),
-    )
+            organization=locked.organization,
+            context=_approval_decision_context(
+                approval_request=locked,
+                approval_decision=approval_decision,
+                event_type="approval.timeout",
+            ),
+        )
     return str(locked.id)
 
 
@@ -405,6 +450,17 @@ def decide_approval(
             requested_at=locked.requested_at,
             resolved_at=locked.resolved_at,
         )
+
+        if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD:
+            _handle_change_approval_decision(
+                approval_request=locked,
+                decision=decision,
+                actor=audit_actor,
+            )
+
+    if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD:
+        return approval_decision
+
     event_type = "approval.decided"
     _safe_notify_integration(
         event_type=event_type,
@@ -486,6 +542,18 @@ def _emit_approval_decision_audit(
         ApprovalDecision.Decision.REJECTED: "approval.rejected",
         ApprovalDecision.Decision.TIMED_OUT: "approval.timed_out",
     }[approval_decision.decision]
+    metadata = {
+        "approval_request_id": str(approval_request.id),
+        "subject_type": approval_request.subject_type,
+        "decision": approval_decision.decision,
+        "notes_present": bool(approval_decision.notes),
+    }
+    if approval_request.execution_id:
+        metadata["execution_id"] = str(approval_request.execution_id)
+    if approval_request.step_id:
+        metadata["step_id"] = str(approval_request.step_id)
+    if approval_request.subject_id:
+        metadata["subject_id"] = str(approval_request.subject_id)
     AuditService.emit(
         organization_id=approval_request.organization_id,
         actor_type=actor.actor_type,
@@ -494,13 +562,23 @@ def _emit_approval_decision_audit(
         event_type=event_type,
         object_type=AuditEvent.ObjectType.APPROVAL_DECISION,
         object_id=approval_decision.id,
-        metadata={
-            "approval_request_id": str(approval_request.id),
-            "execution_id": str(approval_request.execution_id),
-            "step_id": str(approval_request.step_id),
-            "decision": approval_decision.decision,
-            "notes_present": bool(approval_decision.notes),
-        },
+        metadata=metadata,
+    )
+
+
+def _handle_change_approval_decision(
+    *,
+    approval_request: ApprovalRequest,
+    decision: str,
+    actor: AuditActor,
+) -> None:
+    """Callback for change-record approval decisions. Must be called inside the same transaction."""
+    from apps.changes import services as change_services  # avoid circular
+
+    change_services.handle_change_approval_decision(
+        approval_request_id=approval_request.id,
+        decision=decision,
+        actor=actor,
     )
 
 
@@ -521,22 +599,28 @@ def _safe_notify_integration(*, event_type: str, organization, context: dict) ->
 def _approval_request_context(
     *, approval_request: ApprovalRequest, event_type: str
 ) -> dict:
-    return {
+    ctx: dict = {
         "event_type": event_type,
         "organization_id": str(approval_request.organization_id),
         "approval_request_id": str(approval_request.id),
-        "execution_id": str(approval_request.execution_id),
-        "step_id": str(approval_request.step_id),
-        "step_name": approval_request.step.name,
-        "step_position": approval_request.step.position,
-        "workflow_id": str(approval_request.execution.workflow_id),
-        "workflow_name": _workflow_name(approval_request.execution),
+        "subject_type": approval_request.subject_type,
         "approval_status": approval_request.status,
         "timeout_seconds": approval_request.timeout_seconds,
         "expires_at": approval_request.expires_at.isoformat()
         if approval_request.expires_at
         else None,
     }
+    if approval_request.execution_id:
+        ctx["execution_id"] = str(approval_request.execution_id)
+    if approval_request.step_id and approval_request.step:
+        ctx["step_id"] = str(approval_request.step_id)
+        ctx["step_name"] = approval_request.step.name
+        ctx["step_position"] = approval_request.step.position
+        ctx["workflow_id"] = str(approval_request.execution.workflow_id)
+        ctx["workflow_name"] = _workflow_name(approval_request.execution)
+    if approval_request.subject_id:
+        ctx["subject_id"] = str(approval_request.subject_id)
+    return ctx
 
 
 def _approval_decision_context(
@@ -545,17 +629,12 @@ def _approval_decision_context(
     approval_decision: ApprovalDecision,
     event_type: str,
 ) -> dict:
-    return {
+    ctx: dict = {
         "event_type": event_type,
         "organization_id": str(approval_request.organization_id),
         "approval_request_id": str(approval_request.id),
         "approval_decision_id": str(approval_decision.id),
-        "execution_id": str(approval_request.execution_id),
-        "step_id": str(approval_request.step_id),
-        "step_name": approval_request.step.name,
-        "step_position": approval_request.step.position,
-        "workflow_id": str(approval_request.execution.workflow_id),
-        "workflow_name": _workflow_name(approval_request.execution),
+        "subject_type": approval_request.subject_type,
         "approval_status": approval_request.status,
         "decision": approval_decision.decision,
         "source_type": approval_decision.source_type,
@@ -564,6 +643,17 @@ def _approval_decision_context(
         else None,
         "notes_present": bool(approval_decision.notes),
     }
+    if approval_request.execution_id:
+        ctx["execution_id"] = str(approval_request.execution_id)
+    if approval_request.step_id and approval_request.step:
+        ctx["step_id"] = str(approval_request.step_id)
+        ctx["step_name"] = approval_request.step.name
+        ctx["step_position"] = approval_request.step.position
+        ctx["workflow_id"] = str(approval_request.execution.workflow_id)
+        ctx["workflow_name"] = _workflow_name(approval_request.execution)
+    if approval_request.subject_id:
+        ctx["subject_id"] = str(approval_request.subject_id)
+    return ctx
 
 
 def _workflow_name(execution: Execution) -> str:

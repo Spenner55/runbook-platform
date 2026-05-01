@@ -10,18 +10,32 @@ class ApprovalRequest(BaseModel):
         REJECTED = "rejected", "Rejected"
         TIMED_OUT = "timed_out", "Timed Out"
 
+    class SubjectType(models.TextChoices):
+        EXECUTION_STEP = "execution_step", "Execution Step"
+        CHANGE_RECORD = "change_record", "Change Record"
+
     organization = models.ForeignKey(
         "organizations.Organization",
         on_delete=models.CASCADE,
         related_name="approval_requests",
     )
+    subject_type = models.CharField(
+        max_length=32,
+        choices=SubjectType.choices,
+        default=SubjectType.EXECUTION_STEP,
+    )
+    subject_id = models.UUIDField(null=True, blank=True)
     execution = models.ForeignKey(
         "executions.Execution",
+        null=True,
+        blank=True,
         on_delete=models.CASCADE,
         related_name="approval_requests",
     )
     step = models.OneToOneField(
         "executions.ExecutionStep",
+        null=True,
+        blank=True,
         on_delete=models.CASCADE,
         related_name="approval_request",
     )
@@ -62,6 +76,10 @@ class ApprovalRequest(BaseModel):
                     status__in=["pending", "approved", "rejected", "timed_out"]
                 ),
                 name="approval_req_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(subject_type__in=["execution_step", "change_record"]),
+                name="approval_req_subject_type_valid_chk",
             ),
         ]
 

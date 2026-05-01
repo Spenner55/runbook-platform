@@ -123,8 +123,17 @@ class ClaimedExecution(BaseModel):
     claimed_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     steps: list[ClaimedStep]
+    # Change binding fields — present only when the execution is change-bound
+    change_record_id: UUID | None = None
+    dispatch_token: str | None = None
+    requested_inputs_sha256: str | None = None
+    operation_profile_key: str | None = None
 
     model_config = ConfigDict(extra="ignore")
+
+    @property
+    def is_change_bound(self) -> bool:
+        return self.change_record_id is not None
 
 
 class ClaimNextResponse(BaseModel):
@@ -296,6 +305,31 @@ class ExecutionRunSummary(BaseModel):
     error_message: str = ""
 
     model_config = ConfigDict(extra="forbid")
+
+
+# ---------------------------------------------------------------------------
+# Change binding
+# ---------------------------------------------------------------------------
+
+
+class BindChangeExecutionRequest(BaseModel):
+    runner_id: str
+    claim_token: UUID
+    execution_id: UUID
+    dispatch_token: str
+    requested_inputs_sha256: str
+    operation_profile_key: str
+    sent_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BindChangeExecutionResponse(BaseModel):
+    change_record_id: UUID
+    execution_id: UUID
+    bound_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
 
 
 # ---------------------------------------------------------------------------

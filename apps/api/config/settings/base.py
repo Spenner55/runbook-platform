@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.audit.apps.AuditConfig",
     "apps.artifacts.apps.ArtifactsConfig",
     "apps.integrations.apps.IntegrationsConfig",
+    "apps.changes.apps.ChangesConfig",
 ]
 
 MIDDLEWARE = [
@@ -205,6 +206,11 @@ INTEGRATION_DISPATCH_BUDGET_SECONDS = env.float(
     "INTEGRATION_DISPATCH_BUDGET_SECONDS", default=10.0
 )
 INTEGRATION_MAX_PER_TRIGGER = env.int("INTEGRATION_MAX_PER_TRIGGER", default=25)
+
+# Change dispatch token settings
+CHANGE_DISPATCH_TOKEN_SECRET = env(
+    "CHANGE_DISPATCH_TOKEN_SECRET", default="change-dispatch-insecure-change-me"
+)
 
 # Artifact storage settings
 RUNNER_REGISTRATION_TOKEN = env("RUNNER_REGISTRATION_TOKEN", default="")

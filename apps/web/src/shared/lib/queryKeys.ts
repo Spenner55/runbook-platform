@@ -26,4 +26,7 @@ export const queryKeys = {
     ['integration', integrationId, organizationId] as const,
   integrationDelivery: (integrationId: string, organizationId: string) =>
     ['integration', integrationId, organizationId, 'delivery-attempts'] as const,
+  operationProfiles: ['operation-profiles'] as const,
+  changes: ['changes'] as const,
+  change: (changeId: string) => ['change', changeId] as const,
 }

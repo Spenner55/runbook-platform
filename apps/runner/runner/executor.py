@@ -82,6 +82,22 @@ class Executor:
             len(execution.steps),
         )
 
+        # For change-bound executions, bind before entering the step loop.
+        # A bind failure is fatal — refuse to execute and abort early.
+        if execution.is_change_bound:
+            if not self._bind_change_execution(execution, claim_token):
+                logger.error(
+                    "Aborting execution %s: change binding failed", execution_id
+                )
+                try:
+                    self._client.complete_execution(
+                        execution_id, claim_token, final_status="failed",
+                        error_message="Change binding failed — aborting execution.",
+                    )
+                except httpx.HTTPError as exc:
+                    logger.error("Failed to mark execution %s failed: %s", execution_id, exc)
+                return
+
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
         heartbeat.start()
         uploader = self._make_uploader(execution_id, claim_token)
@@ -134,6 +150,40 @@ class Executor:
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to mark execution %s complete: %s", execution_id, exc)
+
+    def _bind_change_execution(
+        self, execution: ClaimedExecution, claim_token: UUID
+    ) -> bool:
+        """Call Django's bind-execution endpoint. Returns True on success, False on failure.
+        Never logs the dispatch token."""
+        assert execution.change_record_id is not None
+        assert execution.dispatch_token is not None
+        assert execution.requested_inputs_sha256 is not None
+        assert execution.operation_profile_key is not None
+
+        try:
+            self._client.bind_change_execution(
+                change_record_id=execution.change_record_id,
+                execution_id=execution.id,
+                claim_token=claim_token,
+                dispatch_token=execution.dispatch_token,
+                requested_inputs_sha256=execution.requested_inputs_sha256,
+                operation_profile_key=execution.operation_profile_key,
+            )
+            logger.info(
+                "Change execution binding confirmed for change %s / execution %s",
+                execution.change_record_id,
+                execution.id,
+            )
+            return True
+        except httpx.HTTPError as exc:
+            logger.error(
+                "Change binding failed for change %s / execution %s: %s",
+                execution.change_record_id,
+                execution.id,
+                exc,
+            )
+            return False
 
     def _run_step(
         self,

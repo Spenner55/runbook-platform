@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 @timed_execution_operation("create_execution")
 def create_execution(
-    *, workflow: Workflow, actor: AuditActor | None = None
+    *,
+    workflow: Workflow,
+    actor: AuditActor | None = None,
+    _from_change_service: bool = False,
 ) -> Execution:
     """
     Create an immutable execution snapshot from a published workflow,
@@ -933,6 +936,16 @@ def complete_execution(
         ),
     )
     record_execution_event(event=event_type, status=execution.status)
+
+    # Update change lifecycle if this execution is change-bound
+    try:
+        from apps.changes import services as change_services  # avoid circular
+        change_services.handle_bound_execution_completed(execution=execution)
+    except Exception:
+        logger.exception(
+            "handle_bound_execution_completed failed for execution %s", execution.id
+        )
+
     return execution
 
 

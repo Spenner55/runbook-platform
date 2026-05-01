@@ -12,6 +12,10 @@ from rest_framework.routers import SimpleRouter
 from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
 from apps.audit.views import ExecutionAuditEventListView
+from apps.changes.urls import (
+    internal_urlpatterns as change_internal_urlpatterns,
+    public_urlpatterns as change_public_urlpatterns,
+)
 from apps.executions.internal_views import (
     ApprovalStatusView,
     ClaimNextExecutionView,
@@ -39,6 +43,7 @@ urlpatterns = [
     path("policies/", include("apps.policies.urls")),
     path("audit/", include("apps.audit.urls")),
     path("integrations/", include("apps.integrations.urls")),
+    path("changes/", include((change_public_urlpatterns, "changes"))),
     *artifact_public_urlpatterns,
     path(
         "executions/<uuid:execution_id>/audit/",
@@ -51,6 +56,7 @@ urlpatterns = [
         name="execution-stream",
     ),
     path("internal/", include(artifact_internal_urlpatterns)),
+    path("internal/changes/", include((change_internal_urlpatterns, "changes-internal"))),
     path(
         "internal/executions/claim-next/",
         ClaimNextExecutionView.as_view(),

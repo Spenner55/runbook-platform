@@ -37,6 +37,10 @@ class InternalExecutionStepSerializer(serializers.ModelSerializer):
 
 class ClaimedExecutionSerializer(serializers.ModelSerializer):
     steps = InternalExecutionStepSerializer(many=True, read_only=True)
+    change_record_id = serializers.SerializerMethodField()
+    dispatch_token = serializers.SerializerMethodField()
+    requested_inputs_sha256 = serializers.SerializerMethodField()
+    operation_profile_key = serializers.SerializerMethodField()
 
     class Meta:
         model = Execution
@@ -51,7 +55,36 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             "claimed_at",
             "last_heartbeat_at",
             "steps",
+            "change_record_id",
+            "dispatch_token",
+            "requested_inputs_sha256",
+            "operation_profile_key",
         ]
+
+    def _get_binding(self, obj):
+        try:
+            return obj.change_binding
+        except Exception:
+            return None
+
+    def get_change_record_id(self, obj):
+        binding = self._get_binding(obj)
+        return str(binding.change_record_id) if binding else None
+
+    def get_dispatch_token(self, obj):
+        binding = self._get_binding(obj)
+        if binding is None:
+            return None
+        from apps.changes.services import generate_dispatch_token
+        return generate_dispatch_token(binding)
+
+    def get_requested_inputs_sha256(self, obj):
+        binding = self._get_binding(obj)
+        return binding.requested_inputs_sha256 if binding else None
+
+    def get_operation_profile_key(self, obj):
+        binding = self._get_binding(obj)
+        return binding.operation_profile_key if binding else None
 
 
 class HeartbeatSerializer(serializers.Serializer):

@@ -15,6 +15,8 @@ from runner.schemas import (
     ApprovalStatusRequest,
     ApprovalStatusResponse,
     ArtifactUploadResponse,
+    BindChangeExecutionRequest,
+    BindChangeExecutionResponse,
     ClaimNextRequest,
     ClaimNextResponse,
     CompleteExecutionRequest,
@@ -349,6 +351,29 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return CompleteExecutionResponse.model_validate(data)
+
+    def bind_change_execution(
+        self,
+        change_record_id: UUID,
+        execution_id: UUID,
+        claim_token: UUID,
+        dispatch_token: str,
+        requested_inputs_sha256: str,
+        operation_profile_key: str,
+    ) -> BindChangeExecutionResponse:
+        data = self._post(
+            f"/api/v1/internal/changes/{change_record_id}/bind-execution/",
+            BindChangeExecutionRequest(
+                runner_id=self._runner_id,
+                claim_token=claim_token,
+                execution_id=execution_id,
+                dispatch_token=dispatch_token,
+                requested_inputs_sha256=requested_inputs_sha256,
+                operation_profile_key=operation_profile_key,
+                sent_at=_utcnow(),
+            ).model_dump(mode="json"),
+        )
+        return BindChangeExecutionResponse.model_validate(data)
 
     def upload_artifact(
         self,
