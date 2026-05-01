@@ -95,9 +95,7 @@ def record_step_duration(
     ).observe(max(0.0, duration_seconds))
 
 
-def record_approval_latency(
-    *, outcome: str, requested_at, resolved_at
-) -> None:
+def record_approval_latency(*, outcome: str, requested_at, resolved_at) -> None:
     if not requested_at or not resolved_at:
         return
     RUNBOOK_APPROVAL_LATENCY_SECONDS.labels(outcome=outcome).observe(

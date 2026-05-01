@@ -421,7 +421,9 @@ def fail_execution_for_approval_timeout(
         )
 
     _emit_step_status_changed_event(execution=execution, step=step)
-    _ts = execution.finished_at.isoformat() if execution.finished_at else now.isoformat()
+    _ts = (
+        execution.finished_at.isoformat() if execution.finished_at else now.isoformat()
+    )
     _emit_on_commit(
         str(execution.id),
         StreamEvent(

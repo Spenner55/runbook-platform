@@ -29,8 +29,7 @@ def _install_sigterm_handler(
 
     def _handle(signum: int, frame: object) -> None:
         _root_logger.critical(
-            "SIGTERM received — stopping after current work drains "
-            "(hard timeout: %ds)",
+            "SIGTERM received — stopping after current work drains (hard timeout: %ds)",
             _HARD_SHUTDOWN_TIMEOUT_SECONDS,
         )
         shutdown_event.set()

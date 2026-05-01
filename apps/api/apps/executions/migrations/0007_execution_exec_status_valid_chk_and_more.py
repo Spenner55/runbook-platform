@@ -4,20 +4,49 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0006_alter_executionstep_status'),
-        ('organizations', '0004_membership_operator_role'),
-        ('workflows', '0003_workflow_requires_review_parse_source'),
+        ("executions", "0006_alter_executionstep_status"),
+        ("organizations", "0004_membership_operator_role"),
+        ("workflows", "0003_workflow_requires_review_parse_source"),
     ]
 
     operations = [
         migrations.AddConstraint(
-            model_name='execution',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled'])), name='exec_status_valid_chk'),
+            model_name="execution",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "status__in",
+                        [
+                            "queued",
+                            "claimed",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "cancelled",
+                        ],
+                    )
+                ),
+                name="exec_status_valid_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='executionstep',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['pending', 'waiting_for_approval', 'running', 'succeeded', 'failed', 'skipped'])), name='step_status_valid_chk'),
+            model_name="executionstep",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "status__in",
+                        [
+                            "pending",
+                            "waiting_for_approval",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "skipped",
+                        ],
+                    )
+                ),
+                name="step_status_valid_chk",
+            ),
         ),
     ]

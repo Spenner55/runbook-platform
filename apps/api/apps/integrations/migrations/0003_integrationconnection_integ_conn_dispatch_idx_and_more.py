@@ -4,23 +4,37 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('integrations', '0002_alter_integrationconnection_event_types'),
-        ('organizations', '0004_membership_operator_role'),
+        ("integrations", "0002_alter_integrationconnection_event_types"),
+        ("organizations", "0004_membership_operator_role"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='integrationconnection',
-            index=models.Index(fields=['organization', 'is_active', 'created_at'], name='integ_conn_dispatch_idx'),
+            model_name="integrationconnection",
+            index=models.Index(
+                fields=["organization", "is_active", "created_at"],
+                name="integ_conn_dispatch_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='integrationconnection',
-            constraint=models.CheckConstraint(condition=models.Q(('type__in', ['slack_webhook', 'generic_webhook', 'pagerduty'])), name='integ_conn_type_valid_chk'),
+            model_name="integrationconnection",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    ("type__in", ["slack_webhook", "generic_webhook", "pagerduty"])
+                ),
+                name="integ_conn_type_valid_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='integrationconnection',
-            constraint=models.CheckConstraint(condition=models.Q(('last_delivery_status', ''), ('last_delivery_status__in', ['success', 'failed']), _connector='OR'), name='integ_conn_last_status_chk'),
+            model_name="integrationconnection",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    ("last_delivery_status", ""),
+                    ("last_delivery_status__in", ["success", "failed"]),
+                    _connector="OR",
+                ),
+                name="integ_conn_last_status_chk",
+            ),
         ),
     ]

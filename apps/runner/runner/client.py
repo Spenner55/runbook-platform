@@ -224,9 +224,7 @@ class ApiClient:
                         "path": path,
                         "attempt": attempt,
                         "status_code": status_code,
-                        "duration_ms": round(
-                            (time.monotonic() - started) * 1000, 2
-                        ),
+                        "duration_ms": round((time.monotonic() - started) * 1000, 2),
                     },
                 )
 
@@ -376,10 +374,7 @@ class ApiClient:
         }
         files = {"file": (name, file_obj, mime_type or "application/octet-stream")}
         request_id = str(uuid4())
-        path = (
-            f"/api/v1/internal/executions/{execution_id}"
-            f"/steps/{step_id}/artifacts/"
-        )
+        path = f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/artifacts/"
         response = self._post_response(
             path,
             request_id=request_id,

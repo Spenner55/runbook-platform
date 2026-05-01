@@ -22,9 +22,11 @@ def _unhealthy(detail="connection refused"):
 def test_live_always_returns_200_without_dependency_checks(factory):
     from apps.common.health import live_view
 
-    with patch("apps.common.health._check_db", side_effect=AssertionError), patch(
-        "apps.common.health._check_ai", side_effect=AssertionError
-    ), patch("apps.common.health._check_migrations", side_effect=AssertionError):
+    with (
+        patch("apps.common.health._check_db", side_effect=AssertionError),
+        patch("apps.common.health._check_ai", side_effect=AssertionError),
+        patch("apps.common.health._check_migrations", side_effect=AssertionError),
+    ):
         response = live_view(factory.get("/health/live"))
 
     assert response.status_code == 200
@@ -36,8 +38,9 @@ def test_live_always_returns_200_without_dependency_checks(factory):
 def test_readiness_returns_200_when_db_and_migrations_are_healthy(factory):
     from apps.common.health import readiness_view
 
-    with patch("apps.common.health._check_db", return_value=_healthy()), patch(
-        "apps.common.health._check_migrations", return_value=_healthy()
+    with (
+        patch("apps.common.health._check_db", return_value=_healthy()),
+        patch("apps.common.health._check_migrations", return_value=_healthy()),
     ):
         response = readiness_view(factory.get("/health/ready/"))
 
@@ -52,8 +55,9 @@ def test_readiness_returns_200_when_db_and_migrations_are_healthy(factory):
 def test_readiness_returns_503_when_db_fails(factory):
     from apps.common.health import readiness_view
 
-    with patch("apps.common.health._check_db", return_value=_unhealthy()), patch(
-        "apps.common.health._check_migrations", return_value=_healthy()
+    with (
+        patch("apps.common.health._check_db", return_value=_unhealthy()),
+        patch("apps.common.health._check_migrations", return_value=_healthy()),
     ):
         response = readiness_view(factory.get("/health/ready/"))
 
@@ -67,9 +71,12 @@ def test_readiness_returns_503_when_db_fails(factory):
 def test_readiness_returns_503_when_migration_check_fails(factory):
     from apps.common.health import readiness_view
 
-    with patch("apps.common.health._check_db", return_value=_healthy()), patch(
-        "apps.common.health._check_migrations",
-        return_value=_unhealthy("unapplied migrations"),
+    with (
+        patch("apps.common.health._check_db", return_value=_healthy()),
+        patch(
+            "apps.common.health._check_migrations",
+            return_value=_unhealthy("unapplied migrations"),
+        ),
     ):
         response = readiness_view(factory.get("/health/ready/"))
 
@@ -83,9 +90,11 @@ def test_readiness_returns_503_when_migration_check_fails(factory):
 def test_readiness_returns_200_when_ai_service_down(factory):
     from apps.common.health import readiness_view
 
-    with patch("apps.common.health._check_db", return_value=_healthy()), patch(
-        "apps.common.health._check_migrations", return_value=_healthy()
-    ), patch("apps.common.health._check_ai", side_effect=AssertionError):
+    with (
+        patch("apps.common.health._check_db", return_value=_healthy()),
+        patch("apps.common.health._check_migrations", return_value=_healthy()),
+        patch("apps.common.health._check_ai", side_effect=AssertionError),
+    ):
         response = readiness_view(factory.get("/health/ready/"))
 
     assert response.status_code == 200
@@ -97,8 +106,9 @@ def test_readiness_returns_200_when_ai_service_down(factory):
 def test_health_returns_200_when_all_checks_pass(factory):
     from apps.common.health import detailed_health_view
 
-    with patch("apps.common.health._check_db", return_value=_healthy()), patch(
-        "apps.common.health._check_ai", return_value=_healthy()
+    with (
+        patch("apps.common.health._check_db", return_value=_healthy()),
+        patch("apps.common.health._check_ai", return_value=_healthy()),
     ):
         response = detailed_health_view(factory.get("/health/"))
 
@@ -113,8 +123,9 @@ def test_health_returns_200_when_all_checks_pass(factory):
 def test_health_returns_503_when_db_fails(factory):
     from apps.common.health import detailed_health_view
 
-    with patch("apps.common.health._check_db", return_value=_unhealthy()), patch(
-        "apps.common.health._check_ai", return_value=_healthy()
+    with (
+        patch("apps.common.health._check_db", return_value=_unhealthy()),
+        patch("apps.common.health._check_ai", return_value=_healthy()),
     ):
         response = detailed_health_view(factory.get("/health/"))
 
@@ -128,8 +139,9 @@ def test_health_returns_503_when_db_fails(factory):
 def test_health_returns_503_when_ai_fails(factory):
     from apps.common.health import detailed_health_view
 
-    with patch("apps.common.health._check_db", return_value=_healthy()), patch(
-        "apps.common.health._check_ai", return_value=_unhealthy("timeout")
+    with (
+        patch("apps.common.health._check_db", return_value=_healthy()),
+        patch("apps.common.health._check_ai", return_value=_unhealthy("timeout")),
     ):
         response = detailed_health_view(factory.get("/health/"))
 

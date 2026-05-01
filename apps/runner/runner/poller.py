@@ -67,22 +67,16 @@ class Poller:
                 self._error_backoff,
             )
             self._sleep(self._error_backoff)
-            self._error_backoff = min(
-                self._error_backoff * 2, self._MAX_ERROR_BACKOFF
-            )
+            self._error_backoff = min(self._error_backoff * 2, self._MAX_ERROR_BACKOFF)
             return
 
         # Successful HTTP call — reset error backoff
         self._error_backoff = self._MIN_ERROR_BACKOFF
 
         if response.execution is None:
-            logger.debug(
-                "No queued executions; sleeping %.0fs", self._empty_backoff
-            )
+            logger.debug("No queued executions; sleeping %.0fs", self._empty_backoff)
             self._sleep(self._empty_backoff)
-            self._empty_backoff = min(
-                self._empty_backoff * 2, self._max_empty_backoff
-            )
+            self._empty_backoff = min(self._empty_backoff * 2, self._max_empty_backoff)
             return
 
         # Work found — reset empty backoff

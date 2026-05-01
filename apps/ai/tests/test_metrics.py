@@ -70,7 +70,9 @@ def test_blueprint_ai_duration_metrics_are_exposed_for_domain_routes():
     }
 
     assert client.post("/enrich/workflow", json=enrich_payload).status_code == 200
-    assert client.post("/summarize/execution", json=summarize_payload).status_code == 200
+    assert (
+        client.post("/summarize/execution", json=summarize_payload).status_code == 200
+    )
 
     metrics = client.get("/metrics/")
     assert "ai_enrich_request_duration_seconds" in metrics.text

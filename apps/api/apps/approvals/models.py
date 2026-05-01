@@ -113,9 +113,7 @@ class ApprovalDecision(BaseModel):
         ]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(
-                    decision__in=["approved", "rejected", "timed_out"]
-                ),
+                condition=models.Q(decision__in=["approved", "rejected", "timed_out"]),
                 name="approval_dec_decision_valid_chk",
             ),
             models.CheckConstraint(

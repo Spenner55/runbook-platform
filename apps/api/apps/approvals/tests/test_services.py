@@ -366,9 +366,7 @@ def test_recover_expired_approvals_emits_audit_events(pending_approval):
     assert "execution.approval_timeout" in event_types
 
     approval_timeout = AuditEvent.objects.get(event_type="approval.timeout")
-    assert approval_timeout.metadata["approval_request_id"] == str(
-        pending_approval.id
-    )
+    assert approval_timeout.metadata["approval_request_id"] == str(pending_approval.id)
     assert approval_timeout.metadata["recovery_source"] == "watchdog"
 
 

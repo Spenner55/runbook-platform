@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("approvals", "0002_approvaldecision_approval_dec_decision_valid_chk_and_more"),
     ]

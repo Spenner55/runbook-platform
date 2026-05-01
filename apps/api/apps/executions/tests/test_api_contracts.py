@@ -224,8 +224,8 @@ def test_list_execution_uses_lightweight_membership_scope(
     list_query = execution_queries[0]
     assert "distinct" not in list_query
     assert "workflow_snapshot" not in list_query
-    assert "join \"workflows_workflow\"" not in list_query
-    assert "join \"organizations_organization\"" not in list_query
+    assert 'join "workflows_workflow"' not in list_query
+    assert 'join "organizations_organization"' not in list_query
     assert "exists" in list_query
 
 

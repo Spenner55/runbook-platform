@@ -4,18 +4,46 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('audit', '0003_add_integration_connection_object_type'),
+        ("audit", "0003_add_integration_connection_object_type"),
     ]
 
     operations = [
         migrations.AddConstraint(
-            model_name='auditevent',
-            constraint=models.CheckConstraint(condition=models.Q(('actor_type__in', ['user', 'runner', 'system', 'api_client', 'unknown'])), name='audit_actor_type_valid_chk'),
+            model_name="auditevent",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "actor_type__in",
+                        ["user", "runner", "system", "api_client", "unknown"],
+                    )
+                ),
+                name="audit_actor_type_valid_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='auditevent',
-            constraint=models.CheckConstraint(condition=models.Q(('object_type__in', ['organization', 'runbook', 'workflow', 'execution', 'execution_step', 'approval_request', 'approval_decision', 'policy', 'policy_rule', 'policy_evaluation', 'artifact', 'integration_connection'])), name='audit_object_type_valid_chk'),
+            model_name="auditevent",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "object_type__in",
+                        [
+                            "organization",
+                            "runbook",
+                            "workflow",
+                            "execution",
+                            "execution_step",
+                            "approval_request",
+                            "approval_decision",
+                            "policy",
+                            "policy_rule",
+                            "policy_evaluation",
+                            "artifact",
+                            "integration_connection",
+                        ],
+                    )
+                ),
+                name="audit_object_type_valid_chk",
+            ),
         ),
     ]

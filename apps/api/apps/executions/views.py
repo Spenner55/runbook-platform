@@ -92,7 +92,9 @@ class ExecutionViewSet(
         elif self.action == "list":
             queryset = Execution.objects.only(*EXECUTION_LIST_FIELDS)
         else:
-            queryset = Execution.objects.select_related("workflow", "organization").all()
+            queryset = Execution.objects.select_related(
+                "workflow", "organization"
+            ).all()
         return user_active_organization_scoped(
             queryset,
             user=self.request.user,
