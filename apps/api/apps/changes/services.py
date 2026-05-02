@@ -248,7 +248,7 @@ def _validate_targets(targets: list[dict], profile: OperationProfile) -> None:
                 detail=f"Target at position {i + 1} must have environment='production' (got '{env}').",
             )
         ttype = t.get("target_type", "")
-        if profile.allowed_target_types and ttype not in profile.allowed_target_types:
+        if not profile.allowed_target_types or ttype not in profile.allowed_target_types:
             raise DomainValidationError(
                 code="target_type_not_allowed",
                 detail=f"Target type '{ttype}' is not allowed by profile.",
@@ -679,12 +679,8 @@ def bind_execution(
                 detail="Change record not found.",
             )
 
-        if change.status != ChangeRecord.Status.DISPATCHABLE:
-            raise InvalidStateTransitionError(
-                code="change_not_dispatchable",
-                detail=f"Change is not dispatchable (status: '{change.status}').",
-            )
-
+        # Fetch binding and check idempotency BEFORE the status check so that a
+        # runner retry after a successful bind (change is now 'running') succeeds.
         try:
             binding = ChangeExecutionBinding.objects.select_for_update().get(
                 change_record=change
@@ -720,6 +716,28 @@ def bind_execution(
                 detail="Claim token is invalid.",
             )
 
+        # Idempotency: same runner/execution/payload already bound — return success.
+        if binding.bound_at is not None:
+            if binding.bound_by_runner_id == runner_id:
+                return {
+                    "change_record_id": str(change.id),
+                    "execution_id": str(execution.id),
+                    "binding_id": str(binding.id),
+                    "status": change.status,
+                    "bound_at": binding.bound_at,
+                }
+            raise InvalidStateTransitionError(
+                code="execution_binding_conflict",
+                detail="Binding already claimed by a different runner.",
+            )
+
+        # Status check comes after idempotency so retries never fail here.
+        if change.status != ChangeRecord.Status.DISPATCHABLE:
+            raise InvalidStateTransitionError(
+                code="change_not_dispatchable",
+                detail=f"Change is not dispatchable (status: '{change.status}').",
+            )
+
         if binding.operation_profile_key != operation_profile_key:
             raise DomainValidationError(
                 code="operation_profile_key_mismatch",
@@ -742,21 +760,6 @@ def bind_execution(
             raise DomainValidationError(
                 code="dispatch_token_invalid",
                 detail="Dispatch token is invalid.",
-            )
-
-        # Idempotent: same runner/execution already bound
-        if binding.bound_at is not None:
-            if binding.bound_by_runner_id == runner_id:
-                return {
-                    "change_record_id": str(change.id),
-                    "execution_id": str(execution.id),
-                    "binding_id": str(binding.id),
-                    "status": change.status,
-                    "bound_at": binding.bound_at,
-                }
-            raise InvalidStateTransitionError(
-                code="execution_binding_conflict",
-                detail="Binding already claimed by a different runner.",
             )
 
         binding.bound_at = now

@@ -131,6 +131,23 @@ class ClaimedExecution(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="after")
+    def validate_change_fields_complete(self) -> "ClaimedExecution":
+        change_fields = {
+            "change_record_id": self.change_record_id,
+            "dispatch_token": self.dispatch_token,
+            "requested_inputs_sha256": self.requested_inputs_sha256,
+            "operation_profile_key": self.operation_profile_key,
+        }
+        present = {k for k, v in change_fields.items() if v is not None}
+        if present and present != set(change_fields):
+            missing = set(change_fields) - present
+            raise ValueError(
+                f"Change-bound execution is missing required fields: {sorted(missing)}. "
+                "All change fields must be present together."
+            )
+        return self
+
     @property
     def is_change_bound(self) -> bool:
         return self.change_record_id is not None

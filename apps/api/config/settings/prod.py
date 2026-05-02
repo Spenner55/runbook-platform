@@ -21,6 +21,7 @@ def _require_env(key: str) -> str:
 _require_env("DJANGO_SECRET_KEY")
 _require_env("DATABASE_URL")
 _require_env("RUNNER_REGISTRATION_TOKEN")
+_require_env("CHANGE_DISPATCH_TOKEN_SECRET")
 
 if not globals().get("INTEGRATION_FERNET_KEY"):
     raise ImproperlyConfigured("INTEGRATION_FERNET_KEY is required in production.")

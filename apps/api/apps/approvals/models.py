@@ -81,6 +81,22 @@ class ApprovalRequest(BaseModel):
                 condition=models.Q(subject_type__in=["execution_step", "change_record"]),
                 name="approval_req_subject_type_valid_chk",
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        subject_type="execution_step",
+                        execution_id__isnull=False,
+                        step_id__isnull=False,
+                    )
+                    | models.Q(
+                        subject_type="change_record",
+                        subject_id__isnull=False,
+                        execution_id__isnull=True,
+                        step_id__isnull=True,
+                    )
+                ),
+                name="approval_req_subject_integrity_chk",
+            ),
         ]
 
     def __str__(self):

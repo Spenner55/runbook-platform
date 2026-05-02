@@ -36,6 +36,38 @@ from apps.policies import services as policy_services
 logger = logging.getLogger(__name__)
 
 
+def _assert_change_bound_execution_ready(execution) -> Response | None:
+    """Return a 403 Response if execution is change-bound but not yet bound/running.
+
+    Returns None when the execution may proceed (not change-bound, or properly bound).
+    """
+    from apps.changes.models import ChangeExecutionBinding  # avoid circular
+    try:
+        binding = ChangeExecutionBinding.objects.select_related("change_record").get(
+            execution=execution
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        return None
+
+    from apps.changes.models import ChangeRecord
+    if binding.bound_at is None or binding.change_record.status != ChangeRecord.Status.RUNNING:
+        return Response(
+            {
+                "errors": [
+                    {
+                        "code": "change_binding_not_confirmed",
+                        "detail": (
+                            "Execution is change-bound but the dispatch token has not "
+                            "been verified yet. The runner must call bind-execution first."
+                        ),
+                    }
+                ]
+            },
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
 class RunnerInternalAPIView(APIView):
     authentication_classes = [RunnerBearerTokenAuthentication]
     permission_classes = [IsRunnerAuthenticated]
@@ -98,6 +130,9 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
 
     def post(self, request, execution_id, step_id):
         execution = get_object_or_404(Execution, pk=execution_id)
+        guard = _assert_change_bound_execution_ready(execution)
+        if guard is not None:
+            return guard
         serializer = StepUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
@@ -160,6 +195,9 @@ class ExecutionStepStartView(RunnerInternalAPIView):
 
     def post(self, request, execution_id, step_id):
         execution = get_object_or_404(Execution, pk=execution_id)
+        guard = _assert_change_bound_execution_ready(execution)
+        if guard is not None:
+            return guard
         serializer = StepStartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data

@@ -156,10 +156,17 @@ class Executor:
     ) -> bool:
         """Call Django's bind-execution endpoint. Returns True on success, False on failure.
         Never logs the dispatch token."""
-        assert execution.change_record_id is not None
-        assert execution.dispatch_token is not None
-        assert execution.requested_inputs_sha256 is not None
-        assert execution.operation_profile_key is not None
+        missing = [
+            f for f in ("change_record_id", "dispatch_token", "requested_inputs_sha256", "operation_profile_key")
+            if getattr(execution, f) is None
+        ]
+        if missing:
+            logger.error(
+                "Change-bound execution %s is missing required fields: %s — aborting",
+                execution.id,
+                missing,
+            )
+            return False
 
         try:
             self._client.bind_change_execution(

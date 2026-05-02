@@ -42,6 +42,8 @@ class ApprovalRequestSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "organization_id",
+            "subject_type",
+            "subject_id",
             "execution_id",
             "execution_status",
             "step",

@@ -119,6 +119,8 @@ def request_step_approval(
 
         approval_request = ApprovalRequest.objects.create(
             organization=execution.organization,
+            subject_type=ApprovalRequest.SubjectType.EXECUTION_STEP,
+            subject_id=step.id,
             execution=execution,
             step=step,
             status=ApprovalRequest.Status.PENDING,
@@ -210,6 +212,14 @@ def get_approval_status(*, approval_request: ApprovalRequest) -> ApprovalRequest
             requested_at=locked.requested_at,
             resolved_at=locked.resolved_at,
         )
+
+        if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD:
+            _handle_change_approval_decision(
+                approval_request=locked,
+                decision=ApprovalDecision.Decision.TIMED_OUT,
+                actor=system_actor(),
+            )
+
         return locked
 
 
@@ -410,6 +420,12 @@ def decide_approval(
                 requested_at=locked.requested_at,
                 resolved_at=locked.resolved_at,
             )
+            if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD:
+                _handle_change_approval_decision(
+                    approval_request=locked,
+                    decision=ApprovalDecision.Decision.TIMED_OUT,
+                    actor=system_actor(),
+                )
             return approval_decision
 
         if locked.status != ApprovalRequest.Status.PENDING:

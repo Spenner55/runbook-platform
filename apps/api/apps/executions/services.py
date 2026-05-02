@@ -15,6 +15,7 @@ from apps.audit.services import (
     system_actor,
 )
 from apps.common.exceptions import (
+    DomainConflictError,
     DomainValidationError,
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
@@ -66,6 +67,17 @@ def create_execution(
             code="workflow_requires_review",
             detail="Workflow requires human review before it can be executed.",
         )
+
+    if not _from_change_service:
+        from apps.changes.models import OperationProfile  # avoid circular
+        if OperationProfile.objects.filter(is_active=True, allowed_workflows=workflow).exists():
+            raise DomainConflictError(
+                code="workflow_requires_change_record",
+                detail=(
+                    "This workflow is managed by an active operation profile "
+                    "and must be executed through a change record."
+                ),
+            )
 
     definition = workflow.definition
     _validate_workflow_definition(definition)
