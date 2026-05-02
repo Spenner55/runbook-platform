@@ -214,27 +214,36 @@ class ChangeRecord(BaseModel):
                 "Change workflow must belong to the same organization."
             )
 
+    # Fields frozen at submit time — cannot be altered after status leaves draft.
+    IMMUTABLE_AFTER_SUBMIT = (
+        "operation_profile_id",
+        "workflow_id",
+        "title",
+        "summary",
+        "justification",
+        "requested_inputs",
+        "scheduled_for",
+        "requested_inputs_sha256",
+        "request_snapshot",
+        "request_snapshot_sha256",
+        "operation_profile_key_snapshot",
+        "workflow_version_snapshot",
+    )
+
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
             if previous is not None and previous.status != self.Status.DRAFT:
-                immutable_fields = [
-                    "operation_profile_id",
-                    "workflow_id",
-                    "title",
-                    "summary",
-                    "justification",
-                    "requested_inputs",
-                    "scheduled_for",
-                ]
                 changed = [
-                    field
-                    for field in immutable_fields
-                    if getattr(previous, field) != getattr(self, field)
+                    f
+                    for f in self.IMMUTABLE_AFTER_SUBMIT
+                    if getattr(previous, f) != getattr(self, f)
                 ]
                 if changed:
                     raise ValidationError(
-                        "Change request content is immutable after submit."
+                        f"Change request content is immutable after submit "
+                        f"(attempted to change: {changed}).",
+                        code="change_request_immutable",
                     )
         self.clean()
         return super().save(*args, **kwargs)
@@ -302,7 +311,10 @@ class ChangeTarget(BaseModel):
             )
 
         if self.change_record_id and change.status != ChangeRecord.Status.DRAFT:
-            raise ValidationError("Change targets are immutable after submit.")
+            raise ValidationError(
+                "Change targets are immutable after submit.",
+                code="change_request_immutable",
+            )
 
     def save(self, *args, **kwargs):
         self.clean()
@@ -311,7 +323,10 @@ class ChangeTarget(BaseModel):
     def delete(self, *args, **kwargs):
         change = ChangeRecord.objects.only("status").get(pk=self.change_record_id)
         if change.status != ChangeRecord.Status.DRAFT:
-            raise ValidationError("Change targets are immutable after submit.")
+            raise ValidationError(
+                "Change targets are immutable after submit.",
+                code="change_request_immutable",
+            )
         return super().delete(*args, **kwargs)
 
 

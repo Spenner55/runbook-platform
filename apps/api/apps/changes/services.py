@@ -71,9 +71,20 @@ def sha256_canonical_json(value) -> str:
 
 
 def build_request_snapshot(
-    change_record: ChangeRecord, targets: list, submitted_at=None
+    change_record: ChangeRecord,
+    targets: list,
+    submitted_at=None,
+    *,
+    profile: OperationProfile | None = None,
+    workflow=None,
 ) -> dict:
-    """Build the immutable request snapshot dict for a change record."""
+    """Build the immutable request snapshot dict for a change record.
+
+    ``profile`` and ``workflow`` should be passed at submit time so the
+    snapshot captures the full approved dossier.  During re-hash verification
+    the caller must NOT recompute this — instead hash the stored
+    ``request_snapshot`` field directly.
+    """
     target_list = [
         {
             "position": t.position,
@@ -87,6 +98,27 @@ def build_request_snapshot(
         for t in sorted(targets, key=lambda t: t.position)
     ]
     requested_inputs = change_record.requested_inputs or {}
+
+    profile_snapshot: dict = {}
+    if profile is not None:
+        profile_snapshot = {
+            "id": str(profile.id),
+            "key": profile.key,
+            "name": profile.name,
+            "risk_level": profile.risk_level,
+            "requires_approval": profile.requires_approval,
+            "verification_required": profile.verification_required,
+        }
+
+    workflow_snapshot: dict = {}
+    if workflow is not None:
+        workflow_snapshot = {
+            "id": str(workflow.id),
+            "name": workflow.name,
+            "version": workflow.version,
+            "status": workflow.status,
+        }
+
     return {
         "change_record_id": str(change_record.id),
         "title": change_record.title,
@@ -94,12 +126,15 @@ def build_request_snapshot(
         "justification": change_record.justification,
         "operation_profile_id": str(change_record.operation_profile_id),
         "operation_profile_key": change_record.operation_profile_key_snapshot
-        or change_record.operation_profile.key,
+        or (profile.key if profile else None),
+        "operation_profile_snapshot": profile_snapshot,
         "workflow_id": str(change_record.workflow_id),
         "workflow_version": change_record.workflow_version_snapshot
-        or change_record.workflow.version,
+        or (workflow.version if workflow else None),
+        "workflow_snapshot": workflow_snapshot,
         "requested_inputs_sha256": sha256_canonical_json(requested_inputs),
         "requested_input_keys": sorted(str(key) for key in requested_inputs.keys()),
+        "requested_inputs_representation": "sha256_and_keys_only",
         "scheduled_for": change_record.scheduled_for.isoformat()
         if change_record.scheduled_for
         else None,
@@ -113,10 +148,21 @@ def hash_dispatch_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+_INSECURE_SECRET_PLACEHOLDERS: frozenset[str] = frozenset(
+    {
+        "change-dispatch-insecure-change-me",
+        "insecure-change-me",
+        "insecure",
+        "changeme",
+        "change-me",
+    }
+)
+
+
 def generate_dispatch_token(binding: ChangeExecutionBinding) -> str:
     """Regenerate the clear dispatch token from stored nonce + server secret."""
     secret = getattr(settings, "CHANGE_DISPATCH_TOKEN_SECRET", "")
-    if not secret:
+    if not secret or secret.lower() in _INSECURE_SECRET_PLACEHOLDERS:
         raise DomainValidationError(
             code="dispatch_token_secret_missing",
             detail="CHANGE_DISPATCH_TOKEN_SECRET is not configured.",
@@ -201,7 +247,20 @@ def emit_operation_profile_audit(
 
 
 def validate_request_integrity(change: ChangeRecord) -> None:
-    """Recompute frozen request hashes and reject post-submit dossier drift."""
+    """Verify frozen request hashes and reject post-submit dossier drift.
+
+    Two independent checks are performed:
+
+    1. Re-hash ``requested_inputs`` and compare to ``requested_inputs_sha256``.
+       This catches any mutation of the live ``requested_inputs`` JSON field.
+
+    2. Re-hash the stored ``request_snapshot`` and compare to
+       ``request_snapshot_sha256``.  This catches tampering with the full
+       frozen dossier without needing to rebuild it from live relational data.
+
+    Both must pass.  Any mismatch raises ``InvalidStateTransitionError`` with
+    code ``change_request_integrity_mismatch``, failing closed.
+    """
     if change.status == ChangeRecord.Status.DRAFT:
         return
     if not change.requested_inputs_sha256 or not change.request_snapshot_sha256:
@@ -210,7 +269,6 @@ def validate_request_integrity(change: ChangeRecord) -> None:
             detail="Submitted change is missing frozen request hashes.",
         )
 
-    targets = list(change.targets.order_by("position"))
     inputs_hash = sha256_canonical_json(change.requested_inputs or {})
     if not hmac.compare_digest(inputs_hash, change.requested_inputs_sha256):
         raise InvalidStateTransitionError(
@@ -218,12 +276,9 @@ def validate_request_integrity(change: ChangeRecord) -> None:
             detail="Requested inputs no longer match the submitted hash.",
         )
 
-    snapshot = build_request_snapshot(
-        change,
-        targets,
-        submitted_at=change.submitted_at,
-    )
-    snapshot_hash = sha256_canonical_json(snapshot)
+    # Hash the stored snapshot directly — do not recompute from live data.
+    # This proves request_snapshot itself has not been tampered with since submit.
+    snapshot_hash = sha256_canonical_json(change.request_snapshot)
     if not hmac.compare_digest(snapshot_hash, change.request_snapshot_sha256):
         raise InvalidStateTransitionError(
             code="change_request_integrity_mismatch",
@@ -231,8 +286,24 @@ def validate_request_integrity(change: ChangeRecord) -> None:
         )
 
 
-def assert_execution_change_binding_ready(execution, runner_id: str) -> None:
-    """Require a change-bound execution to be bound by the current runner."""
+def assert_execution_change_binding_ready(
+    execution, runner_id: str, claim_token: str | None = None
+) -> None:
+    """Require a change-bound execution to be bound by the current runner.
+
+    Checks (in order):
+    - Binding exists (non-change executions pass through immediately).
+    - binding.bound_at is set and change.status is 'running'.
+    - The requesting runner_id matches binding.bound_by_runner_id.
+    - execution.claimed_by_runner_id still matches binding.bound_by_runner_id
+      (cross-validates that the execution has not been reclaimed by a different
+      runner since the binding was confirmed).
+    - When claim_token is provided, it matches the execution's current claim token.
+
+    Providing claim_token strengthens the guard so a stale runner that still
+    knows the bound runner_id but no longer holds the execution claim cannot
+    proceed.  All internal view callers should pass claim_token.
+    """
     try:
         binding = ChangeExecutionBinding.objects.select_related("change_record").get(
             execution=execution
@@ -251,10 +322,29 @@ def assert_execution_change_binding_ready(execution, runner_id: str) -> None:
                 "verified yet. The runner must call bind-execution first."
             ),
         )
+
+    # The requesting runner must be the one that bound the change.
     if binding.bound_by_runner_id != runner_id:
         raise InvalidStateTransitionError(
             code="change_binding_runner_mismatch",
             detail="Execution is change-bound by a different runner.",
+        )
+
+    # Cross-validate: the execution's current ownership must still match the binding.
+    # This catches reclaims (legitimate or otherwise) before reaching service-layer
+    # ownership checks, providing defense-in-depth for the change lifecycle gate.
+    if execution.claimed_by_runner_id != binding.bound_by_runner_id:
+        raise InvalidStateTransitionError(
+            code="change_binding_runner_mismatch",
+            detail="Execution ownership no longer matches the change binding.",
+        )
+
+    # Validate the current claim token when provided — prevents a stale runner that
+    # knows the bound runner_id but holds an old claim_token from proceeding.
+    if claim_token is not None and str(execution.claim_token) != claim_token:
+        raise InvalidStateTransitionError(
+            code="claim_token_mismatch",
+            detail="Claim token is invalid.",
         )
 
 
@@ -601,7 +691,9 @@ def submit_change_record(
 
         now = timezone.now()
         inputs_hash = sha256_canonical_json(change.requested_inputs)
-        snapshot = build_request_snapshot(change, targets, submitted_at=now)
+        snapshot = build_request_snapshot(
+            change, targets, submitted_at=now, profile=profile, workflow=workflow
+        )
         snapshot_hash = sha256_canonical_json(snapshot)
 
         change.requested_inputs_sha256 = inputs_hash
@@ -1268,6 +1360,16 @@ def handle_bound_execution_completed(*, execution) -> None:
         change = ChangeRecord.objects.select_for_update().get(
             pk=binding.change_record_id
         )
+        # Execution completed before binding was confirmed — the runner executed
+        # without calling bind-execution (e.g. expired token at claim time).
+        # Expire the change so it does not remain stranded in dispatchable.
+        if change.status == ChangeRecord.Status.DISPATCHABLE:
+            expire_dispatchable_change(
+                change=change,
+                now=timezone.now(),
+                terminal_reason="execution_failed_before_binding",
+            )
+            return
         if change.status != ChangeRecord.Status.RUNNING:
             return
         try:

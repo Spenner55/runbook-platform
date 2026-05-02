@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from runner.executor import Executor
 from runner.schemas import (
@@ -196,3 +197,123 @@ class TestExecutorChangeBound:
 
         for record in caplog.records:
             assert "secret-token" not in record.getMessage()
+
+
+# ---------------------------------------------------------------------------
+# C5: BindChangeExecutionRequest dispatch_token secret handling
+# ---------------------------------------------------------------------------
+
+
+class TestBindChangeExecutionRequestSecret:
+    """dispatch_token in BindChangeExecutionRequest must be treated as a secret."""
+
+    def _make_request(self) -> "BindChangeExecutionRequest":
+        from runner.schemas import BindChangeExecutionRequest
+
+        return BindChangeExecutionRequest(
+            runner_id="r1",
+            claim_token=uuid4(),
+            execution_id=uuid4(),
+            dispatch_token="super-secret-dispatch-token",
+            requested_inputs_sha256="a" * 64,
+            operation_profile_key="prod-maintenance",
+        )
+
+    def test_dispatch_token_not_in_repr(self):
+        req = self._make_request()
+        assert "super-secret-dispatch-token" not in repr(req)
+
+    def test_dispatch_token_not_in_str(self):
+        req = self._make_request()
+        assert "super-secret-dispatch-token" not in str(req)
+
+    def test_dispatch_token_not_in_python_model_dump(self):
+        req = self._make_request()
+        dumped = str(req.model_dump())
+        assert "super-secret-dispatch-token" not in dumped
+
+    def test_dispatch_token_revealed_in_json_model_dump_for_http_body(self):
+        """JSON dump must include the actual token so it can be sent to Django."""
+        req = self._make_request()
+        dumped = req.model_dump(mode="json")
+        assert dumped["dispatch_token"] == "super-secret-dispatch-token"
+
+
+# ---------------------------------------------------------------------------
+# C4: Partial change metadata raises validation error
+# ---------------------------------------------------------------------------
+
+
+class TestPartialChangeMetadataValidation:
+    """ClaimedExecution validator must reject partial (some-but-not-all) change fields."""
+
+    def _make_step_dict(self):
+        return {
+            "id": str(uuid4()),
+            "position": 1,
+            "step_key": "step-1",
+            "name": "Step 1",
+            "step_type": "shell",
+            "risk_level": "low",
+            "command": "",
+            "requires_approval": False,
+            "status": "pending",
+        }
+
+    def test_partial_change_fields_raise_validation_error(self):
+        from pydantic import ValidationError
+
+        from runner.schemas import ClaimedExecution
+
+        with pytest.raises(ValidationError) as exc_info:
+            ClaimedExecution(
+                id=uuid4(),
+                status="claimed",
+                workflow_id=uuid4(),
+                organization_id=uuid4(),
+                workflow_version=1,
+                workflow_snapshot={},
+                steps=[],
+                change_record_id=uuid4(),
+                # dispatch_token absent — partial change fields
+                requested_inputs_sha256="a" * 64,
+                operation_profile_key="prod-maintenance",
+            )
+        errors = exc_info.value.errors()
+        assert any("missing" in str(e).lower() for e in errors)
+
+    def test_all_change_fields_none_is_valid_non_change_bound(self):
+        from runner.schemas import ClaimedExecution
+
+        execution = ClaimedExecution(
+            id=uuid4(),
+            status="claimed",
+            workflow_id=uuid4(),
+            organization_id=uuid4(),
+            workflow_version=1,
+            workflow_snapshot={},
+            steps=[],
+            change_record_id=None,
+            dispatch_token=None,
+            requested_inputs_sha256=None,
+            operation_profile_key=None,
+        )
+        assert execution.is_change_bound is False
+
+    def test_all_change_fields_present_is_valid_change_bound(self):
+        from runner.schemas import ClaimedExecution
+
+        execution = ClaimedExecution(
+            id=uuid4(),
+            status="claimed",
+            workflow_id=uuid4(),
+            organization_id=uuid4(),
+            workflow_version=1,
+            workflow_snapshot={},
+            steps=[],
+            change_record_id=uuid4(),
+            dispatch_token="some-token",
+            requested_inputs_sha256="a" * 64,
+            operation_profile_key="prod-maintenance",
+        )
+        assert execution.is_change_bound is True

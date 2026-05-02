@@ -250,6 +250,7 @@ def create_from_runner_upload(
         change_services.assert_execution_change_binding_ready(
             execution,
             runner_id=runner_id,
+            claim_token=claim_token,
         )
     except ImportError:
         logger.exception("Could not import change services for artifact binding guard")

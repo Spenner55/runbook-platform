@@ -4,7 +4,11 @@ Serializers for internal runner endpoints.
 These must never be imported by public CRUD views.
 """
 
+import logging
+
 from rest_framework import serializers
+
+logger = logging.getLogger(__name__)
 
 from apps.executions.models import Execution, ExecutionStep
 
@@ -62,6 +66,16 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
         ]
 
     def _get_binding(self, obj):
+        # Cache per serializer instance — _get_binding is called once per field.
+        try:
+            return self.__binding_cache
+        except AttributeError:
+            pass
+        result = self.__load_binding(obj)
+        self.__binding_cache = result
+        return result
+
+    def __load_binding(self, obj):
         try:
             binding = obj.change_binding
         except Exception:
@@ -70,7 +84,24 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             return None
         from django.utils import timezone
 
-        if binding.dispatch_token_expires_at <= timezone.now():
+        now = timezone.now()
+        if binding.dispatch_token_expires_at <= now:
+            # Dispatch window expired.  Ensure the change lifecycle is updated
+            # so the change does not remain stranded in 'dispatchable'.
+            if binding.change_record.status == "dispatchable":
+                try:
+                    from apps.changes import services as change_services
+
+                    change_services.expire_dispatchable_change(
+                        change=binding.change_record,
+                        now=now,
+                        terminal_reason="dispatch_token_expired",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to expire dispatchable change %s at claim serialization",
+                        binding.change_record_id,
+                    )
             return None
         if binding.change_record.status != "dispatchable":
             return None

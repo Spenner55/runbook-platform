@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, field_serializer, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -333,12 +333,16 @@ class BindChangeExecutionRequest(BaseModel):
     runner_id: str
     claim_token: UUID
     execution_id: UUID
-    dispatch_token: str
+    dispatch_token: SecretStr
     requested_inputs_sha256: str
     operation_profile_key: str
     sent_at: datetime | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_serializer("dispatch_token", when_used="json")
+    def _serialize_dispatch_token(self, v: SecretStr) -> str:
+        return v.get_secret_value()
 
 
 class BindChangeExecutionResponse(BaseModel):

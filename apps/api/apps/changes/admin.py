@@ -106,6 +106,7 @@ class ChangeTargetAdmin(admin.ModelAdmin):
         return super().has_change_permission(request, obj)
 
     def has_add_permission(self, request, obj=None):
+        # Targets are always created through the change service, never directly in admin.
         return False
 
     def has_delete_permission(self, request, obj=None):

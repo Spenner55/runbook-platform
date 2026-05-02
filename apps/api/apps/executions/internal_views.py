@@ -37,8 +37,12 @@ from apps.policies import services as policy_services
 logger = logging.getLogger(__name__)
 
 
-def _assert_change_bound_execution_ready(execution, runner_id: str) -> Response | None:
-    """Return a 403 Response if execution is change-bound but not yet bound/running.
+def _assert_change_bound_execution_ready(
+    execution, runner_id: str, claim_token: str
+) -> Response | None:
+    """Return a 403 Response if execution is change-bound but not yet bound/running,
+    or if the requesting runner does not match the confirmed binding, or if the
+    claim token is stale.
 
     Returns None when the execution may proceed (not change-bound, or properly bound).
     """
@@ -48,6 +52,7 @@ def _assert_change_bound_execution_ready(execution, runner_id: str) -> Response 
         change_services.assert_execution_change_binding_ready(
             execution,
             runner_id=runner_id,
+            claim_token=claim_token,
         )
     except InvalidStateTransitionError as exc:
         return Response(
@@ -130,7 +135,9 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
         serializer = StepUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
-        guard = _assert_change_bound_execution_ready(execution, d["runner_id"])
+        guard = _assert_change_bound_execution_ready(
+            execution, d["runner_id"], str(d["claim_token"])
+        )
         if guard is not None:
             return guard
 
@@ -163,7 +170,9 @@ class ExecutionCompleteView(RunnerInternalAPIView):
         serializer = ExecutionCompleteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
-        guard = _assert_change_bound_execution_ready(execution, d["runner_id"])
+        guard = _assert_change_bound_execution_ready(
+            execution, d["runner_id"], str(d["claim_token"])
+        )
         if guard is not None:
             return guard
 
@@ -200,7 +209,7 @@ class ExecutionStepStartView(RunnerInternalAPIView):
         d = serializer.validated_data
         runner_id = d["runner_id"]
         claim_token = str(d["claim_token"])
-        guard = _assert_change_bound_execution_ready(execution, runner_id)
+        guard = _assert_change_bound_execution_ready(execution, runner_id, claim_token)
         if guard is not None:
             return guard
 
@@ -350,7 +359,7 @@ class ApprovalStatusView(RunnerInternalAPIView):
         runner_id = d["runner_id"]
         claim_token = str(d["claim_token"])
 
-        guard = _assert_change_bound_execution_ready(execution, runner_id)
+        guard = _assert_change_bound_execution_ready(execution, runner_id, claim_token)
         if guard is not None:
             return guard
 
