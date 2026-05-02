@@ -12,7 +12,11 @@ from apps.audit.services import (
     actor_from_runner,
     system_actor,
 )
-from apps.common.exceptions import DomainConflictError, InvalidStateTransitionError
+from apps.common.exceptions import (
+    DomainConflictError,
+    DomainValidationError,
+    InvalidStateTransitionError,
+)
 from apps.common.metrics import record_approval_latency
 from apps.executions import services as execution_services
 from apps.executions.models import Execution, ExecutionStep
@@ -36,6 +40,12 @@ def create_change_approval_request(
     """Create an ApprovalRequest for a change record (not execution-step-scoped)."""
     from apps.audit.services import AuditActor  # noqa: F401
 
+    if organization.id != change_record.organization_id:
+        raise DomainValidationError(
+            code="approval_change_organization_mismatch",
+            detail="Approval request organization must match the change organization.",
+        )
+
     now = timezone.now()
     expires_at = None
     if ttl_seconds is not None:
@@ -52,6 +62,32 @@ def create_change_approval_request(
         requested_at=now,
         timeout_seconds=ttl_seconds,
         expires_at=expires_at,
+    )
+    audit_actor = actor or system_actor()
+    AuditService.emit(
+        organization_id=approval_request.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type="approval.requested",
+        object_type=AuditEvent.ObjectType.APPROVAL_REQUEST,
+        object_id=approval_request.id,
+        metadata={
+            "approval_request_id": str(approval_request.id),
+            "subject_type": approval_request.subject_type,
+            "subject_id": str(approval_request.subject_id),
+            "change_record_id": str(change_record.id),
+            "timeout_seconds": ttl_seconds,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        },
+    )
+    _safe_notify_integration(
+        event_type="approval.requested",
+        organization=organization,
+        context=_approval_request_context(
+            approval_request=approval_request,
+            event_type="approval.requested",
+        ),
     )
     return approval_request
 
@@ -307,7 +343,9 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
             "approval_request_id": str(locked.id),
             "subject_type": locked.subject_type,
             "expires_at": locked.expires_at.isoformat() if locked.expires_at else None,
-            "resolved_at": locked.resolved_at.isoformat() if locked.resolved_at else None,
+            "resolved_at": locked.resolved_at.isoformat()
+            if locked.resolved_at
+            else None,
             "reason": "watchdog_approval_timeout",
             "recovery_source": "watchdog",
         }
@@ -349,7 +387,9 @@ def _recover_expired_approval(*, approval_id, now) -> str | None:
             extra={
                 "approval_id": str(locked.id),
                 "subject_type": locked.subject_type,
-                "expires_at": locked.expires_at.isoformat() if locked.expires_at else None,
+                "expires_at": locked.expires_at.isoformat()
+                if locked.expires_at
+                else None,
                 "execution_failed": execution_failed,
             },
         )

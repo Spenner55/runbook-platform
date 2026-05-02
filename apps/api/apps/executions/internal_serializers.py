@@ -63,9 +63,18 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
 
     def _get_binding(self, obj):
         try:
-            return obj.change_binding
+            binding = obj.change_binding
         except Exception:
             return None
+        if binding.bound_at is not None:
+            return None
+        from django.utils import timezone
+
+        if binding.dispatch_token_expires_at <= timezone.now():
+            return None
+        if binding.change_record.status != "dispatchable":
+            return None
+        return binding
 
     def get_change_record_id(self, obj):
         binding = self._get_binding(obj)
@@ -76,6 +85,7 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
         if binding is None:
             return None
         from apps.changes.services import generate_dispatch_token
+
         return generate_dispatch_token(binding)
 
     def get_requested_inputs_sha256(self, obj):

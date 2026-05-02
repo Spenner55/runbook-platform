@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import httpx
-import pytest
 
 from runner.executor import Executor
 from runner.schemas import (
@@ -81,6 +80,12 @@ class TestIsChangeBound:
         ex = make_execution([make_step(1)], change_bound=True)
         assert ex.is_change_bound is True
 
+    def test_dispatch_token_is_redacted_in_model_repr_and_dump(self):
+        ex = make_execution([make_step(1)], change_bound=True)
+
+        assert "secret-token" not in repr(ex)
+        assert "secret-token" not in str(ex.model_dump(mode="json"))
+
 
 class TestExecutorChangeBound:
     def _mock_client(self, bind_ok=True):
@@ -121,7 +126,7 @@ class TestExecutorChangeBound:
             change_record_id=execution.change_record_id,
             execution_id=execution.id,
             claim_token=claim_token,
-            dispatch_token=execution.dispatch_token,
+            dispatch_token=execution.dispatch_token.get_secret_value(),
             requested_inputs_sha256=execution.requested_inputs_sha256,
             operation_profile_key=execution.operation_profile_key,
         )
@@ -145,7 +150,10 @@ class TestExecutorChangeBound:
         # Execution marked failed
         client.complete_execution.assert_called_once()
         call_kwargs = client.complete_execution.call_args
-        assert call_kwargs.kwargs.get("final_status") == "failed" or call_kwargs.args[2] == "failed"
+        assert (
+            call_kwargs.kwargs.get("final_status") == "failed"
+            or call_kwargs.args[2] == "failed"
+        )
 
     def test_non_change_bound_execution_does_not_call_bind(self):
         step = make_step(1)
@@ -169,6 +177,7 @@ class TestExecutorChangeBound:
     def test_dispatch_token_not_logged(self, caplog):
         """Dispatch token must never appear in log output."""
         import logging
+
         step = make_step(1)
         execution = make_execution([step], change_bound=True)
         claim_token = uuid4()

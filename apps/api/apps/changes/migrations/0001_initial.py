@@ -1,5 +1,6 @@
-import django.db.models.deletion
 import uuid
+
+import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
@@ -47,7 +48,10 @@ class Migration(migrations.Migration):
                 ("risk_level", models.CharField(max_length=32)),
                 ("requires_approval", models.BooleanField(default=True)),
                 ("verification_required", models.BooleanField(default=True)),
-                ("approval_ttl_seconds", models.PositiveIntegerField(blank=True, null=True)),
+                (
+                    "approval_ttl_seconds",
+                    models.PositiveIntegerField(blank=True, null=True),
+                ),
                 ("dispatch_ttl_seconds", models.PositiveIntegerField(default=900)),
                 ("allowed_target_types", models.JSONField(default=list)),
                 ("requested_inputs_schema", models.JSONField(default=dict)),
@@ -166,11 +170,23 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("requested_inputs", models.JSONField(default=dict)),
-                ("requested_inputs_sha256", models.CharField(blank=True, max_length=64)),
+                (
+                    "requested_inputs_sha256",
+                    models.CharField(blank=True, max_length=64),
+                ),
                 ("request_snapshot", models.JSONField(default=dict)),
-                ("request_snapshot_sha256", models.CharField(blank=True, max_length=64)),
-                ("operation_profile_key_snapshot", models.CharField(blank=True, max_length=96)),
-                ("workflow_version_snapshot", models.PositiveIntegerField(blank=True, null=True)),
+                (
+                    "request_snapshot_sha256",
+                    models.CharField(blank=True, max_length=64),
+                ),
+                (
+                    "operation_profile_key_snapshot",
+                    models.CharField(blank=True, max_length=96),
+                ),
+                (
+                    "workflow_version_snapshot",
+                    models.PositiveIntegerField(blank=True, null=True),
+                ),
                 (
                     "approval_request",
                     models.ForeignKey(
@@ -197,7 +213,10 @@ class Migration(migrations.Migration):
                 ("approved_at", models.DateTimeField(blank=True, null=True)),
                 ("dispatchable_at", models.DateTimeField(blank=True, null=True)),
                 ("running_at", models.DateTimeField(blank=True, null=True)),
-                ("verification_pending_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "verification_pending_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
                 ("verified_at", models.DateTimeField(blank=True, null=True)),
                 ("closed_at", models.DateTimeField(blank=True, null=True)),
                 ("rejected_at", models.DateTimeField(blank=True, null=True)),

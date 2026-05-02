@@ -2,7 +2,12 @@
 
 from rest_framework import serializers
 
-from apps.changes.models import ChangeExecutionBinding, ChangeRecord, ChangeTarget, OperationProfile
+from apps.changes.models import (
+    ChangeExecutionBinding,
+    ChangeRecord,
+    ChangeTarget,
+    OperationProfile,
+)
 
 
 class AllowedWorkflowSerializer(serializers.Serializer):
@@ -39,7 +44,9 @@ class ChangeTargetSerializer(serializers.Serializer):
     id = serializers.UUIDField(read_only=True)
     target_type = serializers.CharField(max_length=64)
     target_identifier = serializers.CharField(max_length=255)
-    display_name = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+    display_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default=""
+    )
     environment = serializers.CharField(max_length=32)
     metadata = serializers.DictField(required=False, default=dict)
 
@@ -150,7 +157,9 @@ class CreateChangeRecordSerializer(serializers.Serializer):
     summary = serializers.CharField(allow_blank=True, default="")
     justification = serializers.CharField(allow_blank=True, default="")
     requested_inputs = serializers.DictField(required=False, default=dict)
-    scheduled_for = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    scheduled_for = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     targets = ChangeTargetSerializer(many=True, required=False, default=list)
 
 

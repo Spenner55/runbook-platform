@@ -47,6 +47,14 @@ FORBIDDEN_METADATA_KEYS = {
     "x_api_key",
 }
 
+REJECTED_METADATA_KEYS = {
+    "change_dispatch_token",
+    "dispatch_token",
+    "dispatch_token_hash",
+    "requested_inputs",
+    "request_snapshot",
+}
+
 MAX_METADATA_BYTES = 16 * 1024
 
 
@@ -143,6 +151,10 @@ def _scrub_metadata(metadata: dict) -> dict:
     safe = {}
     for key, value in metadata.items():
         key_text = str(key)
+        if key_text.lower() in REJECTED_METADATA_KEYS:
+            raise ValidationError(
+                f"Audit metadata contains forbidden key '{key_text}'."
+            )
         if key_text.lower() in FORBIDDEN_METADATA_KEYS:
             continue
         safe[key_text] = _scrub_value(value)

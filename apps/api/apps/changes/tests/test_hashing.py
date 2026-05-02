@@ -2,7 +2,7 @@
 
 import pytest
 
-from apps.changes.services import sha256_canonical_json, canonical_json_bytes
+from apps.changes.services import canonical_json_bytes, sha256_canonical_json
 
 
 @pytest.mark.django_db

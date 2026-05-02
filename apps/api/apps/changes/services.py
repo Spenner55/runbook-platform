@@ -19,14 +19,38 @@ from apps.changes.models import (
     ChangeTarget,
     OperationProfile,
 )
+from apps.changes.transitions import transition_change  # noqa: F401 – re-exported
 from apps.common.exceptions import (
     DomainConflictError,
     DomainValidationError,
     InvalidStateTransitionError,
 )
+from apps.executions.models import Execution
 from apps.workflows.models import Workflow
 
 logger = logging.getLogger(__name__)
+
+
+_TARGET_METADATA_FORBIDDEN_KEYS = {
+    "api_key",
+    "api_token",
+    "apikey",
+    "apitoken",
+    "auth",
+    "auth_header",
+    "authorization",
+    "bearer",
+    "bearer_token",
+    "cookie",
+    "password",
+    "private_key",
+    "secret",
+    "session",
+    "session_token",
+    "token",
+    "webhook_url",
+    "x_api_key",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -36,9 +60,9 @@ logger = logging.getLogger(__name__)
 
 def canonical_json_bytes(value) -> bytes:
     """Produce canonical UTF-8 JSON bytes with sorted keys and compact separators."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def sha256_canonical_json(value) -> str:
@@ -46,7 +70,9 @@ def sha256_canonical_json(value) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def build_request_snapshot(change_record: ChangeRecord, targets: list) -> dict:
+def build_request_snapshot(
+    change_record: ChangeRecord, targets: list, submitted_at=None
+) -> dict:
     """Build the immutable request snapshot dict for a change record."""
     target_list = [
         {
@@ -56,20 +82,29 @@ def build_request_snapshot(change_record: ChangeRecord, targets: list) -> dict:
             "normalized_identifier": t.normalized_identifier,
             "display_name": t.display_name,
             "environment": t.environment,
+            "metadata": t.metadata or {},
         }
         for t in sorted(targets, key=lambda t: t.position)
     ]
+    requested_inputs = change_record.requested_inputs or {}
     return {
         "change_record_id": str(change_record.id),
-        "operation_profile_key": change_record.operation_profile.key,
+        "title": change_record.title,
+        "summary": change_record.summary,
+        "justification": change_record.justification,
+        "operation_profile_id": str(change_record.operation_profile_id),
+        "operation_profile_key": change_record.operation_profile_key_snapshot
+        or change_record.operation_profile.key,
         "workflow_id": str(change_record.workflow_id),
-        "workflow_version": change_record.workflow.version,
-        "requested_inputs_sha256": sha256_canonical_json(change_record.requested_inputs),
+        "workflow_version": change_record.workflow_version_snapshot
+        or change_record.workflow.version,
+        "requested_inputs_sha256": sha256_canonical_json(requested_inputs),
+        "requested_input_keys": sorted(str(key) for key in requested_inputs.keys()),
         "scheduled_for": change_record.scheduled_for.isoformat()
         if change_record.scheduled_for
         else None,
         "targets": target_list,
-        "submitted_at": timezone.now().isoformat(),
+        "submitted_at": (submitted_at or timezone.now()).isoformat(),
     }
 
 
@@ -80,7 +115,12 @@ def hash_dispatch_token(token: str) -> str:
 
 def generate_dispatch_token(binding: ChangeExecutionBinding) -> str:
     """Regenerate the clear dispatch token from stored nonce + server secret."""
-    secret = getattr(settings, "CHANGE_DISPATCH_TOKEN_SECRET", "insecure-change-me")
+    secret = getattr(settings, "CHANGE_DISPATCH_TOKEN_SECRET", "")
+    if not secret:
+        raise DomainValidationError(
+            code="dispatch_token_secret_missing",
+            detail="CHANGE_DISPATCH_TOKEN_SECRET is not configured.",
+        )
     message = (
         f"{binding.change_record_id}:{binding.execution_id}:"
         f"{binding.dispatch_token_nonce}:{binding.requested_inputs_sha256}"
@@ -93,9 +133,16 @@ def generate_dispatch_token(binding: ChangeExecutionBinding) -> str:
 
 
 def verify_dispatch_token(binding: ChangeExecutionBinding, token: str) -> bool:
-    """Constant-time comparison of submitted token against expected regenerated token."""
-    expected = generate_dispatch_token(binding)
-    return hmac.compare_digest(expected, token)
+    """Verify submitted token and persisted hash using constant-time comparisons."""
+    if not token:
+        return False
+    expected_token = generate_dispatch_token(binding)
+    expected_hash = hash_dispatch_token(expected_token)
+    submitted_hash = hash_dispatch_token(token)
+    stored_hash = binding.dispatch_token_hash or ""
+    return hmac.compare_digest(stored_hash, expected_hash) and hmac.compare_digest(
+        stored_hash, submitted_hash
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +158,103 @@ def assert_change_request_mutable(change: ChangeRecord) -> None:
                 f"Change request content is immutable after submit "
                 f"(current status: '{change.status}')."
             ),
+        )
+
+
+def validate_operation_profile_workflows(
+    profile: OperationProfile, workflow_ids=None
+) -> None:
+    """Ensure an operation profile only allowlists workflows in its own organization."""
+    qs = profile.allowed_workflows.all()
+    if workflow_ids is not None:
+        qs = Workflow.objects.filter(pk__in=workflow_ids)
+    if qs.exclude(organization_id=profile.organization_id).exists():
+        raise DomainValidationError(
+            code="operation_profile_workflow_org_mismatch",
+            detail="Operation profile workflows must belong to the same organization.",
+        )
+
+
+def emit_operation_profile_audit(
+    *,
+    profile: OperationProfile,
+    event_type: str,
+    actor: AuditActor | None = None,
+    metadata: dict | None = None,
+) -> None:
+    audit_actor = actor or system_actor("Change service")
+    AuditService.emit(
+        organization_id=profile.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.OPERATION_PROFILE,
+        object_id=profile.id,
+        metadata={
+            "operation_profile_key": profile.key,
+            "is_active": profile.is_active,
+            "risk_level": profile.risk_level,
+            **(metadata or {}),
+        },
+    )
+
+
+def validate_request_integrity(change: ChangeRecord) -> None:
+    """Recompute frozen request hashes and reject post-submit dossier drift."""
+    if change.status == ChangeRecord.Status.DRAFT:
+        return
+    if not change.requested_inputs_sha256 or not change.request_snapshot_sha256:
+        raise InvalidStateTransitionError(
+            code="change_request_integrity_missing",
+            detail="Submitted change is missing frozen request hashes.",
+        )
+
+    targets = list(change.targets.order_by("position"))
+    inputs_hash = sha256_canonical_json(change.requested_inputs or {})
+    if not hmac.compare_digest(inputs_hash, change.requested_inputs_sha256):
+        raise InvalidStateTransitionError(
+            code="change_request_integrity_mismatch",
+            detail="Requested inputs no longer match the submitted hash.",
+        )
+
+    snapshot = build_request_snapshot(
+        change,
+        targets,
+        submitted_at=change.submitted_at,
+    )
+    snapshot_hash = sha256_canonical_json(snapshot)
+    if not hmac.compare_digest(snapshot_hash, change.request_snapshot_sha256):
+        raise InvalidStateTransitionError(
+            code="change_request_integrity_mismatch",
+            detail="Request snapshot no longer matches the submitted hash.",
+        )
+
+
+def assert_execution_change_binding_ready(execution, runner_id: str) -> None:
+    """Require a change-bound execution to be bound by the current runner."""
+    try:
+        binding = ChangeExecutionBinding.objects.select_related("change_record").get(
+            execution=execution
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        return
+
+    if (
+        binding.bound_at is None
+        or binding.change_record.status != ChangeRecord.Status.RUNNING
+    ):
+        raise InvalidStateTransitionError(
+            code="change_binding_not_confirmed",
+            detail=(
+                "Execution is change-bound but the dispatch token has not been "
+                "verified yet. The runner must call bind-execution first."
+            ),
+        )
+    if binding.bound_by_runner_id != runner_id:
+        raise InvalidStateTransitionError(
+            code="change_binding_runner_mismatch",
+            detail="Execution is change-bound by a different runner.",
         )
 
 
@@ -189,6 +333,7 @@ def create_change_record(
             detail=f"Workflow must be published (current status: '{workflow.status}').",
         )
 
+    _validate_requested_inputs(requested_inputs, profile)
     _validate_targets(targets, profile)
 
     with transaction.atomic():
@@ -196,7 +341,9 @@ def create_change_record(
             organization=organization,
             operation_profile=profile,
             workflow=workflow,
-            requested_by_id=actor.actor_id if actor and actor.actor_type == AuditEvent.ActorType.USER else None,
+            requested_by_id=actor.actor_id
+            if actor and actor.actor_type == AuditEvent.ActorType.USER
+            else None,
             title=title,
             summary=summary,
             justification=justification,
@@ -248,12 +395,22 @@ def _validate_targets(targets: list[dict], profile: OperationProfile) -> None:
                 detail=f"Target at position {i + 1} must have environment='production' (got '{env}').",
             )
         ttype = t.get("target_type", "")
-        if not profile.allowed_target_types or ttype not in profile.allowed_target_types:
+        if (
+            not profile.allowed_target_types
+            or ttype not in profile.allowed_target_types
+        ):
             raise DomainValidationError(
                 code="target_type_not_allowed",
                 detail=f"Target type '{ttype}' is not allowed by profile.",
             )
         normalized = normalize_target_identifier(t.get("target_identifier", ""))
+        if not normalized:
+            raise DomainValidationError(
+                code="target_identifier_required",
+                detail=f"Target at position {i + 1} requires a target_identifier.",
+            )
+        metadata = t.get("metadata", {})
+        _validate_target_metadata(metadata, position=i + 1)
         key = (ttype, normalized)
         if key in seen:
             raise DomainValidationError(
@@ -261,6 +418,114 @@ def _validate_targets(targets: list[dict], profile: OperationProfile) -> None:
                 detail=f"Duplicate target: type='{ttype}', identifier='{t.get('target_identifier')}'.",
             )
         seen.add(key)
+
+
+def _validate_target_metadata(metadata, *, position: int) -> None:
+    if metadata is None:
+        return
+    if not isinstance(metadata, dict):
+        raise DomainValidationError(
+            code="target_metadata_invalid",
+            detail=f"Target metadata at position {position} must be a JSON object.",
+        )
+    _reject_sensitive_keys(
+        metadata,
+        code="target_metadata_forbidden_key",
+        detail_prefix=f"Target metadata at position {position}",
+    )
+
+
+def _reject_sensitive_keys(value, *, code: str, detail_prefix: str) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key)
+            if key_text.lower() in _TARGET_METADATA_FORBIDDEN_KEYS:
+                raise DomainValidationError(
+                    code=code,
+                    detail=f"{detail_prefix} contains forbidden sensitive key '{key_text}'.",
+                )
+            _reject_sensitive_keys(child, code=code, detail_prefix=detail_prefix)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_sensitive_keys(child, code=code, detail_prefix=detail_prefix)
+
+
+def _validate_requested_inputs(
+    requested_inputs: dict, profile: OperationProfile
+) -> None:
+    if not isinstance(requested_inputs, dict):
+        raise DomainValidationError(
+            code="requested_inputs_invalid",
+            detail="Requested inputs must be a JSON object.",
+        )
+    schema = profile.requested_inputs_schema or {}
+    if not schema:
+        return
+    if not isinstance(schema, dict):
+        raise DomainValidationError(
+            code="requested_inputs_schema_invalid",
+            detail="Operation profile requested_inputs_schema must be a JSON object.",
+        )
+
+    required = schema.get("required", [])
+    if not isinstance(required, list):
+        raise DomainValidationError(
+            code="requested_inputs_schema_invalid",
+            detail="requested_inputs_schema.required must be a list.",
+        )
+    for key in required:
+        if key not in requested_inputs:
+            raise DomainValidationError(
+                code="requested_inputs_invalid",
+                detail=f"Missing required requested input '{key}'.",
+            )
+
+    properties = schema.get("properties", {})
+    if properties is None:
+        properties = {}
+    if not isinstance(properties, dict):
+        raise DomainValidationError(
+            code="requested_inputs_schema_invalid",
+            detail="requested_inputs_schema.properties must be a JSON object.",
+        )
+
+    if schema.get("additionalProperties") is False:
+        extra_keys = set(requested_inputs) - set(properties)
+        if extra_keys:
+            raise DomainValidationError(
+                code="requested_inputs_invalid",
+                detail=f"Unexpected requested input '{sorted(extra_keys)[0]}'.",
+            )
+
+    for key, rules in properties.items():
+        if key not in requested_inputs or not isinstance(rules, dict):
+            continue
+        expected_type = rules.get("type")
+        if expected_type and not _json_type_matches(
+            requested_inputs[key], expected_type
+        ):
+            raise DomainValidationError(
+                code="requested_inputs_invalid",
+                detail=f"Requested input '{key}' must be of type '{expected_type}'.",
+            )
+
+
+def _json_type_matches(value, expected_type: str) -> bool:
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "object":
+        return isinstance(value, dict)
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "null":
+        return value is None
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -282,10 +547,8 @@ def submit_change_record(
                 detail=f"Cannot submit change with status '{change.status}', expected 'draft'.",
             )
 
-        profile = (
-            OperationProfile.objects.prefetch_related("allowed_workflows").get(
-                pk=change.operation_profile_id
-            )
+        profile = OperationProfile.objects.prefetch_related("allowed_workflows").get(
+            pk=change.operation_profile_id
         )
         if not profile.is_active:
             raise DomainConflictError(
@@ -294,6 +557,16 @@ def submit_change_record(
             )
 
         workflow = Workflow.objects.get(pk=change.workflow_id)
+        if workflow.organization_id != change.organization_id:
+            raise DomainValidationError(
+                code="workflow_organization_mismatch",
+                detail="Workflow organization does not match the change organization.",
+            )
+        if profile.organization_id != change.organization_id:
+            raise DomainValidationError(
+                code="operation_profile_organization_mismatch",
+                detail="Operation profile organization does not match the change organization.",
+            )
         if workflow not in profile.allowed_workflows.all():
             raise DomainValidationError(
                 code="workflow_not_allowlisted_for_profile",
@@ -312,12 +585,14 @@ def submit_change_record(
             )
 
         targets = list(change.targets.order_by("position"))
+        _validate_requested_inputs(change.requested_inputs or {}, profile)
         _validate_targets(
             [
                 {
                     "environment": t.environment,
                     "target_type": t.target_type,
                     "target_identifier": t.target_identifier,
+                    "metadata": t.metadata,
                 }
                 for t in targets
             ],
@@ -326,7 +601,7 @@ def submit_change_record(
 
         now = timezone.now()
         inputs_hash = sha256_canonical_json(change.requested_inputs)
-        snapshot = build_request_snapshot(change, targets)
+        snapshot = build_request_snapshot(change, targets, submitted_at=now)
         snapshot_hash = sha256_canonical_json(snapshot)
 
         change.requested_inputs_sha256 = inputs_hash
@@ -363,7 +638,12 @@ def submit_change_record(
                 actor=actor,
             )
             change.approval_request = approval_request
-            change.status = ChangeRecord.Status.PENDING_APPROVAL
+            transition_change(
+                change=change,
+                new_status=ChangeRecord.Status.PENDING_APPROVAL,
+                actor=actor,
+                save=False,
+            )
             change.save(
                 update_fields=[
                     "requested_inputs_sha256",
@@ -388,8 +668,13 @@ def submit_change_record(
                 },
             )
         else:
-            change.status = ChangeRecord.Status.APPROVED
-            change.approved_at = now
+            transition_change(
+                change=change,
+                new_status=ChangeRecord.Status.APPROVED,
+                actor=actor,
+                now=now,
+                save=False,
+            )
             change.save(
                 update_fields=[
                     "requested_inputs_sha256",
@@ -403,16 +688,6 @@ def submit_change_record(
                     "approved_at",
                     "updated_at",
                 ]
-            )
-            _emit(
-                change=change,
-                event_type="change.status_changed",
-                object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-                actor=actor or system_actor("Change service"),
-                metadata={
-                    "previous_status": ChangeRecord.Status.DRAFT,
-                    "new_status": change.status,
-                },
             )
             schedule_or_make_dispatchable(change=change, actor=actor)
 
@@ -446,60 +721,33 @@ def handle_change_approval_decision(
         return
 
     now = timezone.now()
-    previous_status = change.status
+    validate_request_integrity(change)
 
     if decision == "approved":
-        change.status = ChangeRecord.Status.APPROVED
-        change.approved_at = now
-        change.save(update_fields=["status", "approved_at", "updated_at"])
-        _emit(
+        transition_change(
             change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=actor or system_actor("Change service"),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
-            },
+            new_status=ChangeRecord.Status.APPROVED,
+            actor=actor,
+            now=now,
         )
         schedule_or_make_dispatchable(change=change, actor=actor)
 
     elif decision == "rejected":
-        change.status = ChangeRecord.Status.REJECTED
-        change.rejected_at = now
-        change.terminal_reason = "approval_rejected"
-        change.save(
-            update_fields=["status", "rejected_at", "terminal_reason", "updated_at"]
-        )
-        _emit(
+        transition_change(
             change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=actor or system_actor("Change service"),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
-                "terminal_reason": change.terminal_reason,
-            },
+            new_status=ChangeRecord.Status.REJECTED,
+            actor=actor,
+            now=now,
+            terminal_reason="approval_rejected",
         )
 
     elif decision == "timed_out":
-        change.status = ChangeRecord.Status.EXPIRED
-        change.expired_at = now
-        change.terminal_reason = "approval_timed_out"
-        change.save(
-            update_fields=["status", "expired_at", "terminal_reason", "updated_at"]
-        )
-        _emit(
+        transition_change(
             change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=actor or system_actor("Change service"),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
-                "terminal_reason": change.terminal_reason,
-            },
+            new_status=ChangeRecord.Status.EXPIRED,
+            actor=actor,
+            now=now,
+            terminal_reason="approval_timed_out",
         )
 
 
@@ -514,19 +762,19 @@ def schedule_or_make_dispatchable(
     actor: AuditActor | None = None,
 ) -> None:
     """Transition approved change to scheduled or dispatchable."""
+    if change.status != ChangeRecord.Status.APPROVED:
+        raise InvalidStateTransitionError(
+            code="invalid_state_transition",
+            detail=f"Cannot schedule or dispatch change with status '{change.status}'.",
+        )
+    validate_request_integrity(change)
     now = timezone.now()
     if change.scheduled_for and change.scheduled_for > now:
-        previous_status = change.status
-        change.status = ChangeRecord.Status.SCHEDULED
-        change.save(update_fields=["status", "updated_at"])
-        _emit(
+        transition_change(
             change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=actor or system_actor("Change service"),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
+            new_status=ChangeRecord.Status.SCHEDULED,
+            actor=actor,
+            audit_metadata={
                 "scheduled_for": change.scheduled_for.isoformat(),
             },
         )
@@ -542,83 +790,103 @@ def make_dispatchable(
     """Reserve an execution and create the ChangeExecutionBinding."""
     from apps.executions import services as execution_services  # avoid circular
 
-    change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
-    if change.status not in (ChangeRecord.Status.APPROVED, ChangeRecord.Status.SCHEDULED):
-        raise InvalidStateTransitionError(
-            code="invalid_state_transition",
-            detail=f"Cannot dispatch change with status '{change.status}'.",
+    with transaction.atomic():
+        change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+        if change.status not in (
+            ChangeRecord.Status.APPROVED,
+            ChangeRecord.Status.SCHEDULED,
+        ):
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail=f"Cannot dispatch change with status '{change.status}'.",
+            )
+        if (
+            change.status == ChangeRecord.Status.SCHEDULED
+            and change.scheduled_for
+            and change.scheduled_for > timezone.now()
+        ):
+            raise InvalidStateTransitionError(
+                code="invalid_state_transition",
+                detail="Cannot dispatch scheduled change before scheduled_for.",
+            )
+        validate_request_integrity(change)
+
+        profile = OperationProfile.objects.get(pk=change.operation_profile_id)
+        workflow = Workflow.objects.get(pk=change.workflow_id)
+        if profile.organization_id != change.organization_id:
+            raise DomainValidationError(
+                code="operation_profile_organization_mismatch",
+                detail="Operation profile organization does not match the change organization.",
+            )
+        if workflow.organization_id != change.organization_id:
+            raise DomainValidationError(
+                code="workflow_organization_mismatch",
+                detail="Workflow organization does not match the change organization.",
+            )
+
+        execution = execution_services.create_execution(
+            workflow=workflow,
+            actor=actor or system_actor("Change service"),
+            _from_change_service=True,
         )
 
-    profile = OperationProfile.objects.get(pk=change.operation_profile_id)
-    workflow = Workflow.objects.get(pk=change.workflow_id)
+        now = timezone.now()
+        nonce = secrets.token_hex(32)
+        ttl_seconds = profile.dispatch_ttl_seconds
+        expires_at = now + timedelta(seconds=ttl_seconds)
 
-    execution = execution_services.create_execution(
-        workflow=workflow,
-        actor=actor or system_actor("Change service"),
-        _from_change_service=True,
-    )
+        inputs_hash = change.requested_inputs_sha256 or sha256_canonical_json(
+            change.requested_inputs
+        )
 
-    now = timezone.now()
-    nonce = secrets.token_hex(32)
-    ttl_seconds = profile.dispatch_ttl_seconds
-    expires_at = now + timedelta(seconds=ttl_seconds)
-
-    inputs_hash = change.requested_inputs_sha256 or sha256_canonical_json(
-        change.requested_inputs
-    )
-
-    binding = ChangeExecutionBinding.objects.create(
-        change_record=change,
-        execution=execution,
-        organization=change.organization,
-        operation_profile_key=profile.key,
-        requested_inputs_sha256=inputs_hash,
-        dispatch_token_nonce=nonce,
-        dispatch_token_hash="",
-        dispatch_token_expires_at=expires_at,
-        reserved_at=now,
-    )
-    clear_token = generate_dispatch_token(binding)
-    binding.dispatch_token_hash = hash_dispatch_token(clear_token)
-    binding.runner_payload_snapshot = {
-        "change_record_id": str(change.id),
-        "execution_id": str(execution.id),
-        "operation_profile_key": profile.key,
-        "requested_inputs_sha256": inputs_hash,
-        "dispatch_token_expires_at": expires_at.isoformat(),
-    }
-    binding.save(
-        update_fields=["dispatch_token_hash", "runner_payload_snapshot", "updated_at"]
-    )
-
-    previous_status = change.status
-    change.status = ChangeRecord.Status.DISPATCHABLE
-    change.dispatchable_at = now
-    change.save(update_fields=["status", "dispatchable_at", "updated_at"])
-
-    _emit(
-        change=change,
-        event_type="change.execution_binding_reserved",
-        object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
-        actor=actor or system_actor("Change service"),
-        metadata={
+        binding = ChangeExecutionBinding.objects.create(
+            change_record=change,
+            execution=execution,
+            organization=change.organization,
+            operation_profile_key=profile.key,
+            requested_inputs_sha256=inputs_hash,
+            dispatch_token_nonce=nonce,
+            dispatch_token_hash="",
+            dispatch_token_expires_at=expires_at,
+            reserved_at=now,
+        )
+        clear_token = generate_dispatch_token(binding)
+        binding.dispatch_token_hash = hash_dispatch_token(clear_token)
+        binding.runner_payload_snapshot = {
             "change_record_id": str(change.id),
             "execution_id": str(execution.id),
             "operation_profile_key": profile.key,
             "requested_inputs_sha256": inputs_hash,
-        },
-        object_id=binding.id,
-    )
-    _emit(
-        change=change,
-        event_type="change.status_changed",
-        object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-        actor=actor or system_actor("Change service"),
-        metadata={
-            "previous_status": previous_status,
-            "new_status": change.status,
-        },
-    )
+            "dispatch_token_expires_at": expires_at.isoformat(),
+        }
+        binding.save(
+            update_fields=[
+                "dispatch_token_hash",
+                "runner_payload_snapshot",
+                "updated_at",
+            ]
+        )
+
+        transition_change(
+            change=change,
+            new_status=ChangeRecord.Status.DISPATCHABLE,
+            actor=actor,
+            now=now,
+        )
+
+        _emit(
+            change=change,
+            event_type="change.execution_binding_reserved",
+            object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
+            actor=actor or system_actor("Change service"),
+            metadata={
+                "change_record_id": str(change.id),
+                "execution_id": str(execution.id),
+                "operation_profile_key": profile.key,
+                "requested_inputs_sha256": inputs_hash,
+            },
+            object_id=binding.id,
+        )
 
 
 def promote_due_scheduled_changes() -> list[str]:
@@ -657,6 +925,81 @@ def promote_due_scheduled_changes() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def expire_dispatchable_change(
+    *,
+    change: ChangeRecord,
+    now=None,
+    actor: AuditActor | None = None,
+    terminal_reason: str = "dispatch_token_expired",
+) -> None:
+    """Transition a dispatchable change to expired due to dispatch token expiry."""
+    if change.status != ChangeRecord.Status.DISPATCHABLE:
+        return
+    transition_change(
+        change=change,
+        new_status=ChangeRecord.Status.EXPIRED,
+        actor=actor or system_actor("Change service"),
+        now=now or timezone.now(),
+        terminal_reason=terminal_reason,
+    )
+
+
+def expire_unbound_dispatch_for_execution(*, execution, now=None) -> bool:
+    """
+    Expire an unbound change dispatch tied to a queued/claimed execution.
+
+    Returns True when the execution should be skipped by runner claim.
+    """
+    now = now or timezone.now()
+    try:
+        binding = (
+            ChangeExecutionBinding.objects.select_for_update()
+            .select_related("change_record")
+            .get(execution=execution)
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        return False
+
+    if binding.bound_at is not None or binding.dispatch_token_expires_at > now:
+        return False
+
+    change = binding.change_record
+    if change.status == ChangeRecord.Status.DISPATCHABLE:
+        expire_dispatchable_change(
+            change=change,
+            now=now,
+            actor=system_actor("Change service"),
+            terminal_reason="dispatch_token_expired",
+        )
+
+    if execution.status in (Execution.Status.QUEUED, Execution.Status.CLAIMED):
+        previous_status = execution.status
+        execution.status = Execution.Status.CANCELLED
+        execution.finished_at = now
+        if not execution.started_at:
+            execution.started_at = now
+        execution.save(
+            update_fields=["status", "finished_at", "started_at", "updated_at"]
+        )
+        audit_actor = system_actor("Change service")
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="execution.cancelled",
+            object_type=AuditEvent.ObjectType.EXECUTION,
+            object_id=execution.id,
+            metadata={
+                "previous_status": previous_status,
+                "new_status": execution.status,
+                "reason": "change_dispatch_token_expired",
+                "change_record_id": str(change.id),
+            },
+        )
+    return True
+
+
 def bind_execution(
     *,
     change_id: str,
@@ -670,55 +1013,89 @@ def bind_execution(
     """Validate runner possession of dispatch token and activate the binding."""
     from apps.executions.models import Execution  # avoid circular
 
-    with transaction.atomic():
-        try:
-            change = ChangeRecord.objects.select_for_update().get(pk=change_id)
-        except ChangeRecord.DoesNotExist:
-            raise DomainValidationError(
-                code="change_not_found",
-                detail="Change record not found.",
-            )
+    # _dispatch_token_expired is set when we detect expiry inside the transaction
+    # so we can perform the lifecycle transition in its own atomic after the
+    # read-only validation transaction exits (raising would roll back any saves).
+    _dispatch_token_expired = False
+    _request_integrity_failed = False
 
-        # Fetch binding and check idempotency BEFORE the status check so that a
-        # runner retry after a successful bind (change is now 'running') succeeds.
-        try:
-            binding = ChangeExecutionBinding.objects.select_for_update().get(
-                change_record=change
-            )
-        except ChangeExecutionBinding.DoesNotExist:
-            raise DomainValidationError(
-                code="execution_binding_not_found",
-                detail="No execution binding found for this change.",
-            )
+    try:
+        with transaction.atomic():
+            try:
+                change = ChangeRecord.objects.select_for_update().get(pk=change_id)
+            except ChangeRecord.DoesNotExist:
+                raise DomainValidationError(
+                    code="change_not_found",
+                    detail="Change record not found.",
+                )
 
-        if str(binding.execution_id) != str(execution_id):
-            raise InvalidStateTransitionError(
-                code="execution_binding_conflict",
-                detail="Execution ID does not match binding.",
-            )
+            # Fetch binding and check idempotency BEFORE the status check so that a
+            # runner retry after a successful bind (change is now 'running') succeeds.
+            try:
+                binding = ChangeExecutionBinding.objects.select_for_update().get(
+                    change_record=change
+                )
+            except ChangeExecutionBinding.DoesNotExist:
+                raise DomainValidationError(
+                    code="execution_binding_not_found",
+                    detail="No execution binding found for this change.",
+                )
 
-        try:
-            execution = Execution.objects.select_for_update().get(pk=execution_id)
-        except Execution.DoesNotExist:
-            raise DomainValidationError(
-                code="execution_not_found",
-                detail="Execution not found.",
-            )
+            if str(binding.execution_id) != str(execution_id):
+                raise InvalidStateTransitionError(
+                    code="execution_binding_conflict",
+                    detail="Execution ID does not match binding.",
+                )
 
-        if execution.claimed_by_runner_id != runner_id:
-            raise InvalidStateTransitionError(
-                code="runner_ownership_mismatch",
-                detail="Runner does not own this execution.",
-            )
-        if str(execution.claim_token) != str(claim_token):
-            raise InvalidStateTransitionError(
-                code="claim_token_mismatch",
-                detail="Claim token is invalid.",
-            )
+            try:
+                execution = Execution.objects.select_for_update().get(pk=execution_id)
+            except Execution.DoesNotExist:
+                raise DomainValidationError(
+                    code="execution_not_found",
+                    detail="Execution not found.",
+                )
 
-        # Idempotency: same runner/execution/payload already bound — return success.
-        if binding.bound_at is not None:
-            if binding.bound_by_runner_id == runner_id:
+            if execution.claimed_by_runner_id != runner_id:
+                raise InvalidStateTransitionError(
+                    code="runner_ownership_mismatch",
+                    detail="Runner does not own this execution.",
+                )
+            if str(execution.claim_token) != str(claim_token):
+                raise InvalidStateTransitionError(
+                    code="claim_token_mismatch",
+                    detail="Claim token is invalid.",
+                )
+
+            now = timezone.now()
+
+            # Idempotency: same runner/execution/payload already bound — revalidate and return success.
+            if binding.bound_at is not None:
+                if binding.bound_by_runner_id != runner_id:
+                    raise InvalidStateTransitionError(
+                        code="execution_binding_conflict",
+                        detail="Binding already claimed by a different runner.",
+                    )
+                if binding.dispatch_token_expires_at <= now:
+                    raise InvalidStateTransitionError(
+                        code="dispatch_token_expired",
+                        detail="Dispatch token has expired.",
+                    )
+                # Revalidate payload to prove this is the same dispatch, not a stale retry.
+                if binding.operation_profile_key != operation_profile_key:
+                    raise DomainValidationError(
+                        code="operation_profile_key_mismatch",
+                        detail="Operation profile key does not match binding on idempotent retry.",
+                    )
+                if binding.requested_inputs_sha256 != requested_inputs_sha256:
+                    raise DomainValidationError(
+                        code="requested_inputs_hash_mismatch",
+                        detail="Requested inputs hash does not match binding on idempotent retry.",
+                    )
+                if not verify_dispatch_token(binding, dispatch_token):
+                    raise DomainValidationError(
+                        code="dispatch_token_invalid",
+                        detail="Dispatch token is invalid on idempotent retry.",
+                    )
                 return {
                     "change_record_id": str(change.id),
                     "execution_id": str(execution.id),
@@ -726,73 +1103,88 @@ def bind_execution(
                     "status": change.status,
                     "bound_at": binding.bound_at,
                 }
-            raise InvalidStateTransitionError(
-                code="execution_binding_conflict",
-                detail="Binding already claimed by a different runner.",
+
+            # Status check comes after idempotency so retries never fail here.
+            if change.status != ChangeRecord.Status.DISPATCHABLE:
+                raise InvalidStateTransitionError(
+                    code="change_not_dispatchable",
+                    detail=f"Change is not dispatchable (status: '{change.status}').",
+                )
+            try:
+                validate_request_integrity(change)
+            except InvalidStateTransitionError:
+                _request_integrity_failed = True
+                raise
+
+            if binding.operation_profile_key != operation_profile_key:
+                raise DomainValidationError(
+                    code="operation_profile_key_mismatch",
+                    detail="Operation profile key does not match binding.",
+                )
+            if binding.requested_inputs_sha256 != requested_inputs_sha256:
+                raise DomainValidationError(
+                    code="requested_inputs_hash_mismatch",
+                    detail="Requested inputs hash does not match binding.",
+                )
+
+            if binding.dispatch_token_expires_at <= now:
+                # Signal expiry for post-transaction lifecycle handling.
+                _dispatch_token_expired = True
+                raise InvalidStateTransitionError(
+                    code="dispatch_token_expired",
+                    detail="Dispatch token has expired.",
+                )
+
+            if not verify_dispatch_token(binding, dispatch_token):
+                raise DomainValidationError(
+                    code="dispatch_token_invalid",
+                    detail="Dispatch token is invalid.",
+                )
+
+            binding.bound_at = now
+            binding.bound_by_runner_id = runner_id
+            binding.save(update_fields=["bound_at", "bound_by_runner_id", "updated_at"])
+
+            transition_change(
+                change=change,
+                new_status=ChangeRecord.Status.RUNNING,
+                actor=_runner_actor(runner_id),
+                now=now,
             )
 
-        # Status check comes after idempotency so retries never fail here.
-        if change.status != ChangeRecord.Status.DISPATCHABLE:
-            raise InvalidStateTransitionError(
-                code="change_not_dispatchable",
-                detail=f"Change is not dispatchable (status: '{change.status}').",
+            _emit(
+                change=change,
+                event_type="change.execution_bound",
+                object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
+                actor=_runner_actor(runner_id),
+                metadata={
+                    "change_record_id": str(change.id),
+                    "execution_id": str(execution.id),
+                    "runner_id": runner_id,
+                },
+                object_id=binding.id,
             )
-
-        if binding.operation_profile_key != operation_profile_key:
-            raise DomainValidationError(
-                code="operation_profile_key_mismatch",
-                detail="Operation profile key does not match binding.",
-            )
-        if binding.requested_inputs_sha256 != requested_inputs_sha256:
-            raise DomainValidationError(
-                code="requested_inputs_hash_mismatch",
-                detail="Requested inputs hash does not match binding.",
-            )
-
-        now = timezone.now()
-        if binding.dispatch_token_expires_at <= now:
-            raise InvalidStateTransitionError(
-                code="dispatch_token_expired",
-                detail="Dispatch token has expired.",
-            )
-
-        if not verify_dispatch_token(binding, dispatch_token):
-            raise DomainValidationError(
-                code="dispatch_token_invalid",
-                detail="Dispatch token is invalid.",
-            )
-
-        binding.bound_at = now
-        binding.bound_by_runner_id = runner_id
-        binding.save(update_fields=["bound_at", "bound_by_runner_id", "updated_at"])
-
-        previous_status = change.status
-        change.status = ChangeRecord.Status.RUNNING
-        change.running_at = now
-        change.save(update_fields=["status", "running_at", "updated_at"])
-
-        _emit(
-            change=change,
-            event_type="change.execution_bound",
-            object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
-            actor=_runner_actor(runner_id),
-            metadata={
-                "change_record_id": str(change.id),
-                "execution_id": str(execution.id),
-                "runner_id": runner_id,
-            },
-            object_id=binding.id,
-        )
-        _emit(
-            change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=_runner_actor(runner_id),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
-            },
-        )
+    except InvalidStateTransitionError:
+        if _dispatch_token_expired or _request_integrity_failed:
+            # Perform the expiry lifecycle transition in its own transaction so
+            # it commits even though the outer transaction was rolled back.
+            try:
+                change_for_expiry = ChangeRecord.objects.get(pk=change_id)
+                expire_dispatchable_change(
+                    change=change_for_expiry,
+                    now=timezone.now(),
+                    terminal_reason=(
+                        "request_integrity_mismatch"
+                        if _request_integrity_failed
+                        else "dispatch_token_expired"
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to expire dispatchable change %s after bind rejection",
+                    change_id,
+                )
+        raise
 
     return {
         "change_record_id": str(change.id),
@@ -878,31 +1270,45 @@ def handle_bound_execution_completed(*, execution) -> None:
         )
         if change.status != ChangeRecord.Status.RUNNING:
             return
+        try:
+            validate_request_integrity(change)
+        except InvalidStateTransitionError:
+            transition_change(
+                change=change,
+                new_status=ChangeRecord.Status.CLOSED,
+                actor=system_actor("Change service"),
+                now=timezone.now(),
+                terminal_reason="request_integrity_mismatch",
+                audit_metadata={"execution_status": execution.status},
+            )
+            return
 
         profile = OperationProfile.objects.get(pk=change.operation_profile_id)
         now = timezone.now()
-        previous_status = change.status
-
-        from apps.executions.models import Execution  # avoid circular
 
         if execution.status == Execution.Status.SUCCEEDED:
             if profile.verification_required:
-                change.status = ChangeRecord.Status.VERIFICATION_PENDING
-                change.verification_pending_at = now
-                change.save(
-                    update_fields=["status", "verification_pending_at", "updated_at"]
+                transition_change(
+                    change=change,
+                    new_status=ChangeRecord.Status.VERIFICATION_PENDING,
+                    actor=system_actor("Change service"),
+                    now=now,
+                    audit_metadata={
+                        "execution_status": execution.status,
+                        "verification_required": profile.verification_required,
+                    },
                 )
             else:
-                change.status = ChangeRecord.Status.CLOSED
-                change.closed_at = now
-                change.terminal_reason = "execution_succeeded"
-                change.save(
-                    update_fields=[
-                        "status",
-                        "closed_at",
-                        "terminal_reason",
-                        "updated_at",
-                    ]
+                transition_change(
+                    change=change,
+                    new_status=ChangeRecord.Status.CLOSED,
+                    actor=system_actor("Change service"),
+                    now=now,
+                    terminal_reason="execution_succeeded",
+                    audit_metadata={
+                        "execution_status": execution.status,
+                        "verification_required": profile.verification_required,
+                    },
                 )
         else:
             terminal_reason = (
@@ -910,26 +1316,17 @@ def handle_bound_execution_completed(*, execution) -> None:
                 if execution.status == Execution.Status.CANCELLED
                 else "execution_failed"
             )
-            change.status = ChangeRecord.Status.CLOSED
-            change.closed_at = now
-            change.terminal_reason = terminal_reason
-            change.save(
-                update_fields=["status", "closed_at", "terminal_reason", "updated_at"]
+            transition_change(
+                change=change,
+                new_status=ChangeRecord.Status.CLOSED,
+                actor=system_actor("Change service"),
+                now=now,
+                terminal_reason=terminal_reason,
+                audit_metadata={
+                    "execution_status": execution.status,
+                    "verification_required": profile.verification_required,
+                },
             )
-
-        _emit(
-            change=change,
-            event_type="change.status_changed",
-            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
-            actor=system_actor("Change service"),
-            metadata={
-                "previous_status": previous_status,
-                "new_status": change.status,
-                "terminal_reason": change.terminal_reason,
-                "execution_status": execution.status,
-                "verification_required": profile.verification_required,
-            },
-        )
 
 
 # ---------------------------------------------------------------------------

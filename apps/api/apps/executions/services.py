@@ -70,7 +70,12 @@ def create_execution(
 
     if not _from_change_service:
         from apps.changes.models import OperationProfile  # avoid circular
-        if OperationProfile.objects.filter(is_active=True, allowed_workflows=workflow).exists():
+
+        if OperationProfile.objects.filter(
+            organization=workflow.organization,
+            is_active=True,
+            allowed_workflows=workflow,
+        ).exists():
             raise DomainConflictError(
                 code="workflow_requires_change_record",
                 detail=(
@@ -318,6 +323,16 @@ def recover_stuck_executions(*, stuck_threshold_seconds: int = 300) -> list[str]
                 record_step_transition(status=_step.status)
                 _record_step_duration_if_available(_step)
 
+        try:
+            from apps.changes import services as change_services  # avoid circular
+
+            change_services.handle_bound_execution_completed(execution=execution)
+        except Exception:
+            logger.exception(
+                "handle_bound_execution_completed failed for stuck execution %s",
+                execution.id,
+            )
+
     return recovered
 
 
@@ -490,6 +505,15 @@ def fail_execution_for_approval_timeout(
     )
     record_step_transition(status=step.status)
     record_execution_event(event="approval_timeout", status=execution.status)
+    try:
+        from apps.changes import services as change_services  # avoid circular
+
+        change_services.handle_bound_execution_completed(execution=execution)
+    except Exception:
+        logger.exception(
+            "handle_bound_execution_completed failed for approval-timeout execution %s",
+            execution.id,
+        )
     return True
 
 
@@ -532,6 +556,26 @@ def _validate_workflow_definition(definition: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _expire_unbound_change_dispatch_if_needed(execution: Execution, *, now) -> bool:
+    try:
+        from apps.changes import services as change_services  # avoid circular
+    except Exception:
+        logger.exception("Could not import change services for dispatch expiry")
+        return False
+
+    try:
+        return change_services.expire_unbound_dispatch_for_execution(
+            execution=execution,
+            now=now,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to expire unbound change dispatch for execution %s",
+            execution.id,
+        )
+        return False
+
+
 @timed_execution_operation("claim_next_execution")
 def claim_next_execution(*, runner_id: str) -> dict | None:
     """
@@ -541,14 +585,28 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
     found, or None if the queue is empty.
     """
     with transaction.atomic():
-        execution = (
-            Execution.objects.select_for_update(skip_locked=True)
-            .filter(status=Execution.Status.QUEUED)
-            .order_by("created_at")
-            .first()
-        )
+        execution = None
+        now = timezone.now()
+        for _ in range(50):
+            candidate = (
+                Execution.objects.select_for_update(skip_locked=True)
+                .filter(status=Execution.Status.QUEUED)
+                .order_by("created_at")
+                .first()
+            )
+            if candidate is None:
+                break
+            if _expire_unbound_change_dispatch_if_needed(candidate, now=now):
+                continue
+            execution = candidate
+            break
         reclaimed = False
         if execution is None:
+            from apps.changes.models import ChangeExecutionBinding  # avoid circular
+
+            change_bound_execution_ids = ChangeExecutionBinding.objects.values(
+                "execution_id"
+            )
             stale_before = timezone.now() - timedelta(
                 seconds=settings.RUNNER_STALE_HEARTBEAT_SECONDS
             )
@@ -572,6 +630,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                     has_waiting_step=True,
                     has_running_step=False,
                 )
+                .exclude(id__in=change_bound_execution_ids)
                 .order_by("last_heartbeat_at", "created_at")
                 .first()
             )
@@ -952,6 +1011,7 @@ def complete_execution(
     # Update change lifecycle if this execution is change-bound
     try:
         from apps.changes import services as change_services  # avoid circular
+
         change_services.handle_bound_execution_completed(execution=execution)
     except Exception:
         logger.exception(

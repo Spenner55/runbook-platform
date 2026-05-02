@@ -91,11 +91,15 @@ class Executor:
                 )
                 try:
                     self._client.complete_execution(
-                        execution_id, claim_token, final_status="failed",
+                        execution_id,
+                        claim_token,
+                        final_status="failed",
                         error_message="Change binding failed — aborting execution.",
                     )
                 except httpx.HTTPError as exc:
-                    logger.error("Failed to mark execution %s failed: %s", execution_id, exc)
+                    logger.error(
+                        "Failed to mark execution %s failed: %s", execution_id, exc
+                    )
                 return
 
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
@@ -157,7 +161,13 @@ class Executor:
         """Call Django's bind-execution endpoint. Returns True on success, False on failure.
         Never logs the dispatch token."""
         missing = [
-            f for f in ("change_record_id", "dispatch_token", "requested_inputs_sha256", "operation_profile_key")
+            f
+            for f in (
+                "change_record_id",
+                "dispatch_token",
+                "requested_inputs_sha256",
+                "operation_profile_key",
+            )
             if getattr(execution, f) is None
         ]
         if missing:
@@ -173,7 +183,7 @@ class Executor:
                 change_record_id=execution.change_record_id,
                 execution_id=execution.id,
                 claim_token=claim_token,
-                dispatch_token=execution.dispatch_token,
+                dispatch_token=execution.dispatch_token.get_secret_value(),
                 requested_inputs_sha256=execution.requested_inputs_sha256,
                 operation_profile_key=execution.operation_profile_key,
             )

@@ -1,10 +1,10 @@
 import pytest
-from django.test import Client
 from rest_framework.test import APIClient
 
-from apps.changes.models import ChangeRecord, OperationProfile
+from apps.audit.models import AuditEvent
+from apps.audit.services import AuditActor
 from apps.changes import services as change_services
-from apps.executions import services as execution_services
+from apps.changes.models import OperationProfile
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
@@ -59,11 +59,8 @@ def operation_profile(org, published_workflow):
 
 
 @pytest.fixture
-def draft_change(org, operation_profile, published_workflow, api_client_for_org):
-    client = api_client_for_org(org)
+def draft_change(org, operation_profile, published_workflow):
     # Create via service directly to avoid HTTP overhead in non-API tests
-    from apps.audit.services import AuditActor
-    from apps.audit.models import AuditEvent
     actor = AuditActor(actor_type=AuditEvent.ActorType.SYSTEM, actor_label="test")
     return change_services.create_change_record(
         organization=org,

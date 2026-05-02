@@ -69,6 +69,19 @@ def test_emit_scrubs_sensitive_metadata_keys(org):
 
 
 @pytest.mark.django_db
+def test_emit_rejects_phase_11_forbidden_metadata_keys(org):
+    with pytest.raises(ValidationError):
+        AuditService.emit(
+            organization_id=org.id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            event_type="change.submitted",
+            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
+            object_id=org.id,
+            metadata={"requested_inputs": {"secret": "raw"}},
+        )
+
+
+@pytest.mark.django_db
 def test_emit_rejects_non_json_serializable_metadata(org):
     with pytest.raises(ValidationError):
         AuditService.emit(

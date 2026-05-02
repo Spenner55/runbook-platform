@@ -3,9 +3,12 @@
 import logging
 
 from rest_framework import status as http_status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
@@ -22,16 +25,12 @@ from apps.common.exceptions import (
 )
 from apps.common.org_context import require_organization_id
 from apps.common.permissions import (
-    ADMIN_ROLES,
     OPERATOR_ROLES,
+    IsRunnerAuthenticated,
     assert_organization_member,
     assert_organization_role,
 )
 from apps.organizations.models import Organization
-from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from apps.common.permissions import IsRunnerAuthenticated
-from apps.audit.services import actor_from_request
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,11 @@ class ChangeRecordListCreateView(APIView):
                 targets=d.get("targets", []),
                 actor=actor,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         change = selectors.get_change_record_with_binding(
@@ -126,7 +129,11 @@ class ChangeRecordDetailView(APIView):
         )
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
         return Response(ChangeRecordDetailSerializer(change).data)
@@ -148,7 +155,11 @@ class ChangeRecordSubmitView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -158,7 +169,11 @@ class ChangeRecordSubmitView(APIView):
         actor = actor_from_request(request)
         try:
             change = services.submit_change_record(change=change, actor=actor)
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         change = selectors.get_change_record_with_binding(
@@ -188,7 +203,11 @@ class BindChangeExecutionView(APIView):
                 requested_inputs_sha256=d["requested_inputs_sha256"],
                 operation_profile_key=d["operation_profile_key"],
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             code_map = {
                 "dispatch_token_expired": http_status.HTTP_410_GONE,
                 "change_not_dispatchable": http_status.HTTP_409_CONFLICT,

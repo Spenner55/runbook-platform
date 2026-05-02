@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -125,14 +125,14 @@ class ClaimedExecution(BaseModel):
     steps: list[ClaimedStep]
     # Change binding fields — present only when the execution is change-bound
     change_record_id: UUID | None = None
-    dispatch_token: str | None = None
+    dispatch_token: SecretStr | None = None
     requested_inputs_sha256: str | None = None
     operation_profile_key: str | None = None
 
     model_config = ConfigDict(extra="ignore")
 
     @model_validator(mode="after")
-    def validate_change_fields_complete(self) -> "ClaimedExecution":
+    def validate_change_fields_complete(self) -> ClaimedExecution:
         change_fields = {
             "change_record_id": self.change_record_id,
             "dispatch_token": self.dispatch_token,

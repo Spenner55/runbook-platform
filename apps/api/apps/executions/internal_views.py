@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from apps.approvals import services as approval_services
 from apps.approvals.models import ApprovalRequest
 from apps.common.authentication import RunnerBearerTokenAuthentication
+from apps.common.exceptions import InvalidStateTransitionError
 from apps.common.permissions import IsRunnerAuthenticated
 from apps.executions import services
 from apps.executions.internal_serializers import (
@@ -36,30 +37,25 @@ from apps.policies import services as policy_services
 logger = logging.getLogger(__name__)
 
 
-def _assert_change_bound_execution_ready(execution) -> Response | None:
+def _assert_change_bound_execution_ready(execution, runner_id: str) -> Response | None:
     """Return a 403 Response if execution is change-bound but not yet bound/running.
 
     Returns None when the execution may proceed (not change-bound, or properly bound).
     """
-    from apps.changes.models import ChangeExecutionBinding  # avoid circular
     try:
-        binding = ChangeExecutionBinding.objects.select_related("change_record").get(
-            execution=execution
-        )
-    except ChangeExecutionBinding.DoesNotExist:
-        return None
+        from apps.changes import services as change_services  # avoid circular
 
-    from apps.changes.models import ChangeRecord
-    if binding.bound_at is None or binding.change_record.status != ChangeRecord.Status.RUNNING:
+        change_services.assert_execution_change_binding_ready(
+            execution,
+            runner_id=runner_id,
+        )
+    except InvalidStateTransitionError as exc:
         return Response(
             {
                 "errors": [
                     {
-                        "code": "change_binding_not_confirmed",
-                        "detail": (
-                            "Execution is change-bound but the dispatch token has not "
-                            "been verified yet. The runner must call bind-execution first."
-                        ),
+                        "code": exc.code,
+                        "detail": exc.detail,
                     }
                 ]
             },
@@ -83,6 +79,7 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
 
         try:
             from apps.changes import services as change_services
+
             change_services.promote_due_scheduled_changes()
         except Exception:
             logger.exception("promote_due_scheduled_changes failed during claim-next")
@@ -130,12 +127,12 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
 
     def post(self, request, execution_id, step_id):
         execution = get_object_or_404(Execution, pk=execution_id)
-        guard = _assert_change_bound_execution_ready(execution)
-        if guard is not None:
-            return guard
         serializer = StepUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
+        guard = _assert_change_bound_execution_ready(execution, d["runner_id"])
+        if guard is not None:
+            return guard
 
         step = services.update_execution_step(
             execution=execution,
@@ -166,6 +163,9 @@ class ExecutionCompleteView(RunnerInternalAPIView):
         serializer = ExecutionCompleteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
+        guard = _assert_change_bound_execution_ready(execution, d["runner_id"])
+        if guard is not None:
+            return guard
 
         execution = services.complete_execution(
             execution=execution,
@@ -195,14 +195,14 @@ class ExecutionStepStartView(RunnerInternalAPIView):
 
     def post(self, request, execution_id, step_id):
         execution = get_object_or_404(Execution, pk=execution_id)
-        guard = _assert_change_bound_execution_ready(execution)
-        if guard is not None:
-            return guard
         serializer = StepStartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
         runner_id = d["runner_id"]
         claim_token = str(d["claim_token"])
+        guard = _assert_change_bound_execution_ready(execution, runner_id)
+        if guard is not None:
+            return guard
 
         step = get_object_or_404(ExecutionStep, pk=step_id, execution=execution)
 
@@ -349,6 +349,10 @@ class ApprovalStatusView(RunnerInternalAPIView):
         d = serializer.validated_data
         runner_id = d["runner_id"]
         claim_token = str(d["claim_token"])
+
+        guard = _assert_change_bound_execution_ready(execution, runner_id)
+        if guard is not None:
+            return guard
 
         # Validate ownership before any step inspection.
         services._validate_runner_ownership(execution, runner_id, claim_token)

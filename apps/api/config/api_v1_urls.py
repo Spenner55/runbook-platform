@@ -14,6 +14,8 @@ from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpattern
 from apps.audit.views import ExecutionAuditEventListView
 from apps.changes.urls import (
     internal_urlpatterns as change_internal_urlpatterns,
+)
+from apps.changes.urls import (
     public_urlpatterns as change_public_urlpatterns,
 )
 from apps.executions.internal_views import (
@@ -56,7 +58,9 @@ urlpatterns = [
         name="execution-stream",
     ),
     path("internal/", include(artifact_internal_urlpatterns)),
-    path("internal/changes/", include((change_internal_urlpatterns, "changes-internal"))),
+    path(
+        "internal/changes/", include((change_internal_urlpatterns, "changes-internal"))
+    ),
     path(
         "internal/executions/claim-next/",
         ClaimNextExecutionView.as_view(),

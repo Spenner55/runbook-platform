@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.common.models import BaseModel
@@ -194,6 +195,50 @@ class ChangeRecord(BaseModel):
     def __str__(self):
         return f"ChangeRecord {self.id} [{self.status}]"
 
+    def clean(self):
+        super().clean()
+        if (
+            self.operation_profile_id
+            and self.organization_id
+            and self.operation_profile.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "Change operation profile must belong to the same organization."
+            )
+        if (
+            self.workflow_id
+            and self.organization_id
+            and self.workflow.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "Change workflow must belong to the same organization."
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if previous is not None and previous.status != self.Status.DRAFT:
+                immutable_fields = [
+                    "operation_profile_id",
+                    "workflow_id",
+                    "title",
+                    "summary",
+                    "justification",
+                    "requested_inputs",
+                    "scheduled_for",
+                ]
+                changed = [
+                    field
+                    for field in immutable_fields
+                    if getattr(previous, field) != getattr(self, field)
+                ]
+                if changed:
+                    raise ValidationError(
+                        "Change request content is immutable after submit."
+                    )
+        self.clean()
+        return super().save(*args, **kwargs)
+
 
 class ChangeTarget(BaseModel):
     change_record = models.ForeignKey(
@@ -240,6 +285,35 @@ class ChangeTarget(BaseModel):
     def __str__(self):
         return f"ChangeTarget {self.target_type}:{self.target_identifier}"
 
+    def clean(self):
+        super().clean()
+        change = None
+        if self.change_record_id:
+            change = ChangeRecord.objects.only("organization_id", "status").get(
+                pk=self.change_record_id
+            )
+        if (
+            self.change_record_id
+            and self.organization_id
+            and change.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "Change target organization must match the change organization."
+            )
+
+        if self.change_record_id and change.status != ChangeRecord.Status.DRAFT:
+            raise ValidationError("Change targets are immutable after submit.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        change = ChangeRecord.objects.only("status").get(pk=self.change_record_id)
+        if change.status != ChangeRecord.Status.DRAFT:
+            raise ValidationError("Change targets are immutable after submit.")
+        return super().delete(*args, **kwargs)
+
 
 class ChangeExecutionBinding(BaseModel):
     change_record = models.OneToOneField(
@@ -281,3 +355,42 @@ class ChangeExecutionBinding(BaseModel):
 
     def __str__(self):
         return f"ChangeExecutionBinding {self.id}"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "Binding organization must match the change organization."
+            )
+        if (
+            self.execution_id
+            and self.organization_id
+            and self.execution.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "Binding organization must match the execution organization."
+            )
+        if (
+            self.change_record_id
+            and self.execution_id
+            and self.change_record.organization_id != self.execution.organization_id
+        ):
+            raise ValidationError(
+                "Binding change and execution organizations must match."
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if (
+                previous is not None
+                and previous.bound_at is not None
+                and previous.bound_by_runner_id != self.bound_by_runner_id
+            ):
+                raise ValidationError("Bound change executions cannot be rebound.")
+        self.clean()
+        return super().save(*args, **kwargs)
