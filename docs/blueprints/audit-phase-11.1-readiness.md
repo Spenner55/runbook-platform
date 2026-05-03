@@ -4,102 +4,184 @@
 
 **GO / NO-GO for Phase 11.2: NO-GO.**
 
-Phase 11.1 has been materially remediated since the previous readiness audit. The core objects, public and internal APIs, runner bind flow, approval subject extension, policy linkage, one-to-one execution binding, operation profile audit events, dispatch expiry handling, dispatch token secret treatment, and runner ownership checks now exist with meaningful test coverage.
+Phase 11.1 is substantially implemented, but it is not safe to build Phase 11.2 on top of the current controls. The required models, migrations, public change APIs, internal runner bind API, runner contract, approval subject extension, policy linkage, request hashing, target validation, audit object types, and frontend create/list/detail surfaces are present. The main happy path is covered by tests and the local verification gates pass.
 
-The remaining blockers are narrower but still foundational for Phase 11.2. Controlled windows, freeze rules, and target locks must not be built on top of a dossier whose live request fields or target rows can drift from the approved snapshot without detection. The frontend also exposes a changes list route that calls an API method the backend does not implement.
+The remaining gaps are control-plane safety gaps, not cosmetic issues. A runner with internal API access can still transition a step to `running` through the legacy step-update endpoint without going through the step-start policy gate. Approved changes also do not prove that the workflow definition executed at dispatch is the same definition that was approved. Several admin/model surfaces can mutate approval, policy, and execution binding fields after submit. Those are not acceptable foundations for Phase 11.2 controlled windows, target locks, or auditor-facing evidence.
 
 Verification performed during this audit:
 
-- `make test-api` passed: 967 tests, 1 database teardown warning.
+- `make test-api` passed: 985 tests, 1 database teardown warning.
 - `make test-runner` passed: 122 tests.
-- `make test-web` passed: 135 tests, with existing React Router "No routes matched" stderr warnings in route-isolated tests.
+- `make test-web` passed: 135 tests, with existing route-isolated React Router stderr warnings.
+- `make check-migrations` passed: no model changes detected; migration check returned success.
 
-Readiness dimension results:
+Readiness by dimension:
 
 | Dimension | Result |
 |---|---|
-| Data model completeness | Mostly ready. Required Phase 11.1 models exist; operation profile and binding constraints are present. Live target-row drift is still not covered by integrity verification. |
-| State machine correctness | Ready for Phase 11.1. Central transition table and helper exist, and tests cover allowed and forbidden transitions. |
-| Immutability guarantees | Partial. Instance-level model/admin/service guards exist, but bulk ORM/DB mutation of live request fields and target rows can still bypass detection. |
-| Execution binding integrity | Mostly ready. One-to-one binding, token expiry, stored-hash verification, and runner ownership checks are covered. |
-| Approval + policy integration | Mostly ready. Change-level approval request creation, audit, org validation, timeout/decision hooks, and first policy linkage exist. |
-| Runner contract | Mostly ready. Runner treats dispatch tokens as secrets, rejects partial change payloads, binds before step execution, and backend guards step/update/complete/artifact paths. |
-| API contracts | Partial. Create/detail/submit/bind exist, but frontend calls `GET /api/v1/changes/` and backend currently implements only `POST /api/v1/changes/`. |
-| Audit trail coverage | Mostly ready. Core change events, operation profile governance events, approval events, and sensitive metadata rejection are covered. |
-| Frontend consistency | Partial. Create/detail/list routes exist and expose the main dossier fields, but the list route is backed by a missing backend endpoint. |
-| Test coverage | Partial. Most previously required tests exist; additional drift tests are required for live dossier and target-row integrity. |
+| Data model completeness | Partial. Required models exist and `ChangeExecutionBinding` is structurally 1:1, but binding immutability and approval/policy linkage integrity are not fully protected outside service conventions. |
+| State machine correctness | Partial. A central transition helper exists and current change services mostly use it, but model/admin/direct ORM paths can still bypass transition audit and validation. |
+| Immutability guarantees | Partial. Submitted request fields and targets are checked in service paths, but workflow definitions and some binding/approval fields are not frozen strongly enough for production change control. |
+| Execution binding integrity | Partial. Reservation and bind are mostly correct, but admin/model mutation and expiry-after-claim behavior leave weak operational invariants. |
+| Approval + policy integration | Blocked. Change approval is linked before execution, but the legacy step-update path can bypass policy evaluation before command execution. |
+| Runner contract | Mostly implemented. The runner receives `change_record_id`, dispatch token, input hash, and profile key; it avoids DB access and binds before its own step loop. Backend still accepts a bypass path. |
+| API contracts | Mostly implemented. Create/list/detail/submit/profile-picker/bind exist. Detail output is missing some dossier fields expected by the blueprint. |
+| Audit trail coverage | Partial. Core events exist, but admin/model changes to critical binding and linkage fields are not prevented or audited as lifecycle changes. |
+| Frontend consistency | Mostly safe because Django remains authoritative. The UI can still present stale/unpublished allowlisted workflows and lacks some dossier detail. |
+| Test coverage | Partial. The passing tests do not cover the most important bypass, workflow-definition drift, admin mutability, or divergence failure modes. |
 
-## 2. Remaining Blockers
+## 2. Critical Gaps
 
-| ID | Blocker | Evidence | Required fix |
-|---|---|---|---|
-| B1 | Frozen dossier integrity does not prove live request fields still match what was approved. | `validate_request_integrity()` re-hashes `requested_inputs` and the stored `request_snapshot`, but it does not recompute current `title`, `summary`, `justification`, `scheduled_for`, `operation_profile`, `workflow`, or workflow/profile snapshots from live fields before dispatch, bind, or completion. Dispatch still uses live `workflow` and `operation_profile` rows. | Add a live submitted-dossier verifier that rebuilds the current submitted dossier from live `ChangeRecord` fields and compares it to the frozen `request_snapshot` / `request_snapshot_sha256`. Run it before approval dispatch, execution reservation, bind, and completion. |
-| B2 | `ChangeTarget` rows are not integrity-checked after submit when bypassing instance methods. | `ChangeTarget.save()` and `delete()` block submitted changes, but bulk ORM/DB updates, inserts, or deletes can alter target rows. Current request integrity validation does not compare live ordered targets against the frozen target snapshot. Phase 11.2 target locks would trust those rows. | Extend the live dossier verifier to include ordered target count, positions, target type, identifiers, display name, environment, and metadata. Add tests for bulk target add/update/delete after submit. |
-| B3 | Frontend/backend changes list contract is broken. | React calls `GET /api/v1/changes/`, but `ChangeRecordListCreateView` currently implements only `post()`. The web tests mock the endpoint and do not catch the missing backend `GET`. | Implement org-scoped `GET /api/v1/changes/` with API tests, or remove/disable the changes list UI and route until a backend list endpoint exists. |
+### C1. Internal step update can bypass policy and approval gates
 
-## 3. Confirmed Remediations
+`apps/api/apps/executions/internal_views.py` exposes `ExecutionStepUpdateView`, and `apps/api/apps/executions/internal_serializers.py` still accepts `status="running"`. `apps/api/apps/executions/services.py` allows `pending -> running` and `waiting_for_approval -> running` in `_VALID_STEP_TRANSITIONS`.
 
-These previous critical gaps appear remediated in the current checkout:
+That means a runner with internal API credentials can start a step through `/api/v1/internal/executions/{execution_id}/steps/{step_id}/update/` without `ExecutionStepStartView`, without policy evaluation, and without `change.policy_bound`. The first-party runner does the right thing, but the backend does not enforce the contract.
 
-- Centralized lifecycle transition table exists in `apps/api/apps/changes/transitions.py`.
-- Service lifecycle paths now route status changes through `transition_change()`.
-- `schedule_or_make_dispatchable()` asserts the current state is `approved`.
-- Submitted `ChangeRecord` instance saves reject documented request-field mutation.
-- Submitted `ChangeTarget` instance saves/deletes reject mutation.
-- Request hashes are checked in approval decision handling, dispatch reservation, bind, and completion paths.
-- Dispatch expiry is handled before runner claim through `claim_next_execution()` integration.
-- Claim serialization no longer returns partial change metadata for expired/ineligible bindings.
-- Stored `dispatch_token_hash` participates in verification.
-- Dispatch token secret fallback placeholders are rejected.
-- Runner schemas use secret handling for dispatch tokens and reject partial change payloads.
-- Runner readiness is tied to current successful bind ownership and current claim token.
-- Operation profile create/update/deactivate audit events exist, including direct ORM signal coverage.
-- Operation profile workflow allowlisting rejects cross-organization workflows through M2M validation.
-- Direct execution bypass checks are scoped to `OperationProfile.organization == workflow.organization`.
-- Change-level approval creation validates organization, emits `approval.requested`, and notifies integrations.
-- Audit metadata rejects Phase 11.1 forbidden keys such as `dispatch_token`, `dispatch_token_hash`, `requested_inputs`, and `request_snapshot`.
-- Frontend exposes create, detail, and list route surfaces for the Phase 11.1 dossier.
+This must be fixed before Phase 11.2.
 
-## 4. Required Tests Before Phase 11.2
+### C2. Approved changes do not freeze or verify workflow definitions
 
-Add or update tests for:
+`ChangeRecord.request_snapshot` captures workflow id, name, version, and status, but not a deterministic hash of `workflow.definition`. `apps/api/apps/executions/services.py::create_execution()` snapshots the live `workflow.definition` at dispatch time. `apps/api/apps/workflows/admin.py` leaves workflow fields editable by default, including published workflow definitions.
 
-- Bulk `ChangeRecord.objects.filter(...).update(...)` drift for `operation_profile`, `workflow`, `title`, `summary`, `justification`, `scheduled_for`, `operation_profile_key_snapshot`, `workflow_version_snapshot`, and frozen hashes.
-- Bulk `ChangeTarget.objects.filter(...).update(...)` drift after submit.
-- Bulk `ChangeTarget.objects.create(...)` or through direct SQL/ORM insertion after submit where constraints allow it.
-- Bulk `ChangeTarget.objects.filter(...).delete()` after submit.
-- Approval decision refuses when live dossier fields or targets no longer match the approved snapshot.
-- `make_dispatchable()` refuses when live dossier fields or targets no longer match the approved snapshot.
-- `bind_execution()` refuses when live dossier fields or targets no longer match the approved snapshot.
-- `handle_bound_execution_completed()` closes or fails safely when live dossier integrity no longer matches.
-- `GET /api/v1/changes/` returns an organization-scoped list and rejects missing or mismatched org context, if the list UI remains.
-- Web tests that fail if the changes list route points at a backend method that does not exist.
+An approved change can therefore execute a modified workflow definition under the same workflow id/version if the workflow row is changed after submit and before dispatch. That violates the core Phase 11.1 premise that the submitted dossier freezes what was approved.
 
-## 5. Residual Risks
+This must be fixed before Phase 11.2.
 
-- Operation profile tenant safety still relies on application services and Django signals. Direct writes to the implicit M2M through table can bypass that control unless the model is replaced with a through model that can enforce same-organization membership.
-- Operation profile picker serialization should filter allowlisted workflows to published same-organization workflows for defense in depth.
-- Dispatch-token secret rotation behavior for already dispatchable changes is still undefined.
-- Cancel, verify, and close statuses exist but remain future lifecycle APIs.
-- The test suite passes despite route-isolated React Router stderr warnings; these are not Phase 11.2 blockers, but they reduce test signal quality.
+### C3. Admin/model surfaces can mutate critical submitted-change bindings
 
-## 6. Minimum Fix Plan
+`apps/api/apps/changes/admin.py` makes submitted request fields read-only, but it still leaves fields such as `approval_request`, `policy_evaluation`, `policy_decision_snapshot`, and `terminal_reason` editable on `ChangeRecord`. `ChangeExecutionBindingAdmin` leaves `change_record`, `execution`, `organization`, `operation_profile_key`, `requested_inputs_sha256`, and `bound_by_runner_id` editable.
 
-1. Add a live dossier integrity helper in `apps/api/apps/changes/services.py`.
-2. The helper must rebuild the submitted dossier from live fields and ordered target rows, excluding mutable database timestamps, and compare it against the stored `request_snapshot` and `request_snapshot_sha256`.
-3. Call the helper before change approval dispatch, execution reservation, bind, and completion. Keep the existing stored-snapshot hash check.
-4. Add focused drift tests for bulk ORM changes to every submitted request field and target-row mutation path.
-5. Implement `GET /api/v1/changes/` or remove the frontend list route and navigation until it exists.
-6. Re-run `make test-api`, `make test-runner`, and `make test-web`.
+`apps/api/apps/changes/models.py::ChangeExecutionBinding.save()` only blocks rebinding when `bound_by_runner_id` changes after `bound_at`; it does not freeze `bound_at`, binding links, token material, or hash/profile snapshots after creation.
 
-## 7. Final Readiness Verdict
+For SOC2/ISO/NIST style evidence, these fields must be service-owned and effectively immutable through admin/model paths.
+
+### C4. Change approval callback can allow approval/change divergence
+
+`apps/api/apps/changes/services.py::handle_change_approval_decision()` logs and returns when no change is found for an approval request or when the change is not `pending_approval`. Because it is called inside `apps/api/apps/approvals/services.py::decide_approval()`, returning instead of raising can let an approval become terminal while the corresponding change does not transition.
+
+The Phase 11.1 blueprint explicitly requires the approval and change state updates to be in the same transaction so they cannot diverge.
+
+### C5. Execution completion can diverge from change completion
+
+`apps/api/apps/executions/services.py::complete_execution()` commits the execution terminal status, then calls `changes.services.handle_bound_execution_completed()` and catches all exceptions. The watchdog and approval-timeout paths use the same catch-and-log pattern.
+
+If the change completion hook fails unexpectedly, the execution can be terminal while the `ChangeRecord` remains `running`. Phase 11.2 should not build additional lifecycle controls on a hook that can silently diverge.
+
+## 3. Drift From Blueprint
+
+- The backend still supports direct step `running` transitions through the legacy update endpoint, contrary to the runner contract that Django step-start is the only pre-command policy gate.
+- `request_snapshot` does not include a workflow definition hash, and workflow immutability is not enforced for published workflows.
+- Change detail does not expose a sanitized request snapshot summary or `verified_at`, even though the blueprint calls for full dossier timestamps and immutable snapshot fields.
+- The operation profile picker returns allowlisted workflows via plain prefetch and does not defensively filter to published same-organization workflows at serialization time.
+- Operation profile allowed workflow tenant safety relies on services/signals; the implicit M2M table has no database-level organization invariant.
+- Change approval request linkage is not database-unique on `ChangeRecord.approval_request`, and the FK does not prove `ApprovalRequest.subject_type="change_record"` / `subject_id=change.id`.
+- State transition centralization is currently a code convention plus tests. The model/database do not prevent direct status writes that skip `change.status_changed` audit.
+- Dispatch TTL and verification behavior are derived from the live `OperationProfile` row in some paths instead of an explicit frozen control snapshot.
+
+## 4. Hidden Risks
+
+- A compromised or stale runner can call the step-update endpoint to set a step `running` after bind and before any policy evaluation. This is the highest-risk bypass.
+- A dispatch token that expires after claim but before claim serialization can expire the change while leaving the execution claimed; backend guards prevent command execution, but the execution can become operationally stranded.
+- If `CHANGE_DISPATCH_TOKEN_SECRET` is rotated while changes are dispatchable, existing dispatch tokens cannot be regenerated or verified. Rotation behavior is undefined.
+- Admin edits to workflow, change, approval, policy, and binding fields can create audit evidence that no longer matches lifecycle reality.
+- Raw `requested_inputs` are stored on `ChangeRecord`; there is no profile-level sensitive-field redaction contract yet.
+- `validate_request_integrity()` skips rows whose current status is `draft`, so a direct status rollback can disable integrity checks until another service rejects the invalid state.
+- Operation profile changes after submit can either alter later behavior or cause integrity failure, depending on the field. The system needs an explicit frozen profile-control contract.
+
+## 5. Missing Tests
+
+Add tests before Phase 11.2 for:
+
+- `POST /api/v1/internal/executions/{id}/steps/{step_id}/update/` rejecting `status="running"` for pending and waiting steps.
+- Change-bound executions proving no policy evaluation means no step can become `running`.
+- Published workflow `definition`, `name`, `version`, `runbook`, and `organization` mutation after change submit being rejected or detected before dispatch.
+- Change dispatch refusing when the workflow definition hash no longer matches the submitted snapshot.
+- `WorkflowAdmin` and `ChangeExecutionBindingAdmin` critical fields being read-only or change-disabled.
+- `ChangeRecordAdmin` preventing edits to approval, policy, status, terminal reason, and snapshot-owned fields after submit.
+- `handle_change_approval_decision()` rolling back the approval decision when the change is missing or in an invalid state.
+- `complete_execution()` not leaving a bound change in `running` if the change completion hook fails.
+- Operation profile picker excluding unpublished, archived, superseded, or cross-organization workflows.
+- Change detail returning `verified_at` and a sanitized immutable snapshot summary.
+- Dispatch expiry after claim canceling or otherwise terminally resolving the reserved execution.
+- Static or unit checks that no production code assigns `ChangeRecord.status` outside `transition_change()` except initial creation.
+
+## 6. Required Fixes
+
+### Backend execution gate
+
+- `apps/api/apps/executions/internal_serializers.py`
+  - Remove `running` and `skipped` from `StepUpdateSerializer.status`; the update endpoint should accept terminal runner reports only.
+- `apps/api/apps/executions/services.py`
+  - Split step start from step update. Keep `pending/waiting_for_approval -> running` in a service callable only by `ExecutionStepStartView` and `ApprovalStatusView` after policy/approval checks.
+  - Make ordinary `update_execution_step()` terminal-only: `running -> succeeded/failed`.
+- `apps/api/apps/executions/internal_views.py`
+  - Ensure `ExecutionStepUpdateView` cannot start a step. `ExecutionStepStartView` must remain the only internal route that can authorize command execution.
+- `apps/runner/runner/schemas.py`, `apps/runner/runner/client.py`, and runner tests
+  - Update the runner client contract so `update_step()` cannot send `running`.
+
+### Workflow immutability and hashing
+
+- `apps/api/apps/workflows/models.py` / `apps/api/apps/workflows/services.py`
+  - Enforce immutability for published/superseded workflow definition fields, or provide an explicit service-only versioning path.
+- `apps/api/apps/workflows/admin.py`
+  - Make published workflow definition/version/identity fields read-only or disable admin edits for published/superseded workflows.
+- `apps/api/apps/changes/models.py`
+  - Add a `workflow_definition_sha256` snapshot field or include this hash in the immutable request snapshot with tests.
+- `apps/api/apps/changes/services.py`
+  - Compute the workflow definition hash at submit.
+  - Verify it before approval dispatch, execution reservation, bind, and completion.
+  - Ensure dispatch cannot create an execution from a workflow definition that differs from the approved hash.
+
+### Change and binding immutability
+
+- `apps/api/apps/changes/admin.py`
+  - Make submitted `ChangeRecord` approval, policy, terminal, and actor linkage fields read-only.
+  - Make `ChangeExecutionBinding` fully read-only after creation, or disable add/change/delete entirely.
+  - Fix `OperationProfileAdmin.save_model()` deactivation so it persists the deactivation and emits `operation_profile.deactivated`.
+- `apps/api/apps/changes/models.py`
+  - Freeze `ChangeExecutionBinding.change_record`, `execution`, `organization`, `operation_profile_key`, `requested_inputs_sha256`, dispatch token fields, and `bound_at` after creation/bind.
+  - Consider a non-null unique constraint on `ChangeRecord.approval_request` to prevent one approval request from being linked to multiple changes.
+
+### Approval and completion consistency
+
+- `apps/api/apps/changes/services.py`
+  - Make `handle_change_approval_decision()` fail closed. Missing change linkage or invalid change state must raise inside the approval transaction.
+  - Freeze profile controls that affect post-submit behavior, including dispatch TTL and verification requirement, or intentionally validate against immutable snapshot values.
+- `apps/api/apps/executions/services.py`
+  - Do not swallow `handle_bound_execution_completed()` failures for change-bound executions.
+  - Prefer updating execution terminal status and change lifecycle in one transaction, or add a deterministic recovery path with tests and audit events.
+- `apps/api/apps/changes/services.py`
+  - When bind fails because of expiry after claim, cancel or terminally resolve the reserved execution as well as expiring the change.
+
+### API and frontend consistency
+
+- `apps/api/apps/changes/selectors.py` / `apps/api/apps/changes/serializers.py`
+  - Return only active profile workflows that are published and same-organization.
+  - Add sanitized request snapshot summary and `verified_at` to change detail.
+- `apps/web/src/features/changes/` and `apps/web/src/routes/changes/`
+  - Render the new sanitized snapshot fields.
+  - Keep client validation advisory only; server rejection remains authoritative.
+
+## 7. Suggested Improvements
+
+- Add a management command to sweep expired dispatchable/claimed change executions and emit a compact audit summary.
+- Add a CI/static check that rejects direct `ChangeRecord.status` writes outside `apps/api/apps/changes/transitions.py` and test setup.
+- Add profile-schema support for sensitive requested input keys so API/detail/admin views can redact intentionally.
+- Add direct links from change detail to the exact approval request and audit event list, not only the approvals inbox.
+- Add a web test harness route wrapper to eliminate current React Router stderr noise.
+- Run `make lint`, `make security-scan`, and `make hardening-check` after fixes; they were not run in this audit.
+
+## 8. Final Readiness Verdict
 
 **BLOCKED.**
 
-Phase 11.1 is close, but Phase 11.2 should not start until live dossier integrity and target-row integrity are enforced. Phase 11.2 target locks and dispatch preflight checks depend on the current target set being the same target set that was approved. That is not yet proven.
+Phase 11.1 is not safe to build Phase 11.2 on yet. The implementation is close in breadth and the normal path is well tested, but the remaining bypass and immutability gaps are fundamental control failures for high-risk production change management.
 
-Recommended first implementation prompt:
+Minimum bar to move to **PROCEED WITH FIXES**:
 
-```text
-Do not implement Phase 11.2 yet. First, close the remaining Phase 11.1 readiness blockers: add a live submitted-dossier integrity verifier that recomputes current ChangeRecord request fields plus ordered ChangeTarget rows and compares them to the frozen request_snapshot/request_snapshot_sha256 before approval decision, execution reservation, bind, and completion; add tests proving bulk ORM mutation of workflow/profile/title/summary/justification/scheduled_for and target add/update/delete is detected; implement or remove the broken GET /api/v1/changes/ frontend/backend contract. Run make test-api, make test-runner, and make test-web.
-```
+1. Close the step-update policy bypass.
+2. Freeze or verify workflow definitions for approved changes.
+3. Lock down admin/model mutation of submitted changes and execution bindings.
+4. Make approval and execution-completion hooks fail closed instead of allowing divergence.
+5. Add the missing tests above and rerun `make test-api`, `make test-runner`, `make test-web`, and `make check-migrations`.
