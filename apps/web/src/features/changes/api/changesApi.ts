@@ -8,7 +8,7 @@ export function listOperationProfiles() {
 }
 
 export function listChanges() {
-  return apiRequest<{ results: ChangeRecord[] }>('/api/v1/changes/')
+  return apiRequest<{ results: ChangeRecord[] }>('/api/v1/changes/', { method: 'GET' })
 }
 
 export function createChange(input: CreateChangeInput) {

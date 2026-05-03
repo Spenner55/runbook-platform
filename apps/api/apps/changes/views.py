@@ -66,11 +66,22 @@ class OperationProfileListView(APIView):
 
 class ChangeRecordListCreateView(APIView):
     """
+    GET /api/v1/changes/ - List organization-scoped changes
     POST /api/v1/changes/ - Create a draft change
     """
 
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        changes = selectors.list_change_records_for_org(organization=org)
+        return Response(
+            {"results": ChangeRecordDetailSerializer(changes, many=True).data}
+        )
 
     def post(self, request):
         organization_id = require_organization_id(request)

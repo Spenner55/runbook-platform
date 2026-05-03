@@ -927,6 +927,18 @@ def complete_execution(
                 detail=f"Invalid completion outcome: '{outcome}'.",
             )
 
+        try:
+            from apps.changes import services as change_services  # avoid circular
+
+            change_services.assert_execution_change_binding_ready(
+                execution,
+                runner_id=runner_id,
+                claim_token=claim_token,
+            )
+        except ImportError:
+            logger.exception("Could not import change services for completion guard")
+            raise
+
         previous_status = execution.status
         now = timezone.now()
         execution.status = outcome

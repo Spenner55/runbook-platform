@@ -256,7 +256,8 @@ def emit_operation_profile_audit(
 # OperationProfile governance service functions
 # ---------------------------------------------------------------------------
 
-_UNSET = object()  # sentinel for optional fields that distinguish None from "not provided"
+# Sentinel for optional fields that distinguish None from "not provided".
+_UNSET = object()
 
 
 def create_operation_profile(
@@ -415,7 +416,7 @@ def deactivate_operation_profile(
 def validate_request_integrity(change: ChangeRecord) -> None:
     """Verify frozen request hashes and reject post-submit dossier drift.
 
-    Two independent checks are performed:
+    Three independent checks are performed:
 
     1. Re-hash ``requested_inputs`` and compare to ``requested_inputs_sha256``.
        This catches any mutation of the live ``requested_inputs`` JSON field.
@@ -424,19 +425,30 @@ def validate_request_integrity(change: ChangeRecord) -> None:
        ``request_snapshot_sha256``.  This catches tampering with the full
        frozen dossier without needing to rebuild it from live relational data.
 
-    Both must pass.  Any mismatch raises ``InvalidStateTransitionError`` with
+    3. Rebuild the submitted dossier from current ChangeRecord request fields
+       and current ordered ChangeTarget rows, then compare that live dossier
+       to both the frozen ``request_snapshot`` and ``request_snapshot_sha256``.
+       This catches bulk ORM or direct database drift that bypasses model
+       ``save()``/``delete()`` immutability hooks.
+
+    All checks must pass. Any mismatch raises ``InvalidStateTransitionError`` with
     code ``change_request_integrity_mismatch``, failing closed.
     """
-    if change.status == ChangeRecord.Status.DRAFT:
+    live_change = _load_live_change_for_integrity(change)
+    if live_change.status == ChangeRecord.Status.DRAFT:
         return
-    if not change.requested_inputs_sha256 or not change.request_snapshot_sha256:
+    if (
+        not live_change.submitted_at
+        or not live_change.requested_inputs_sha256
+        or not live_change.request_snapshot_sha256
+    ):
         raise InvalidStateTransitionError(
             code="change_request_integrity_missing",
             detail="Submitted change is missing frozen request hashes.",
         )
 
-    inputs_hash = sha256_canonical_json(change.requested_inputs or {})
-    if not hmac.compare_digest(inputs_hash, change.requested_inputs_sha256):
+    inputs_hash = sha256_canonical_json(live_change.requested_inputs or {})
+    if not hmac.compare_digest(inputs_hash, live_change.requested_inputs_sha256):
         raise InvalidStateTransitionError(
             code="change_request_integrity_mismatch",
             detail="Requested inputs no longer match the submitted hash.",
@@ -444,12 +456,54 @@ def validate_request_integrity(change: ChangeRecord) -> None:
 
     # Hash the stored snapshot directly — do not recompute from live data.
     # This proves request_snapshot itself has not been tampered with since submit.
-    snapshot_hash = sha256_canonical_json(change.request_snapshot)
-    if not hmac.compare_digest(snapshot_hash, change.request_snapshot_sha256):
+    snapshot_hash = sha256_canonical_json(live_change.request_snapshot)
+    if not hmac.compare_digest(snapshot_hash, live_change.request_snapshot_sha256):
         raise InvalidStateTransitionError(
             code="change_request_integrity_mismatch",
             detail="Request snapshot no longer matches the submitted hash.",
         )
+
+    live_snapshot = build_live_submitted_request_snapshot(live_change)
+    live_snapshot_hash = sha256_canonical_json(live_snapshot)
+    if live_snapshot != live_change.request_snapshot or not hmac.compare_digest(
+        live_snapshot_hash, live_change.request_snapshot_sha256
+    ):
+        raise InvalidStateTransitionError(
+            code="change_request_integrity_mismatch",
+            detail="Submitted change dossier no longer matches the frozen request snapshot.",
+        )
+
+
+def _load_live_change_for_integrity(change: ChangeRecord) -> ChangeRecord:
+    if change.pk is None:
+        return change
+    return ChangeRecord.objects.select_related("operation_profile", "workflow").get(
+        pk=change.pk
+    )
+
+
+def build_live_submitted_request_snapshot(change: ChangeRecord) -> dict:
+    """Rebuild the submitted dossier from live request fields and target rows."""
+    if not change.submitted_at:
+        raise InvalidStateTransitionError(
+            code="change_request_integrity_missing",
+            detail="Submitted change is missing submitted_at.",
+        )
+    targets = list(
+        ChangeTarget.objects.filter(change_record=change).order_by("position")
+    )
+    profile = getattr(change, "operation_profile", None)
+    workflow = getattr(change, "workflow", None)
+    snapshot = build_request_snapshot(
+        change,
+        targets,
+        submitted_at=change.submitted_at,
+        profile=profile,
+        workflow=workflow,
+    )
+    snapshot["operation_profile_key"] = change.operation_profile_key_snapshot
+    snapshot["workflow_version"] = change.workflow_version_snapshot
+    return snapshot
 
 
 def assert_execution_change_binding_ready(
@@ -512,6 +566,8 @@ def assert_execution_change_binding_ready(
             code="claim_token_mismatch",
             detail="Claim token is invalid.",
         )
+
+    validate_request_integrity(binding.change_record)
 
 
 # ---------------------------------------------------------------------------

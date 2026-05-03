@@ -94,6 +94,10 @@ describe('ChangesPage', () => {
     renderPage()
 
     await waitFor(() => screen.getByText('Changes'))
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/changes/'),
+      expect.objectContaining({ method: 'GET' }),
+    )
     expect(screen.getByRole('link', { name: /new change request/i })).toBeInTheDocument()
   })
 

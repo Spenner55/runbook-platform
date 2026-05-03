@@ -1,7 +1,5 @@
 """Tests for C2: Submitted change immutability and request integrity verification."""
 
-import hmac
-
 import pytest
 from django.core.exceptions import ValidationError
 
@@ -101,14 +99,10 @@ class TestChangeRecordModelImmutability:
         self._assert_immutable(submitted_change, requested_inputs_sha256="deadbeef" * 8)
 
     def test_request_snapshot_immutable_after_submit(self, submitted_change):
-        self._assert_immutable(
-            submitted_change, request_snapshot={"tampered": "value"}
-        )
+        self._assert_immutable(submitted_change, request_snapshot={"tampered": "value"})
 
     def test_request_snapshot_sha256_immutable_after_submit(self, submitted_change):
-        self._assert_immutable(
-            submitted_change, request_snapshot_sha256="cafebabe" * 8
-        )
+        self._assert_immutable(submitted_change, request_snapshot_sha256="cafebabe" * 8)
 
     def test_operation_profile_key_snapshot_immutable_after_submit(
         self, submitted_change
@@ -193,8 +187,12 @@ class TestAdminImmutability:
     def test_change_record_admin_get_readonly_fields_submitted(
         self, submitted_change, rf
     ):
-        from apps.changes.admin import ChangeRecordAdmin, _CHANGE_RECORD_SUBMITTED_READONLY
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import (
+            _CHANGE_RECORD_SUBMITTED_READONLY,
+            ChangeRecordAdmin,
+        )
 
         admin = ChangeRecordAdmin(ChangeRecord, AdminSite())
         request = rf.get("/")
@@ -204,11 +202,12 @@ class TestAdminImmutability:
             assert field in fields, f"Expected {field} in readonly_fields for submitted"
 
     def test_change_record_admin_get_readonly_fields_draft(self, draft_change, rf):
-        from apps.changes.admin import (
-            ChangeRecordAdmin,
-            _CHANGE_RECORD_SUBMITTED_READONLY,
-        )
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import (
+            _CHANGE_RECORD_SUBMITTED_READONLY,
+            ChangeRecordAdmin,
+        )
 
         admin = ChangeRecordAdmin(ChangeRecord, AdminSite())
         request = rf.get("/")
@@ -220,8 +219,9 @@ class TestAdminImmutability:
             )
 
     def test_change_target_admin_add_always_blocked(self, rf):
-        from apps.changes.admin import ChangeTargetAdmin
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeTargetAdmin
 
         admin = ChangeTargetAdmin(ChangeTarget, AdminSite())
         request = rf.get("/")
@@ -231,8 +231,9 @@ class TestAdminImmutability:
     def test_change_target_admin_change_blocked_for_submitted(
         self, submitted_change, rf
     ):
-        from apps.changes.admin import ChangeTargetAdmin
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeTargetAdmin
 
         target = submitted_change.targets.first()
         admin = ChangeTargetAdmin(ChangeTarget, AdminSite())
@@ -243,8 +244,9 @@ class TestAdminImmutability:
     def test_change_target_admin_delete_blocked_for_submitted(
         self, submitted_change, rf
     ):
-        from apps.changes.admin import ChangeTargetAdmin
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeTargetAdmin
 
         target = submitted_change.targets.first()
         admin = ChangeTargetAdmin(ChangeTarget, AdminSite())
@@ -255,8 +257,9 @@ class TestAdminImmutability:
     def test_change_target_admin_change_allowed_for_draft(self, draft_change, rf):
         from unittest.mock import MagicMock
 
-        from apps.changes.admin import ChangeTargetAdmin
         from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeTargetAdmin
 
         target = draft_change.targets.first()
         admin = ChangeTargetAdmin(ChangeTarget, AdminSite())
@@ -358,7 +361,9 @@ class TestRequestSnapshotCompleteness:
         assert op_snap["name"] == operation_profile.name
         assert op_snap["risk_level"] == operation_profile.risk_level
         assert op_snap["requires_approval"] == operation_profile.requires_approval
-        assert op_snap["verification_required"] == operation_profile.verification_required
+        assert (
+            op_snap["verification_required"] == operation_profile.verification_required
+        )
 
     def test_snapshot_includes_workflow_snapshot(
         self, submitted_change, published_workflow
@@ -381,12 +386,8 @@ class TestRequestSnapshotCompleteness:
         assert rep == "sha256_and_keys_only"
 
     def test_snapshot_hash_is_stable(self, submitted_change):
-        h1 = change_services.sha256_canonical_json(
-            submitted_change.request_snapshot
-        )
-        h2 = change_services.sha256_canonical_json(
-            submitted_change.request_snapshot
-        )
+        h1 = change_services.sha256_canonical_json(submitted_change.request_snapshot)
+        h2 = change_services.sha256_canonical_json(submitted_change.request_snapshot)
         assert h1 == h2
         assert h1 == submitted_change.request_snapshot_sha256
 
@@ -432,6 +433,116 @@ class TestValidateRequestIntegrity:
         with pytest.raises(InvalidStateTransitionError) as exc_info:
             change_services.validate_request_integrity(submitted_change)
         assert exc_info.value.code == "change_request_integrity_missing"
+
+    def _assert_bulk_update_detected(self, change, **updates):
+        ChangeRecord.objects.filter(pk=change.pk).update(**updates)
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.validate_request_integrity(change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+
+    def test_fails_when_title_bulk_updated(self, submitted_change):
+        self._assert_bulk_update_detected(submitted_change, title="Tampered title")
+
+    def test_fails_when_summary_bulk_updated(self, submitted_change):
+        self._assert_bulk_update_detected(submitted_change, summary="Tampered summary")
+
+    def test_fails_when_justification_bulk_updated(self, submitted_change):
+        self._assert_bulk_update_detected(
+            submitted_change, justification="Tampered justification"
+        )
+
+    def test_fails_when_scheduled_for_bulk_updated(self, submitted_change):
+        from django.utils import timezone
+
+        self._assert_bulk_update_detected(
+            submitted_change,
+            scheduled_for=timezone.now() + timezone.timedelta(days=1),
+        )
+
+    def test_fails_when_operation_profile_bulk_updated(
+        self, submitted_change, org, published_workflow
+    ):
+        from apps.changes.models import OperationProfile
+
+        other_profile = OperationProfile.objects.create(
+            organization=org,
+            key="bulk-profile",
+            name="Bulk Profile",
+            risk_level="high",
+            requires_approval=False,
+            verification_required=True,
+            allowed_target_types=["server"],
+        )
+        other_profile.allowed_workflows.add(published_workflow)
+
+        self._assert_bulk_update_detected(
+            submitted_change,
+            operation_profile_id=other_profile.id,
+        )
+
+    def test_fails_when_workflow_bulk_updated(self, submitted_change, runbook):
+        from apps.workflows import services as workflow_services
+        from apps.workflows.internal_clients import StubWorkflowTransformClient
+
+        other_workflow = workflow_services.publish_workflow(
+            workflow=workflow_services.create_workflow(
+                runbook=runbook,
+                transform_client=StubWorkflowTransformClient(),
+            )
+        )
+
+        self._assert_bulk_update_detected(
+            submitted_change,
+            workflow_id=other_workflow.id,
+        )
+
+    def test_fails_when_operation_profile_key_snapshot_bulk_updated(
+        self, submitted_change
+    ):
+        self._assert_bulk_update_detected(
+            submitted_change,
+            operation_profile_key_snapshot="",
+        )
+
+    def test_fails_when_workflow_version_snapshot_bulk_updated(self, submitted_change):
+        self._assert_bulk_update_detected(
+            submitted_change,
+            workflow_version_snapshot=None,
+        )
+
+    def test_fails_when_target_bulk_updated(self, submitted_change):
+        ChangeTarget.objects.filter(change_record=submitted_change).update(
+            display_name="Tampered target"
+        )
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.validate_request_integrity(submitted_change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+
+    def test_fails_when_target_bulk_created(self, submitted_change):
+        ChangeTarget.objects.bulk_create(
+            [
+                ChangeTarget(
+                    change_record=submitted_change,
+                    organization=submitted_change.organization,
+                    position=99,
+                    target_type="server",
+                    target_identifier="prod-added",
+                    normalized_identifier="prod-added",
+                    display_name="Added",
+                    environment="production",
+                    metadata={},
+                )
+            ]
+        )
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.validate_request_integrity(submitted_change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+
+    def test_fails_when_target_bulk_deleted(self, submitted_change):
+        ChangeTarget.objects.filter(change_record=submitted_change).delete()
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.validate_request_integrity(submitted_change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +617,18 @@ class TestDispatchIntegrityCheck:
             change_services.make_dispatchable(change=change)
         assert exc_info.value.code == "change_request_integrity_mismatch"
 
+    def test_dispatch_refuses_when_live_title_tampered(
+        self, org, operation_profile, published_workflow
+    ):
+        change = self._make_approved_change(
+            org, operation_profile, published_workflow, "prod-disp-03"
+        )
+        ChangeRecord.objects.filter(pk=change.pk).update(title="Tampered dispatch")
+
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.make_dispatchable(change=change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+
 
 # ---------------------------------------------------------------------------
 # Bind refuses when frozen request integrity fails
@@ -540,7 +663,6 @@ class TestBindIntegrityCheck:
         return change
 
     def _claim_execution(self, change):
-        from apps.executions import services as execution_services
 
         binding = change.execution_binding
         execution = binding.execution
@@ -550,14 +672,21 @@ class TestBindIntegrityCheck:
 
         execution.claim_token = uuid.uuid4()
         execution.save(
-            update_fields=["status", "claimed_by_runner_id", "claim_token", "updated_at"]
+            update_fields=[
+                "status",
+                "claimed_by_runner_id",
+                "claim_token",
+                "updated_at",
+            ]
         )
         return execution, str(execution.claim_token)
 
     def test_bind_refuses_when_requested_inputs_tampered(
         self, org, operation_profile, published_workflow
     ):
-        change = self._make_dispatchable_change(org, operation_profile, published_workflow)
+        change = self._make_dispatchable_change(
+            org, operation_profile, published_workflow
+        )
         binding = change.execution_binding
         execution, claim_token = self._claim_execution(change)
 
@@ -582,7 +711,9 @@ class TestBindIntegrityCheck:
     def test_bind_refuses_when_request_snapshot_tampered(
         self, org, operation_profile, published_workflow
     ):
-        change = self._make_dispatchable_change(org, operation_profile, published_workflow)
+        change = self._make_dispatchable_change(
+            org, operation_profile, published_workflow
+        )
         binding = change.execution_binding
         execution, claim_token = self._claim_execution(change)
 
@@ -602,3 +733,97 @@ class TestBindIntegrityCheck:
                 operation_profile_key=binding.operation_profile_key,
             )
         assert exc_info.value.code == "change_request_integrity_mismatch"
+
+    def test_bind_refuses_when_live_target_tampered(
+        self, org, operation_profile, published_workflow
+    ):
+        change = self._make_dispatchable_change(
+            org, operation_profile, published_workflow
+        )
+        binding = change.execution_binding
+        execution, claim_token = self._claim_execution(change)
+
+        ChangeTarget.objects.filter(change_record=change).update(
+            display_name="Tampered bind target"
+        )
+
+        clear_token = change_services.generate_dispatch_token(binding)
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.bind_execution(
+                change_id=str(change.id),
+                runner_id="test-runner-1",
+                claim_token=claim_token,
+                execution_id=str(execution.id),
+                dispatch_token=clear_token,
+                requested_inputs_sha256=binding.requested_inputs_sha256,
+                operation_profile_key=binding.operation_profile_key,
+            )
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+
+    def test_completion_refuses_when_live_target_tampered(
+        self, org, operation_profile, published_workflow
+    ):
+        from apps.executions import services as execution_services
+        from apps.executions.models import Execution
+
+        change = self._make_dispatchable_change(
+            org, operation_profile, published_workflow
+        )
+        binding = change.execution_binding
+        execution, claim_token = self._claim_execution(change)
+
+        clear_token = change_services.generate_dispatch_token(binding)
+        change_services.bind_execution(
+            change_id=str(change.id),
+            runner_id="test-runner-1",
+            claim_token=claim_token,
+            execution_id=str(execution.id),
+            dispatch_token=clear_token,
+            requested_inputs_sha256=binding.requested_inputs_sha256,
+            operation_profile_key=binding.operation_profile_key,
+        )
+
+        ChangeTarget.objects.filter(change_record=change).update(
+            display_name="Tampered completion target"
+        )
+
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            execution_services.complete_execution(
+                execution=execution,
+                runner_id="test-runner-1",
+                claim_token=claim_token,
+                outcome=Execution.Status.SUCCEEDED,
+            )
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+        execution.refresh_from_db()
+        assert execution.status == Execution.Status.CLAIMED
+
+
+# ---------------------------------------------------------------------------
+# Approval refuses when live request integrity fails
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestApprovalIntegrityCheck:
+    def test_approval_refuses_when_live_title_tampered(self, draft_change):
+        from apps.approvals import services as approval_services
+        from apps.approvals.models import ApprovalRequest
+
+        change = change_services.submit_change_record(change=draft_change)
+        assert change.status == ChangeRecord.Status.PENDING_APPROVAL
+
+        ChangeRecord.objects.filter(pk=change.pk).update(title="Tampered approval")
+
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            approval_services.decide_approval(
+                approval_request=change.approval_request,
+                decision=ApprovalRequest.Status.APPROVED,
+                actor=_sys_actor(),
+            )
+
+        assert exc_info.value.code == "change_request_integrity_mismatch"
+        change.refresh_from_db()
+        change.approval_request.refresh_from_db()
+        assert change.status == ChangeRecord.Status.PENDING_APPROVAL
+        assert change.approval_request.status == ApprovalRequest.Status.PENDING

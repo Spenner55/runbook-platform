@@ -43,6 +43,33 @@ class TestOperationProfileListView:
 
 
 @pytest.mark.django_db
+class TestChangeRecordListView:
+    def test_lists_org_scoped_changes(self, org, draft_change, api_client_for_org):
+        client = api_client_for_org(org)
+        response = client.get("/api/v1/changes/")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["results"]
+        assert len(data) == 1
+        assert data[0]["id"] == str(draft_change.id)
+        assert data[0]["title"] == draft_change.title
+
+    def test_excludes_other_org_changes(self, org, draft_change, api_client_for_org):
+        from apps.organizations.models import Organization
+
+        other_org = Organization.objects.create(name="Other", slug="other-list")
+        client = api_client_for_org(other_org)
+        response = client.get("/api/v1/changes/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["results"] == []
+
+    def test_unauthenticated_rejected(self, api_client):
+        response = api_client.get("/api/v1/changes/")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.django_db
 class TestChangeRecordCreateView:
     def test_creates_draft(
         self, org, operation_profile, published_workflow, api_client_for_org

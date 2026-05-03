@@ -27,6 +27,23 @@ def get_change_record(*, change_id, organization):
     )
 
 
+def list_change_records_for_org(*, organization):
+    return (
+        ChangeRecord.objects.filter(organization=organization)
+        .select_related(
+            "operation_profile",
+            "workflow",
+            "requested_by",
+            "submitted_by",
+            "approval_request",
+            "policy_evaluation",
+            "execution_binding",
+            "execution_binding__execution",
+        )
+        .prefetch_related("targets")
+    )
+
+
 def get_change_record_with_binding(*, change_id, organization):
     return (
         ChangeRecord.objects.filter(pk=change_id, organization=organization)
