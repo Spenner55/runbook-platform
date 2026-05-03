@@ -32,7 +32,7 @@ export function AppLayout() {
           <NavLink className={getNavClassName} to="/approvals">
             Approvals
           </NavLink>
-          <NavLink className={getNavClassName} to="/changes/new">
+          <NavLink className={getNavClassName} to="/changes">
             Changes
           </NavLink>
           <NavLink className={getNavClassName} to="/policies">

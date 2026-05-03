@@ -50,12 +50,52 @@ const mockPendingChange = {
   ...mockDraftChange,
   status: 'pending_approval',
   submitted_at: '2026-05-01T10:01:00Z',
+  requested_inputs_sha256: 'abc123def456abc1',
+  request_snapshot_sha256: 'deadbeef12345678',
   approval_request: {
     id: 'ar-1',
     status: 'pending',
     requested_at: '2026-05-01T10:01:00Z',
     expires_at: '2026-05-01T11:01:00Z',
   },
+}
+
+const mockRunningChange = {
+  ...mockDraftChange,
+  status: 'running',
+  submitted_at: '2026-05-01T10:01:00Z',
+  approved_at: '2026-05-01T10:02:00Z',
+  running_at: '2026-05-01T10:05:00Z',
+  requested_inputs_sha256: 'abc123def456abc1',
+  request_snapshot_sha256: 'deadbeef12345678',
+  approval_request: {
+    id: 'ar-1',
+    status: 'approved',
+    requested_at: '2026-05-01T10:01:00Z',
+    expires_at: '2026-05-01T11:01:00Z',
+  },
+  policy_decision: {
+    policy_evaluation_id: 'pe-1',
+    outcome: 'auto_approve',
+    effective_outcome: 'auto_approve',
+    decision_source: 'workflow_default',
+    reason: 'No matching policy rule; using workflow default.',
+  },
+  execution_binding: {
+    id: 'eb-1',
+    execution_id: 'exec-99',
+    execution_status: 'running',
+    reserved_at: '2026-05-01T10:03:00Z',
+    bound_at: '2026-05-01T10:05:00Z',
+    operation_profile_key: 'prod-maintenance',
+    requested_inputs_sha256: 'abc123def456abc1',
+  },
+}
+
+const mockVerificationPendingChange = {
+  ...mockRunningChange,
+  status: 'verification_pending',
+  verification_pending_at: '2026-05-01T10:30:00Z',
 }
 
 describe('ChangeDetailPage', () => {
@@ -78,6 +118,8 @@ describe('ChangeDetailPage', () => {
       auth: { activeOrganizationId: 'org-1' },
     })
   }
+
+  // ---- Existing baseline tests ----
 
   it('renders change title and status for a draft change', async () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
@@ -132,7 +174,10 @@ describe('ChangeDetailPage', () => {
 
   it('shows error state when change not found', async () => {
     fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ errors: [{ code: 'not_found', detail: 'Not found.' }] }, { status: 404 }),
+      createJsonResponse(
+        { errors: [{ code: 'not_found', detail: 'Not found.' }] },
+        { status: 404 },
+      ),
     )
     renderPage()
 
@@ -166,5 +211,121 @@ describe('ChangeDetailPage', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
     })
+  })
+
+  // ---- New: Hash rendering ----
+
+  it('renders requested inputs hash when present', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText(/inputs hash/i))
+    // The hash is truncated; check that the truncated prefix appears
+    expect(screen.getByText(/abc123def456abc1/)).toBeInTheDocument()
+  })
+
+  it('renders request snapshot hash when present', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText(/snapshot hash/i))
+    expect(screen.getByText(/deadbeef12345678/)).toBeInTheDocument()
+  })
+
+  it('does not render hash rows when hashes are empty strings', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Restart nginx on prod-01'))
+    expect(screen.queryByText(/inputs hash/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/snapshot hash/i)).not.toBeInTheDocument()
+  })
+
+  // ---- New: Policy decision rendering ----
+
+  it('renders policy decision section when present', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Policy Decision'))
+    expect(screen.getByText('auto_approve')).toBeInTheDocument()
+    // decision_source "workflow_default" → "workflow default"; reason also contains this phrase
+    // — use getAllByText to handle multiple matches safely
+    expect(screen.getAllByText(/workflow default/i).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/no matching policy rule/i)).toBeInTheDocument()
+  })
+
+  it('does not render policy decision section when absent', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Restart nginx on prod-01'))
+    expect(screen.queryByText('Policy Decision')).not.toBeInTheDocument()
+  })
+
+  // ---- New: Verification state ----
+
+  it('renders verification section when status is verification_pending', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Verification'))
+    // "verification pending" appears in both the status badge and the Verification section
+    expect(screen.getAllByText('verification pending').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/pending since/i)).toBeInTheDocument()
+  })
+
+  it('does not render verification section for draft or running', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Restart nginx on prod-01'))
+    expect(screen.queryByText('Verification')).not.toBeInTheDocument()
+  })
+
+  // ---- New: Approval detail link ----
+
+  it('renders a link to the approvals inbox in the approval section', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Approval Request'))
+    const link = screen.getByRole('link', { name: /view approvals inbox/i })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('href', '/approvals')
+  })
+
+  // ---- New: Execution detail link ----
+
+  it('renders a link to the execution detail page in the binding section', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Execution Binding'))
+    const link = screen.getByRole('link', { name: /exec-99/i })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('href', '/executions/exec-99')
+  })
+
+  // ---- New: All changes link ----
+
+  it('renders a link back to the changes list', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Restart nginx on prod-01'))
+    const link = screen.getByRole('link', { name: /all changes/i })
+    expect(link).toHaveAttribute('href', '/changes')
+  })
+
+  // ---- New: No internal API calls ----
+
+  it('does not call /api/v1/internal/ endpoints', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Restart nginx on prod-01'))
+    const allUrls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(allUrls.every((url) => !url.includes('/api/v1/internal/'))).toBe(true)
   })
 })

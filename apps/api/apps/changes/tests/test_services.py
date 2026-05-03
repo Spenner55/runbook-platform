@@ -495,6 +495,7 @@ class TestDispatchableAndBinding:
     def test_operation_profile_m2m_rejects_cross_org_workflow(
         self, operation_profile, published_workflow
     ):
+        from django.db import transaction
         from apps.organizations.models import Organization
 
         operation_profile.allowed_workflows.clear()
@@ -503,4 +504,408 @@ class TestDispatchableAndBinding:
         operation_profile.save()
 
         with pytest.raises(ValidationError):
-            operation_profile.allowed_workflows.add(published_workflow)
+            with transaction.atomic():
+                operation_profile.allowed_workflows.add(published_workflow)
+        assert not operation_profile.allowed_workflows.filter(pk=published_workflow.pk).exists()
+
+
+@pytest.mark.django_db
+class TestRequestedInputsSchemaValidation:
+    """Positive and negative cases for requested_inputs_schema enforcement."""
+
+    def test_valid_inputs_matching_schema_accepted(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.requested_inputs_schema = {
+            "required": ["ticket"],
+            "properties": {"ticket": {"type": "string"}},
+            "additionalProperties": False,
+        }
+        operation_profile.save()
+
+        change = change_services.create_change_record(
+            organization=org,
+            operation_profile_key="prod-maintenance",
+            workflow_id=str(published_workflow.id),
+            title="Schema Positive Test",
+            justification="Needed",
+            requested_inputs={"ticket": "CHG-999"},
+            targets=[
+                {
+                    "target_type": "server",
+                    "target_identifier": "prod-01",
+                    "environment": "production",
+                }
+            ],
+        )
+        assert change.status == ChangeRecord.Status.DRAFT
+
+    def test_schema_missing_required_key_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.requested_inputs_schema = {
+            "required": ["ticket"],
+        }
+        operation_profile.save()
+
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Schema Missing Key",
+                justification="Needed",
+                requested_inputs={},
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                    }
+                ],
+            )
+        assert exc_info.value.code == "requested_inputs_invalid"
+
+    def test_schema_wrong_type_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.requested_inputs_schema = {
+            "properties": {"count": {"type": "integer"}},
+        }
+        operation_profile.save()
+
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Schema Type Test",
+                justification="Needed",
+                requested_inputs={"count": "not-an-int"},
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                    }
+                ],
+            )
+        assert exc_info.value.code == "requested_inputs_invalid"
+
+    def test_schema_additional_properties_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.requested_inputs_schema = {
+            "properties": {"ticket": {"type": "string"}},
+            "additionalProperties": False,
+        }
+        operation_profile.save()
+
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Schema Extra Key",
+                justification="Needed",
+                requested_inputs={"ticket": "CHG-1", "extra": "not-allowed"},
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                    }
+                ],
+            )
+        assert exc_info.value.code == "requested_inputs_invalid"
+
+    def test_no_schema_allows_any_inputs(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.requested_inputs_schema = {}
+        operation_profile.save()
+
+        change = change_services.create_change_record(
+            organization=org,
+            operation_profile_key="prod-maintenance",
+            workflow_id=str(published_workflow.id),
+            title="No Schema Test",
+            justification="Needed",
+            requested_inputs={"anything": "goes", "count": 42},
+            targets=[
+                {
+                    "target_type": "server",
+                    "target_identifier": "prod-01",
+                    "environment": "production",
+                }
+            ],
+        )
+        assert change.status == ChangeRecord.Status.DRAFT
+
+
+@pytest.mark.django_db
+class TestTargetMetadataValidation:
+    """Target metadata forbidden-key rejection including nested and Phase-11.1-specific keys."""
+
+    def test_nested_forbidden_key_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Nested Key Test",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                        "metadata": {
+                            "connection": {
+                                "password": "secret123"
+                            }
+                        },
+                    }
+                ],
+            )
+        assert exc_info.value.code == "target_metadata_forbidden_key"
+
+    def test_dispatch_token_in_metadata_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Dispatch Token Key Test",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                        "metadata": {"dispatch_token": "some-token"},
+                    }
+                ],
+            )
+        assert exc_info.value.code == "target_metadata_forbidden_key"
+
+    def test_dispatch_token_hash_in_metadata_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Dispatch Token Hash Key Test",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                        "metadata": {"dispatch_token_hash": "abc123"},
+                    }
+                ],
+            )
+        assert exc_info.value.code == "target_metadata_forbidden_key"
+
+    def test_claim_token_in_metadata_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Claim Token Key Test",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                        "metadata": {"claim_token": "runner-claim"},
+                    }
+                ],
+            )
+        assert exc_info.value.code == "target_metadata_forbidden_key"
+
+    def test_requested_inputs_in_metadata_rejected(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Requested Inputs Key Test",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                        "metadata": {"requested_inputs": {"key": "value"}},
+                    }
+                ],
+            )
+        assert exc_info.value.code == "target_metadata_forbidden_key"
+
+    def test_safe_metadata_accepted(self, org, operation_profile, published_workflow):
+        change = change_services.create_change_record(
+            organization=org,
+            operation_profile_key="prod-maintenance",
+            workflow_id=str(published_workflow.id),
+            title="Safe Metadata Test",
+            justification="Needed",
+            targets=[
+                {
+                    "target_type": "server",
+                    "target_identifier": "prod-01",
+                    "environment": "production",
+                    "metadata": {
+                        "region": "us-west-2",
+                        "datacenter": "dc1",
+                        "tier": "prod",
+                    },
+                }
+            ],
+        )
+        assert change.status == ChangeRecord.Status.DRAFT
+
+
+@pytest.mark.django_db
+class TestApprovalOrganizationMismatch:
+    """Approval creation must reject cross-organization change linkage."""
+
+    def test_create_change_approval_request_rejects_org_mismatch(
+        self, org, draft_change
+    ):
+        from apps.approvals import services as approval_services
+        from apps.organizations.models import Organization
+
+        other_org = Organization.objects.create(
+            name="Other Org", slug="approval-other-org"
+        )
+        with pytest.raises(DomainValidationError) as exc_info:
+            approval_services.create_change_approval_request(
+                change_record=draft_change,
+                organization=other_org,
+            )
+        assert exc_info.value.code == "approval_change_organization_mismatch"
+
+    def test_create_change_approval_request_same_org_succeeds(
+        self, org, draft_change
+    ):
+        from apps.approvals import services as approval_services
+        from apps.approvals.models import ApprovalRequest
+
+        ar = approval_services.create_change_approval_request(
+            change_record=draft_change,
+            organization=org,
+        )
+        assert ar.subject_type == ApprovalRequest.SubjectType.CHANGE_RECORD
+        assert ar.subject_id == draft_change.id
+        assert ar.organization_id == org.id
+
+
+@pytest.mark.django_db
+class TestApprovalTimeoutRaceDeterminism:
+    """Timeout and concurrent decision handling must be deterministic."""
+
+    def test_timeout_wins_when_decision_arrives_after_expiry(
+        self, draft_change, operation_profile
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.approvals import services as approval_services
+
+        operation_profile.requires_approval = True
+        operation_profile.approval_ttl_seconds = 1
+        operation_profile.save()
+
+        change = change_services.submit_change_record(change=draft_change)
+        ar = change.approval_request
+
+        # Manually expire the approval request so it appears timed out
+        past = timezone.now() - timedelta(seconds=10)
+        ar.expires_at = past
+        ar.save(update_fields=["expires_at", "updated_at"])
+
+        # Human decision arrives after expiry — timeout should prevail
+        result = approval_services.decide_approval(
+            approval_request=ar,
+            decision="approved",
+            actor=_sys_actor(),
+        )
+        from apps.approvals.models import ApprovalDecision
+
+        assert result.decision == ApprovalDecision.Decision.TIMED_OUT
+        change.refresh_from_db()
+        assert change.status == ChangeRecord.Status.EXPIRED
+        assert change.terminal_reason == "approval_timed_out"
+
+    def test_double_decision_raises_conflict(self, draft_change, operation_profile):
+        from apps.approvals import services as approval_services
+
+        operation_profile.requires_approval = True
+        operation_profile.save()
+
+        change = change_services.submit_change_record(change=draft_change)
+        ar = change.approval_request
+
+        approval_services.decide_approval(
+            approval_request=ar,
+            decision="approved",
+            actor=_sys_actor(),
+        )
+        ar.refresh_from_db()
+
+        # Second decision on a terminal request must conflict
+        with pytest.raises(DomainConflictError) as exc_info:
+            approval_services.decide_approval(
+                approval_request=ar,
+                decision="rejected",
+                actor=_sys_actor(),
+            )
+        assert exc_info.value.code == "approval_request_not_pending"
+
+    def test_watchdog_recovery_on_expired_change_approval(
+        self, draft_change, operation_profile
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.approvals import services as approval_services
+        from apps.approvals.models import ApprovalRequest
+
+        operation_profile.requires_approval = True
+        operation_profile.approval_ttl_seconds = 1
+        operation_profile.save()
+
+        change = change_services.submit_change_record(change=draft_change)
+        ar = change.approval_request
+
+        past = timezone.now() - timedelta(seconds=10)
+        ar.expires_at = past
+        ar.save(update_fields=["expires_at", "updated_at"])
+
+        recovered = approval_services.recover_expired_approvals(
+            now=timezone.now(), batch_size=10
+        )
+        assert str(ar.id) in recovered
+
+        change.refresh_from_db()
+        assert change.status == ChangeRecord.Status.EXPIRED
+        assert change.terminal_reason == "approval_timed_out"
+
+        ar.refresh_from_db()
+        assert ar.status == ApprovalRequest.Status.TIMED_OUT

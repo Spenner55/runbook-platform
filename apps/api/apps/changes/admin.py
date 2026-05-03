@@ -1,6 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 
 from apps.audit.services import actor_from_request
+from apps.changes import services as change_services
 from apps.changes.models import (
     ChangeExecutionBinding,
     ChangeRecord,
@@ -18,20 +19,27 @@ class OperationProfileAdmin(admin.ModelAdmin):
     readonly_fields = ["id", "created_at", "updated_at"]
 
     def save_model(self, request, obj, form, change):
-        obj._audit_actor = actor_from_request(request)
-        super().save_model(request, obj, form, change)
+        actor = actor_from_request(request)
+        obj._audit_actor = actor
+        # Delegate to the audited service when deactivating so the deactivated
+        # event is emitted with the right event type (not just "updated").
+        if change and "is_active" in form.changed_data and not obj.is_active:
+            change_services.deactivate_operation_profile(profile=obj, actor=actor)
+        else:
+            super().save_model(request, obj, form, change)
 
     def save_related(self, request, form, formsets, change):
+        # Set _audit_actor so M2M post_add signals carry the admin user as actor.
         form.instance._audit_actor = actor_from_request(request)
         super().save_related(request, form, formsets, change)
+        # Defense-in-depth: remove any cross-org workflows that slipped through
+        # (the pre_add M2M signal is the primary enforcement; this is a fallback).
         obj = form.instance
         cross_org = obj.allowed_workflows.exclude(organization=obj.organization)
         if cross_org.exists():
             cross_org_ids = list(cross_org.values_list("id", flat=True))
             for wf in cross_org:
                 obj.allowed_workflows.remove(wf)
-            from django.contrib import messages
-
             self.message_user(
                 request,
                 f"Removed {len(cross_org_ids)} cross-organization workflow(s) from allowed_workflows.",

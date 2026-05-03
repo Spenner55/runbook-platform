@@ -7,6 +7,10 @@ export function listOperationProfiles() {
   )
 }
 
+export function listChanges() {
+  return apiRequest<{ results: ChangeRecord[] }>('/api/v1/changes/')
+}
+
 export function createChange(input: CreateChangeInput) {
   return apiRequest<ChangeRecord>('/api/v1/changes/', {
     method: 'POST',

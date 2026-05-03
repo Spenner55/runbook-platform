@@ -41,9 +41,15 @@ _TARGET_METADATA_FORBIDDEN_KEYS = {
     "authorization",
     "bearer",
     "bearer_token",
+    # Phase 11.1 change-lifecycle secrets
+    "change_dispatch_token",
+    "claim_token",
     "cookie",
+    "dispatch_token",
+    "dispatch_token_hash",
     "password",
     "private_key",
+    "requested_inputs",
     "secret",
     "session",
     "session_token",
@@ -244,6 +250,166 @@ def emit_operation_profile_audit(
             **(metadata or {}),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# OperationProfile governance service functions
+# ---------------------------------------------------------------------------
+
+_UNSET = object()  # sentinel for optional fields that distinguish None from "not provided"
+
+
+def create_operation_profile(
+    *,
+    organization,
+    key: str,
+    name: str,
+    description: str = "",
+    risk_level: str,
+    requires_approval: bool = True,
+    verification_required: bool = True,
+    approval_ttl_seconds: int | None = None,
+    dispatch_ttl_seconds: int = 900,
+    allowed_target_types: list | None = None,
+    requested_inputs_schema: dict | None = None,
+    target_schema: dict | None = None,
+    workflow_ids: list | None = None,
+    actor: AuditActor | None = None,
+) -> OperationProfile:
+    """Create a new OperationProfile with same-org workflow validation and audit."""
+    if risk_level not in ("high", "critical"):
+        raise DomainValidationError(
+            code="invalid_risk_level",
+            detail="Operation profile risk level must be 'high' or 'critical'.",
+        )
+    audit_actor = actor or system_actor("Change service")
+    profile = OperationProfile(
+        organization=organization,
+        key=key,
+        name=name,
+        description=description,
+        risk_level=risk_level,
+        requires_approval=requires_approval,
+        verification_required=verification_required,
+        approval_ttl_seconds=approval_ttl_seconds,
+        dispatch_ttl_seconds=dispatch_ttl_seconds,
+        allowed_target_types=allowed_target_types or [],
+        requested_inputs_schema=requested_inputs_schema or {},
+        target_schema=target_schema or {},
+        created_by_id=audit_actor.actor_id
+        if audit_actor.actor_type == AuditEvent.ActorType.USER
+        else None,
+        updated_by_id=audit_actor.actor_id
+        if audit_actor.actor_type == AuditEvent.ActorType.USER
+        else None,
+    )
+    profile._audit_actor = audit_actor
+    profile.save()
+
+    if workflow_ids:
+        validate_operation_profile_workflows(profile, workflow_ids)
+        workflows = list(
+            Workflow.objects.filter(pk__in=workflow_ids, organization=organization)
+        )
+        profile._audit_actor = audit_actor
+        profile.allowed_workflows.set(workflows)
+
+    return profile
+
+
+def update_operation_profile(
+    *,
+    profile: OperationProfile,
+    actor: AuditActor | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    risk_level: str | None = None,
+    requires_approval: bool | None = None,
+    verification_required: bool | None = None,
+    approval_ttl_seconds: int | None = _UNSET,  # type: ignore[assignment]
+    dispatch_ttl_seconds: int | None = None,
+    allowed_target_types: list | None = None,
+    requested_inputs_schema: dict | None = None,
+    target_schema: dict | None = None,
+    workflow_ids: list | None = None,
+) -> OperationProfile:
+    """Update mutable OperationProfile fields with audit and same-org enforcement."""
+    if risk_level is not None and risk_level not in ("high", "critical"):
+        raise DomainValidationError(
+            code="invalid_risk_level",
+            detail="Operation profile risk level must be 'high' or 'critical'.",
+        )
+    audit_actor = actor or system_actor("Change service")
+    update_fields: list[str] = ["updated_at"]
+
+    if name is not None:
+        profile.name = name
+        update_fields.append("name")
+    if description is not None:
+        profile.description = description
+        update_fields.append("description")
+    if risk_level is not None:
+        profile.risk_level = risk_level
+        update_fields.append("risk_level")
+    if requires_approval is not None:
+        profile.requires_approval = requires_approval
+        update_fields.append("requires_approval")
+    if verification_required is not None:
+        profile.verification_required = verification_required
+        update_fields.append("verification_required")
+    if approval_ttl_seconds is not _UNSET:
+        profile.approval_ttl_seconds = approval_ttl_seconds
+        update_fields.append("approval_ttl_seconds")
+    if dispatch_ttl_seconds is not None:
+        profile.dispatch_ttl_seconds = dispatch_ttl_seconds
+        update_fields.append("dispatch_ttl_seconds")
+    if allowed_target_types is not None:
+        profile.allowed_target_types = allowed_target_types
+        update_fields.append("allowed_target_types")
+    if requested_inputs_schema is not None:
+        profile.requested_inputs_schema = requested_inputs_schema
+        update_fields.append("requested_inputs_schema")
+    if target_schema is not None:
+        profile.target_schema = target_schema
+        update_fields.append("target_schema")
+    if audit_actor.actor_type == AuditEvent.ActorType.USER:
+        profile.updated_by_id = audit_actor.actor_id
+        if "updated_by" not in update_fields:
+            update_fields.append("updated_by")
+
+    profile._audit_actor = audit_actor
+    profile.save(update_fields=update_fields)
+
+    if workflow_ids is not None:
+        validate_operation_profile_workflows(profile, workflow_ids)
+        workflows = list(
+            Workflow.objects.filter(
+                pk__in=workflow_ids, organization=profile.organization
+            )
+        )
+        profile._audit_actor = audit_actor
+        profile.allowed_workflows.set(workflows)
+
+    return profile
+
+
+def deactivate_operation_profile(
+    *,
+    profile: OperationProfile,
+    actor: AuditActor | None = None,
+) -> OperationProfile:
+    """Deactivate an OperationProfile with audit. Idempotent when already inactive."""
+    if not profile.is_active:
+        return profile
+    audit_actor = actor or system_actor("Change service")
+    update_fields = ["is_active", "updated_at"]
+    profile.is_active = False
+    if audit_actor.actor_type == AuditEvent.ActorType.USER:
+        profile.updated_by_id = audit_actor.actor_id
+        update_fields.append("updated_by")
+    profile._audit_actor = audit_actor
+    profile.save(update_fields=update_fields)
+    return profile
 
 
 def validate_request_integrity(change: ChangeRecord) -> None:
@@ -807,9 +973,23 @@ def handle_change_approval_decision(
         .first()
     )
     if change is None:
+        logger.error(
+            "handle_change_approval_decision: no change found for approval_request_id=%s "
+            "(decision=%s); audit divergence — approval resolved but no change record linked",
+            approval_request_id,
+            decision,
+        )
         return
 
     if change.status != ChangeRecord.Status.PENDING_APPROVAL:
+        logger.warning(
+            "handle_change_approval_decision: change %s is in unexpected status '%s' "
+            "(expected 'pending_approval', decision=%s); skipping lifecycle transition — "
+            "approval/change state may have diverged",
+            change.id,
+            change.status,
+            decision,
+        )
         return
 
     now = timezone.now()
