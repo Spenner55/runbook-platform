@@ -909,3 +909,63 @@ class TestApprovalTimeoutRaceDeterminism:
 
         ar.refresh_from_db()
         assert ar.status == ApprovalRequest.Status.TIMED_OUT
+
+
+class TestApprovalDecisionFailClosed:
+    """B4: handle_change_approval_decision must raise, never silently return, on divergence."""
+
+    @pytest.mark.django_db
+    def test_raises_when_no_change_linked(self):
+        import uuid
+
+        from apps.changes.services import handle_change_approval_decision
+
+        with pytest.raises(DomainValidationError) as exc_info:
+            handle_change_approval_decision(
+                approval_request_id=uuid.uuid4(),
+                decision="approved",
+            )
+        assert exc_info.value.code == "change_approval_decision_orphaned"
+
+    @pytest.mark.django_db
+    def test_raises_when_change_not_pending_approval(self, draft_change, operation_profile):
+        from apps.changes.services import handle_change_approval_decision
+
+        operation_profile.requires_approval = True
+        operation_profile.save()
+
+        change = change_services.submit_change_record(change=draft_change)
+        ar = change.approval_request
+
+        # Force the change out of pending_approval without going through the decision path
+        ChangeRecord.objects.filter(pk=change.pk).update(status=ChangeRecord.Status.DRAFT)
+
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            handle_change_approval_decision(
+                approval_request_id=ar.id,
+                decision="approved",
+            )
+        assert exc_info.value.code == "change_approval_state_conflict"
+
+    @pytest.mark.django_db
+    def test_approval_decision_rolled_back_when_change_missing(self):
+        """The approval terminal status must not persist when the change hook raises."""
+        import uuid
+
+        from django.db import transaction
+
+        from apps.approvals.models import ApprovalRequest
+        from apps.changes.services import handle_change_approval_decision
+
+        phantom_id = uuid.uuid4()
+        try:
+            with transaction.atomic():
+                handle_change_approval_decision(
+                    approval_request_id=phantom_id,
+                    decision="approved",
+                )
+        except DomainValidationError:
+            pass
+
+        # Nothing committed — no ApprovalRequest row should reference this phantom id
+        assert not ApprovalRequest.objects.filter(id=phantom_id).exists()

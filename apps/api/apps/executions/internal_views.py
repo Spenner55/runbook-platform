@@ -320,13 +320,14 @@ class ExecutionStepStartView(RunnerInternalAPIView):
                     status=http_status.HTTP_200_OK,
                 )
 
-            # auto_approve: transition step to running
+            # auto_approve: transition step to running — only valid after policy evaluation
             step = services.update_execution_step(
                 execution=execution,
                 step_id=str(step_id),
                 runner_id=runner_id,
                 claim_token=claim_token,
                 new_status=ExecutionStep.Status.RUNNING,
+                _allow_running=True,
             )
             execution.refresh_from_db()
             return Response(
@@ -427,6 +428,7 @@ class ApprovalStatusView(RunnerInternalAPIView):
                     runner_id=runner_id,
                     claim_token=claim_token,
                     new_status=ExecutionStep.Status.RUNNING,
+                    _allow_running=True,
                 )
                 execution.refresh_from_db()
                 return Response(

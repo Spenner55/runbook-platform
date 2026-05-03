@@ -123,6 +123,7 @@ def build_request_snapshot(
             "name": workflow.name,
             "version": workflow.version,
             "status": workflow.status,
+            "definition_sha256": sha256_canonical_json(workflow.definition or {}),
         }
 
     return {
@@ -923,6 +924,7 @@ def submit_change_record(
         change.request_snapshot_sha256 = snapshot_hash
         change.operation_profile_key_snapshot = profile.key
         change.workflow_version_snapshot = workflow.version
+        change.workflow_definition_sha256 = sha256_canonical_json(workflow.definition or {})
         change.submitted_at = now
         if actor and actor.actor_type == AuditEvent.ActorType.USER:
             change.submitted_by_id = actor.actor_id
@@ -965,6 +967,7 @@ def submit_change_record(
                     "request_snapshot_sha256",
                     "operation_profile_key_snapshot",
                     "workflow_version_snapshot",
+                    "workflow_definition_sha256",
                     "submitted_at",
                     "submitted_by",
                     "approval_request",
@@ -996,6 +999,7 @@ def submit_change_record(
                     "request_snapshot_sha256",
                     "operation_profile_key_snapshot",
                     "workflow_version_snapshot",
+                    "workflow_definition_sha256",
                     "submitted_at",
                     "submitted_by",
                     "status",
@@ -1029,24 +1033,23 @@ def handle_change_approval_decision(
         .first()
     )
     if change is None:
-        logger.error(
-            "handle_change_approval_decision: no change found for approval_request_id=%s "
-            "(decision=%s); audit divergence — approval resolved but no change record linked",
-            approval_request_id,
-            decision,
+        raise DomainValidationError(
+            code="change_approval_decision_orphaned",
+            detail=(
+                f"No ChangeRecord found for approval_request_id={approval_request_id} "
+                f"(decision={decision}). Approval decision rolled back to preserve consistency."
+            ),
         )
-        return
 
     if change.status != ChangeRecord.Status.PENDING_APPROVAL:
-        logger.warning(
-            "handle_change_approval_decision: change %s is in unexpected status '%s' "
-            "(expected 'pending_approval', decision=%s); skipping lifecycle transition — "
-            "approval/change state may have diverged",
-            change.id,
-            change.status,
-            decision,
+        raise InvalidStateTransitionError(
+            code="change_approval_state_conflict",
+            detail=(
+                f"ChangeRecord {change.id} is in status '{change.status}', expected "
+                f"'pending_approval' (decision={decision}). "
+                "Approval decision rolled back to prevent approval/change divergence."
+            ),
         )
-        return
 
     now = timezone.now()
     validate_request_integrity(change)

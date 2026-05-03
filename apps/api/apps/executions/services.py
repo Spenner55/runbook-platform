@@ -740,15 +740,26 @@ def heartbeat_execution(
 
 _VALID_STEP_TRANSITIONS: dict[str, set[str]] = {
     ExecutionStep.Status.PENDING: {
+        ExecutionStep.Status.FAILED,
+    },
+    ExecutionStep.Status.WAITING_FOR_APPROVAL: {
+        ExecutionStep.Status.FAILED,
+    },
+    ExecutionStep.Status.RUNNING: {
+        ExecutionStep.Status.SUCCEEDED,
+        ExecutionStep.Status.FAILED,
+    },
+}
+
+# Used only by update_execution_step(_allow_running=True), which is called
+# exclusively from ExecutionStepStartView after policy evaluation.
+_VALID_STEP_START_TRANSITIONS: dict[str, set[str]] = {
+    ExecutionStep.Status.PENDING: {
         ExecutionStep.Status.RUNNING,
         ExecutionStep.Status.FAILED,
     },
     ExecutionStep.Status.WAITING_FOR_APPROVAL: {
         ExecutionStep.Status.RUNNING,
-        ExecutionStep.Status.FAILED,
-    },
-    ExecutionStep.Status.RUNNING: {
-        ExecutionStep.Status.SUCCEEDED,
         ExecutionStep.Status.FAILED,
     },
 }
@@ -766,13 +777,18 @@ def update_execution_step(
     finished_at=None,
     exit_code=None,
     error_message: str = "",
+    _allow_running: bool = False,
 ) -> ExecutionStep:
     """
-    Apply a narrow status transition to one step on an execution.
+    Apply a status transition to one execution step.
 
-    Allowed transitions:
-      pending  -> running
-      running  -> succeeded | failed
+    Normal (update endpoint) allowed transitions:
+      running -> succeeded | failed
+
+    Start-path only (_allow_running=True, called by ExecutionStepStartView after
+    policy evaluation):
+      pending             -> running | failed
+      waiting_for_approval -> running | failed
 
     Also transitions the parent execution from CLAIMED -> RUNNING when the
     first step starts.
@@ -793,7 +809,10 @@ def update_execution_step(
             )
 
         previous_status = step.status
-        allowed = _VALID_STEP_TRANSITIONS.get(step.status, set())
+        if _allow_running:
+            allowed = _VALID_STEP_START_TRANSITIONS.get(step.status, set())
+        else:
+            allowed = _VALID_STEP_TRANSITIONS.get(step.status, set())
         if new_status not in allowed:
             raise InvalidStateTransitionError(
                 code="invalid_state_transition",
@@ -1026,6 +1045,16 @@ def complete_execution(
 
         change_services.handle_bound_execution_completed(execution=execution)
     except Exception:
+        # For change-bound executions the hook releases TargetLocks and closes the
+        # ChangeWindow. Swallowing the failure would leave those records permanently
+        # stuck. Re-raise so the runner gets a 5xx and can retry completion.
+        from apps.changes.models import ChangeExecutionBinding  # avoid circular
+
+        is_change_bound = ChangeExecutionBinding.objects.filter(
+            execution_id=execution.pk
+        ).exists()
+        if is_change_bound:
+            raise
         logger.exception(
             "handle_bound_execution_completed failed for execution %s", execution.id
         )

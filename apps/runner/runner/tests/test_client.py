@@ -15,12 +15,15 @@ from runner.client import (
     RUNNER_API_TIMEOUT,
     ApiClient,
 )
+from pydantic import ValidationError
+
 from runner.schemas import (
     ApprovalStatusResponse,
     ClaimNextResponse,
     CompleteExecutionResponse,
     HeartbeatResponse,
     StepStartResponse,
+    StepUpdateRequest,
     StepUpdateResponse,
 )
 
@@ -477,40 +480,14 @@ def test_heartbeat_raises_on_409():
 # ---------------------------------------------------------------------------
 
 
-def test_update_step_running_sends_correct_payload():
-    captured = {}
-    execution_id = uuid4()
-    step_id = uuid4()
-    body = {
-        "execution_id": str(execution_id),
-        "step": {
-            "id": str(step_id),
-            "status": "running",
-            "started_at": "2026-01-01T00:00:00Z",
-            "finished_at": None,
-            "exit_code": None,
-            "error_message": "",
-        },
-        "execution_status": "running",
-    }
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.update(json.loads(request.content))
-        return httpx.Response(
-            200,
-            headers={"Content-Type": "application/json"},
-            content=json.dumps(body).encode(),
+def test_update_step_running_rejected_by_schema():
+    """StepUpdateRequest must not accept running — only start_step may set a step running."""
+    with pytest.raises(ValidationError):
+        StepUpdateRequest(
+            runner_id="runner-1",
+            claim_token=uuid4(),
+            status="running",
         )
-
-    claim_token = uuid4()
-    client = make_client(httpx.MockTransport(handler))
-    resp = client.update_step(execution_id, step_id, claim_token, status="running")
-
-    assert captured["status"] == "running"
-    assert captured["claim_token"] == str(claim_token)
-    assert isinstance(resp, StepUpdateResponse)
-    assert resp.step.status == "running"
-    assert resp.execution_status == "running"
 
 
 def test_update_step_succeeded_includes_exit_code():

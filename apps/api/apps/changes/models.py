@@ -122,6 +122,7 @@ class ChangeRecord(BaseModel):
     request_snapshot_sha256 = models.CharField(max_length=64, blank=True)
     operation_profile_key_snapshot = models.CharField(max_length=96, blank=True)
     workflow_version_snapshot = models.PositiveIntegerField(null=True, blank=True)
+    workflow_definition_sha256 = models.CharField(max_length=64, blank=True)
     approval_request = models.ForeignKey(
         "approvals.ApprovalRequest",
         null=True,
@@ -398,14 +399,27 @@ class ChangeExecutionBinding(BaseModel):
                 "Binding change and execution organizations must match."
             )
 
+    _IMMUTABLE_AFTER_CREATION = frozenset([
+        "change_record_id",
+        "execution_id",
+        "organization_id",
+        "operation_profile_key",
+        "requested_inputs_sha256",
+    ])
+
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
-            if (
-                previous is not None
-                and previous.bound_at is not None
-                and previous.bound_by_runner_id != self.bound_by_runner_id
-            ):
-                raise ValidationError("Bound change executions cannot be rebound.")
+            if previous is not None:
+                for field in self._IMMUTABLE_AFTER_CREATION:
+                    if getattr(previous, field) != getattr(self, field):
+                        raise ValidationError(
+                            f"ChangeExecutionBinding.{field} is immutable after creation."
+                        )
+                if (
+                    previous.bound_at is not None
+                    and previous.bound_by_runner_id != self.bound_by_runner_id
+                ):
+                    raise ValidationError("Bound change executions cannot be rebound.")
         self.clean()
         return super().save(*args, **kwargs)

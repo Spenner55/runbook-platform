@@ -141,7 +141,7 @@ class StepUpdateSerializer(serializers.Serializer):
     runner_id = serializers.CharField(max_length=255)
     claim_token = serializers.UUIDField()
     status = serializers.ChoiceField(
-        choices=["running", "succeeded", "failed", "skipped"]
+        choices=["succeeded", "failed", "skipped"]
     )
     started_at = serializers.DateTimeField(
         required=False, allow_null=True, default=None

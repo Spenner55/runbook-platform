@@ -269,6 +269,113 @@ class TestAdminImmutability:
         # Draft targets: block is not applied, so super() is called and perm check passes.
         assert admin.has_change_permission(request, obj=target)
 
+    def test_change_record_approval_fields_always_readonly(self, submitted_change, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeRecordAdmin
+
+        admin_instance = ChangeRecordAdmin(ChangeRecord, AdminSite())
+        request = rf.get("/")
+        request.user = None
+        fields = admin_instance.get_readonly_fields(request, obj=submitted_change)
+        for field in ("approval_request", "policy_evaluation", "policy_decision_snapshot", "terminal_reason"):
+            assert field in fields, f"Expected {field} in always-readonly fields"
+
+    def test_change_record_approval_fields_readonly_even_for_draft(self, draft_change, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeRecordAdmin
+
+        admin_instance = ChangeRecordAdmin(ChangeRecord, AdminSite())
+        request = rf.get("/")
+        request.user = None
+        fields = admin_instance.get_readonly_fields(request, obj=draft_change)
+        for field in ("approval_request", "policy_evaluation", "policy_decision_snapshot", "terminal_reason"):
+            assert field in fields, f"Expected {field} in always-readonly even for draft"
+
+    def test_change_execution_binding_admin_blocks_add(self, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeExecutionBindingAdmin
+        from apps.changes.models import ChangeExecutionBinding
+
+        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        request = rf.get("/")
+        request.user = None
+        assert not admin_instance.has_add_permission(request)
+
+    def test_change_execution_binding_admin_blocks_change(self, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeExecutionBindingAdmin
+        from apps.changes.models import ChangeExecutionBinding
+
+        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        request = rf.get("/")
+        request.user = None
+        assert not admin_instance.has_change_permission(request)
+
+    def test_change_execution_binding_admin_blocks_delete(self, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeExecutionBindingAdmin
+        from apps.changes.models import ChangeExecutionBinding
+
+        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        request = rf.get("/")
+        request.user = None
+        assert not admin_instance.has_delete_permission(request)
+
+    def test_change_execution_binding_identity_fields_all_readonly(self, rf):
+        from django.contrib.admin.sites import AdminSite
+
+        from apps.changes.admin import ChangeExecutionBindingAdmin
+        from apps.changes.models import ChangeExecutionBinding
+
+        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        for field in ("change_record", "execution", "organization", "operation_profile_key",
+                      "requested_inputs_sha256", "bound_by_runner_id"):
+            assert field in admin_instance.readonly_fields, (
+                f"Expected {field} in ChangeExecutionBindingAdmin.readonly_fields"
+            )
+
+
+@pytest.mark.django_db
+class TestBindingModelImmutability:
+    def _make_dispatchable(self, org, operation_profile, published_workflow):
+        operation_profile.requires_approval = False
+        operation_profile.save()
+        change = change_services.create_change_record(
+            organization=org,
+            operation_profile_key="prod-maintenance",
+            workflow_id=str(published_workflow.id),
+            title="Binding Immutability Test",
+            justification="Needed",
+            targets=[{"target_type": "server", "target_identifier": "prod-bind-01", "environment": "production"}],
+        )
+        return change_services.submit_change_record(change=change)
+
+    def test_identity_field_immutable_after_creation(self, org, operation_profile, published_workflow):
+        from django.core.exceptions import ValidationError
+
+        change = self._make_dispatchable(org, operation_profile, published_workflow)
+        binding = change.execution_binding
+        original = binding.operation_profile_key
+        binding.operation_profile_key = "tampered-key"
+        with pytest.raises(ValidationError, match="immutable after creation"):
+            binding.save()
+        binding.refresh_from_db()
+        assert binding.operation_profile_key == original
+
+    def test_non_identity_field_can_update(self, org, operation_profile, published_workflow):
+        change = self._make_dispatchable(org, operation_profile, published_workflow)
+        binding = change.execution_binding
+        # runner_payload_snapshot is not an identity field — it may be updated
+        binding.runner_payload_snapshot = {"note": "test update"}
+        binding.save(update_fields=["runner_payload_snapshot", "updated_at"])
+        binding.refresh_from_db()
+        assert binding.runner_payload_snapshot == {"note": "test update"}
+
 
 # ---------------------------------------------------------------------------
 # build_request_snapshot completeness
@@ -375,6 +482,27 @@ class TestRequestSnapshotCompleteness:
         assert wf_snap["name"] == published_workflow.name
         assert wf_snap["version"] == published_workflow.version
         assert wf_snap["status"] == published_workflow.status
+
+    def test_snapshot_includes_workflow_definition_sha256(
+        self, submitted_change, published_workflow
+    ):
+        wf_snap = submitted_change.request_snapshot["workflow_snapshot"]
+        assert "definition_sha256" in wf_snap
+        assert len(wf_snap["definition_sha256"]) == 64
+
+    def test_workflow_definition_sha256_field_set_on_submit(self, submitted_change):
+        assert submitted_change.workflow_definition_sha256 != ""
+        assert len(submitted_change.workflow_definition_sha256) == 64
+
+    def test_integrity_fails_when_workflow_definition_mutated(
+        self, submitted_change, published_workflow
+    ):
+        published_workflow.definition = {"steps": [{"id": "injected", "name": "bad"}]}
+        published_workflow.save(update_fields=["definition", "updated_at"])
+
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            change_services.validate_request_integrity(submitted_change)
+        assert exc_info.value.code == "change_request_integrity_mismatch"
 
     def test_snapshot_includes_requested_input_keys(self, submitted_change):
         keys = submitted_change.request_snapshot["requested_input_keys"]

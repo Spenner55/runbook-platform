@@ -105,6 +105,7 @@ def test_update_step_emits_step_status_changed(claimed_execution):
             runner_id=RUNNER_ID,
             claim_token=claim_token,
             new_status=ExecutionStep.Status.RUNNING,
+            _allow_running=True,
         )
 
     # At minimum one call with step.status_changed
@@ -134,6 +135,7 @@ def test_update_step_emits_execution_running_on_first_step(claimed_execution):
             runner_id=RUNNER_ID,
             claim_token=claim_token,
             new_status=ExecutionStep.Status.RUNNING,
+            _allow_running=True,
         )
 
     event_types = [c[0][1].event_type for c in mock_emit.call_args_list]
@@ -166,6 +168,7 @@ def test_update_step_does_not_emit_execution_running_on_subsequent_step(
         runner_id=RUNNER_ID,
         claim_token=claim_token,
         new_status=ExecutionStep.Status.RUNNING,
+        _allow_running=True,
     )
     # Complete step 1
     services.update_execution_step(
@@ -183,6 +186,7 @@ def test_update_step_does_not_emit_execution_running_on_subsequent_step(
             runner_id=RUNNER_ID,
             claim_token=claim_token,
             new_status=ExecutionStep.Status.RUNNING,
+            _allow_running=True,
         )
 
     event_types = [c[0][1].event_type for c in mock_emit.call_args_list]

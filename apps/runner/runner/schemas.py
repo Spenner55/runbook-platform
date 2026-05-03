@@ -191,7 +191,7 @@ class HeartbeatResponse(BaseModel):
 class StepUpdateRequest(BaseModel):
     runner_id: str
     claim_token: UUID
-    status: Literal["running", "succeeded", "failed", "skipped"]
+    status: Literal["succeeded", "failed", "skipped"]
     started_at: datetime | None = None
     finished_at: datetime | None = None
     exit_code: int | None = None

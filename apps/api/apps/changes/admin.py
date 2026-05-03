@@ -50,11 +50,16 @@ class OperationProfileAdmin(admin.ModelAdmin):
 _CHANGE_RECORD_ALWAYS_READONLY = [
     "id",
     "status",
+    "approval_request",
+    "policy_evaluation",
+    "policy_decision_snapshot",
+    "terminal_reason",
     "requested_inputs_sha256",
     "request_snapshot",
     "request_snapshot_sha256",
     "operation_profile_key_snapshot",
     "workflow_version_snapshot",
+    "workflow_definition_sha256",
     "submitted_at",
     "approved_at",
     "dispatchable_at",
@@ -128,12 +133,27 @@ class ChangeExecutionBindingAdmin(admin.ModelAdmin):
     list_display = ["id", "change_record", "execution", "reserved_at", "bound_at"]
     readonly_fields = [
         "id",
+        "change_record",
+        "execution",
+        "organization",
+        "operation_profile_key",
+        "requested_inputs_sha256",
         "dispatch_token_nonce",
         "dispatch_token_hash",
         "dispatch_token_expires_at",
         "reserved_at",
         "bound_at",
+        "bound_by_runner_id",
         "runner_payload_snapshot",
         "created_at",
         "updated_at",
     ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

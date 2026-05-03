@@ -149,6 +149,7 @@ def test_step_transition_rolls_back_if_audit_emit_fails(published_workflow):
                 runner_id="runner-1",
                 claim_token=claimed["claim_token"],
                 new_status=ExecutionStep.Status.RUNNING,
+                _allow_running=True,
             )
 
     step.refresh_from_db()
