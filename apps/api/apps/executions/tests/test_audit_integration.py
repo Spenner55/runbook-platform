@@ -36,6 +36,7 @@ def test_execution_lifecycle_emits_audit_events(published_workflow):
         runner_id="runner-1",
         claim_token=claim_token,
         new_status=ExecutionStep.Status.RUNNING,
+        _allow_running=True,
     )
     execution_services.update_execution_step(
         execution=execution,

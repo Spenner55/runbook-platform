@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, field_serializer, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -123,8 +123,34 @@ class ClaimedExecution(BaseModel):
     claimed_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     steps: list[ClaimedStep]
+    # Change binding fields — present only when the execution is change-bound
+    change_record_id: UUID | None = None
+    dispatch_token: SecretStr | None = None
+    requested_inputs_sha256: str | None = None
+    operation_profile_key: str | None = None
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="after")
+    def validate_change_fields_complete(self) -> ClaimedExecution:
+        change_fields = {
+            "change_record_id": self.change_record_id,
+            "dispatch_token": self.dispatch_token,
+            "requested_inputs_sha256": self.requested_inputs_sha256,
+            "operation_profile_key": self.operation_profile_key,
+        }
+        present = {k for k, v in change_fields.items() if v is not None}
+        if present and present != set(change_fields):
+            missing = set(change_fields) - present
+            raise ValueError(
+                f"Change-bound execution is missing required fields: {sorted(missing)}. "
+                "All change fields must be present together."
+            )
+        return self
+
+    @property
+    def is_change_bound(self) -> bool:
+        return self.change_record_id is not None
 
 
 class ClaimNextResponse(BaseModel):
@@ -165,7 +191,7 @@ class HeartbeatResponse(BaseModel):
 class StepUpdateRequest(BaseModel):
     runner_id: str
     claim_token: UUID
-    status: Literal["running", "succeeded", "failed", "skipped"]
+    status: Literal["succeeded", "failed", "skipped"]
     started_at: datetime | None = None
     finished_at: datetime | None = None
     exit_code: int | None = None
@@ -296,6 +322,35 @@ class ExecutionRunSummary(BaseModel):
     error_message: str = ""
 
     model_config = ConfigDict(extra="forbid")
+
+
+# ---------------------------------------------------------------------------
+# Change binding
+# ---------------------------------------------------------------------------
+
+
+class BindChangeExecutionRequest(BaseModel):
+    runner_id: str
+    claim_token: UUID
+    execution_id: UUID
+    dispatch_token: SecretStr
+    requested_inputs_sha256: str
+    operation_profile_key: str
+    sent_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_serializer("dispatch_token", when_used="json")
+    def _serialize_dispatch_token(self, v: SecretStr) -> str:
+        return v.get_secret_value()
+
+
+class BindChangeExecutionResponse(BaseModel):
+    change_record_id: UUID
+    execution_id: UUID
+    bound_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
 
 
 # ---------------------------------------------------------------------------

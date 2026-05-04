@@ -33,6 +33,13 @@ class AuditEvent(BaseModel):
         POLICY_EVALUATION = "policy_evaluation", "Policy Evaluation"
         ARTIFACT = "artifact", "Artifact"
         INTEGRATION_CONNECTION = "integration_connection", "Integration Connection"
+        OPERATION_PROFILE = "operation_profile", "Operation Profile"
+        CHANGE_RECORD = "change_record", "Change Record"
+        CHANGE_TARGET = "change_target", "Change Target"
+        CHANGE_EXECUTION_BINDING = (
+            "change_execution_binding",
+            "Change Execution Binding",
+        )
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
@@ -102,6 +109,10 @@ class AuditEvent(BaseModel):
                         "policy_evaluation",
                         "artifact",
                         "integration_connection",
+                        "operation_profile",
+                        "change_record",
+                        "change_target",
+                        "change_execution_binding",
                     ]
                 ),
                 name="audit_object_type_valid_chk",

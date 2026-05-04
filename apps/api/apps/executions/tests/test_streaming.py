@@ -508,6 +508,7 @@ async def test_step_update_via_service_delivers_stream_event(streaming_setup):
             runner_id=runner_id,
             claim_token=claim_token,
             new_status=ExecutionStep.Status.RUNNING,
+            _allow_running=True,
         )
 
     await sync_to_async(_do_update)()

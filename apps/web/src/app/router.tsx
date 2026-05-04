@@ -4,6 +4,9 @@ import { AppLayout } from './AppLayout'
 import { ProtectedRoute } from '../features/auth/ProtectedRoute'
 import { ApprovalsInboxPage } from '../routes/approvals/ApprovalsInboxPage'
 import { LoginPage } from '../routes/auth/LoginPage'
+import { ChangeCreatePage } from '../routes/changes/ChangeCreatePage'
+import { ChangeDetailPage } from '../routes/changes/ChangeDetailPage'
+import { ChangesPage } from '../routes/changes/ChangesPage'
 import { ExecutionDetailPage } from '../routes/executions/ExecutionDetailPage'
 import { ExecutionsPage } from '../routes/executions/ExecutionsPage'
 import { IntegrationDetailPage } from '../routes/integrations/IntegrationDetailPage'
@@ -44,6 +47,9 @@ export const router = createBrowserRouter([
           { path: 'policies/:policyId', element: <PolicyDetailPage /> },
           { path: 'integrations', element: <IntegrationsPage /> },
           { path: 'integrations/:integrationId', element: <IntegrationDetailPage /> },
+          { path: 'changes', element: <ChangesPage /> },
+          { path: 'changes/new', element: <ChangeCreatePage /> },
+          { path: 'changes/:changeId', element: <ChangeDetailPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],
       },

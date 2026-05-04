@@ -15,6 +15,7 @@ from apps.audit.services import (
     system_actor,
 )
 from apps.common.exceptions import (
+    DomainConflictError,
     DomainValidationError,
     InvalidStateTransitionError,
     InvalidWorkflowDefinitionError,
@@ -40,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 @timed_execution_operation("create_execution")
 def create_execution(
-    *, workflow: Workflow, actor: AuditActor | None = None
+    *,
+    workflow: Workflow,
+    actor: AuditActor | None = None,
+    _from_change_service: bool = False,
 ) -> Execution:
     """
     Create an immutable execution snapshot from a published workflow,
@@ -63,6 +67,22 @@ def create_execution(
             code="workflow_requires_review",
             detail="Workflow requires human review before it can be executed.",
         )
+
+    if not _from_change_service:
+        from apps.changes.models import OperationProfile  # avoid circular
+
+        if OperationProfile.objects.filter(
+            organization=workflow.organization,
+            is_active=True,
+            allowed_workflows=workflow,
+        ).exists():
+            raise DomainConflictError(
+                code="workflow_requires_change_record",
+                detail=(
+                    "This workflow is managed by an active operation profile "
+                    "and must be executed through a change record."
+                ),
+            )
 
     definition = workflow.definition
     _validate_workflow_definition(definition)
@@ -303,6 +323,16 @@ def recover_stuck_executions(*, stuck_threshold_seconds: int = 300) -> list[str]
                 record_step_transition(status=_step.status)
                 _record_step_duration_if_available(_step)
 
+        try:
+            from apps.changes import services as change_services  # avoid circular
+
+            change_services.handle_bound_execution_completed(execution=execution)
+        except Exception:
+            logger.exception(
+                "handle_bound_execution_completed failed for stuck execution %s",
+                execution.id,
+            )
+
     return recovered
 
 
@@ -475,6 +505,15 @@ def fail_execution_for_approval_timeout(
     )
     record_step_transition(status=step.status)
     record_execution_event(event="approval_timeout", status=execution.status)
+    try:
+        from apps.changes import services as change_services  # avoid circular
+
+        change_services.handle_bound_execution_completed(execution=execution)
+    except Exception:
+        logger.exception(
+            "handle_bound_execution_completed failed for approval-timeout execution %s",
+            execution.id,
+        )
     return True
 
 
@@ -517,6 +556,26 @@ def _validate_workflow_definition(definition: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _expire_unbound_change_dispatch_if_needed(execution: Execution, *, now) -> bool:
+    try:
+        from apps.changes import services as change_services  # avoid circular
+    except Exception:
+        logger.exception("Could not import change services for dispatch expiry")
+        return False
+
+    try:
+        return change_services.expire_unbound_dispatch_for_execution(
+            execution=execution,
+            now=now,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to expire unbound change dispatch for execution %s",
+            execution.id,
+        )
+        return False
+
+
 @timed_execution_operation("claim_next_execution")
 def claim_next_execution(*, runner_id: str) -> dict | None:
     """
@@ -526,14 +585,28 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
     found, or None if the queue is empty.
     """
     with transaction.atomic():
-        execution = (
-            Execution.objects.select_for_update(skip_locked=True)
-            .filter(status=Execution.Status.QUEUED)
-            .order_by("created_at")
-            .first()
-        )
+        execution = None
+        now = timezone.now()
+        for _ in range(50):
+            candidate = (
+                Execution.objects.select_for_update(skip_locked=True)
+                .filter(status=Execution.Status.QUEUED)
+                .order_by("created_at")
+                .first()
+            )
+            if candidate is None:
+                break
+            if _expire_unbound_change_dispatch_if_needed(candidate, now=now):
+                continue
+            execution = candidate
+            break
         reclaimed = False
         if execution is None:
+            from apps.changes.models import ChangeExecutionBinding  # avoid circular
+
+            change_bound_execution_ids = ChangeExecutionBinding.objects.values(
+                "execution_id"
+            )
             stale_before = timezone.now() - timedelta(
                 seconds=settings.RUNNER_STALE_HEARTBEAT_SECONDS
             )
@@ -557,6 +630,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                     has_waiting_step=True,
                     has_running_step=False,
                 )
+                .exclude(id__in=change_bound_execution_ids)
                 .order_by("last_heartbeat_at", "created_at")
                 .first()
             )
@@ -666,15 +740,26 @@ def heartbeat_execution(
 
 _VALID_STEP_TRANSITIONS: dict[str, set[str]] = {
     ExecutionStep.Status.PENDING: {
+        ExecutionStep.Status.FAILED,
+    },
+    ExecutionStep.Status.WAITING_FOR_APPROVAL: {
+        ExecutionStep.Status.FAILED,
+    },
+    ExecutionStep.Status.RUNNING: {
+        ExecutionStep.Status.SUCCEEDED,
+        ExecutionStep.Status.FAILED,
+    },
+}
+
+# Used only by update_execution_step(_allow_running=True), which is called
+# exclusively from ExecutionStepStartView after policy evaluation.
+_VALID_STEP_START_TRANSITIONS: dict[str, set[str]] = {
+    ExecutionStep.Status.PENDING: {
         ExecutionStep.Status.RUNNING,
         ExecutionStep.Status.FAILED,
     },
     ExecutionStep.Status.WAITING_FOR_APPROVAL: {
         ExecutionStep.Status.RUNNING,
-        ExecutionStep.Status.FAILED,
-    },
-    ExecutionStep.Status.RUNNING: {
-        ExecutionStep.Status.SUCCEEDED,
         ExecutionStep.Status.FAILED,
     },
 }
@@ -692,13 +777,18 @@ def update_execution_step(
     finished_at=None,
     exit_code=None,
     error_message: str = "",
+    _allow_running: bool = False,
 ) -> ExecutionStep:
     """
-    Apply a narrow status transition to one step on an execution.
+    Apply a status transition to one execution step.
 
-    Allowed transitions:
-      pending  -> running
-      running  -> succeeded | failed
+    Normal (update endpoint) allowed transitions:
+      running -> succeeded | failed
+
+    Start-path only (_allow_running=True, called by ExecutionStepStartView after
+    policy evaluation):
+      pending             -> running | failed
+      waiting_for_approval -> running | failed
 
     Also transitions the parent execution from CLAIMED -> RUNNING when the
     first step starts.
@@ -719,7 +809,10 @@ def update_execution_step(
             )
 
         previous_status = step.status
-        allowed = _VALID_STEP_TRANSITIONS.get(step.status, set())
+        if _allow_running:
+            allowed = _VALID_STEP_START_TRANSITIONS.get(step.status, set())
+        else:
+            allowed = _VALID_STEP_TRANSITIONS.get(step.status, set())
         if new_status not in allowed:
             raise InvalidStateTransitionError(
                 code="invalid_state_transition",
@@ -853,6 +946,18 @@ def complete_execution(
                 detail=f"Invalid completion outcome: '{outcome}'.",
             )
 
+        try:
+            from apps.changes import services as change_services  # avoid circular
+
+            change_services.assert_execution_change_binding_ready(
+                execution,
+                runner_id=runner_id,
+                claim_token=claim_token,
+            )
+        except ImportError:
+            logger.exception("Could not import change services for completion guard")
+            raise
+
         previous_status = execution.status
         now = timezone.now()
         execution.status = outcome
@@ -933,6 +1038,27 @@ def complete_execution(
         ),
     )
     record_execution_event(event=event_type, status=execution.status)
+
+    # Update change lifecycle if this execution is change-bound
+    try:
+        from apps.changes import services as change_services  # avoid circular
+
+        change_services.handle_bound_execution_completed(execution=execution)
+    except Exception:
+        # For change-bound executions the hook releases TargetLocks and closes the
+        # ChangeWindow. Swallowing the failure would leave those records permanently
+        # stuck. Re-raise so the runner gets a 5xx and can retry completion.
+        from apps.changes.models import ChangeExecutionBinding  # avoid circular
+
+        is_change_bound = ChangeExecutionBinding.objects.filter(
+            execution_id=execution.pk
+        ).exists()
+        if is_change_bound:
+            raise
+        logger.exception(
+            "handle_bound_execution_completed failed for execution %s", execution.id
+        )
+
     return execution
 
 

@@ -200,7 +200,8 @@ def test_heartbeat_wrong_token_returns_409(queued_execution):
 
 
 @pytest.mark.django_db
-def test_step_update_transitions_pending_to_running(queued_execution):
+def test_step_update_rejects_running_status(queued_execution):
+    """Update endpoint must reject status=running — only /start/ may set a step running."""
     claim_result = execution_services.claim_next_execution(runner_id="runner-1")
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
@@ -216,10 +217,36 @@ def test_step_update_transitions_pending_to_running(queued_execution):
         },
         content_type="application/json",
     )
+    assert response.status_code == 400
+    step.refresh_from_db()
+    assert step.status == "pending"
+
+
+@pytest.mark.django_db
+def test_step_update_accepts_succeeded_after_start(queued_execution):
+    """Update endpoint accepts terminal statuses once the step is running via /start/."""
+    claim_result = execution_services.claim_next_execution(runner_id="runner-1")
+    execution = claim_result["execution"]
+    claim_token = claim_result["claim_token"]
+    step = execution.steps.order_by("position").first()
+
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    client.post(
+        f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/start/",
+        data={"runner_id": "runner-1", "claim_token": claim_token},
+        content_type="application/json",
+    )
+    response = client.post(
+        f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/update/",
+        data={
+            "runner_id": "runner-1",
+            "claim_token": claim_token,
+            "status": "succeeded",
+        },
+        content_type="application/json",
+    )
     assert response.status_code == 200
-    body = response.json()
-    assert body["step"]["status"] == "running"
-    assert body["execution_status"] == "running"
+    assert response.json()["step"]["status"] == "succeeded"
 
 
 @pytest.mark.django_db

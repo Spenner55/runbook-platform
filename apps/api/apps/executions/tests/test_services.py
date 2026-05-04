@@ -99,6 +99,7 @@ def test_terminal_step_update_records_step_duration_metric(published_workflow):
         claim_token=claim_token,
         new_status=ExecutionStep.Status.RUNNING,
         started_at=started_at,
+        _allow_running=True,
     )
     services.update_execution_step(
         execution=execution,
@@ -364,3 +365,78 @@ def test_step_failure_triggers_notify_with_step_identifiers(
     assert kwargs["context"]["step_name"] == updated.name
     assert kwargs["context"]["step_position"] == updated.position
     assert "raw output should stay out" not in str(kwargs["context"])
+
+
+# ---------------------------------------------------------------------------
+# B5: complete_execution re-raises hook failure for change-bound executions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_complete_execution_reraises_hook_failure_for_change_bound(
+    monkeypatch, published_workflow
+):
+    """If the change completion hook fails, complete_execution must re-raise for change-bound executions."""
+    from unittest.mock import MagicMock, patch
+
+    from apps.executions import services as execution_services
+
+    _ = execution_services.create_execution(workflow=published_workflow)
+    result = execution_services.claim_next_execution(runner_id="runner-b5-test")
+    assert result is not None
+    claimed = result["execution"]
+    claim_token = result["claim_token"]
+
+    def failing_hook(*args, **kwargs):
+        raise RuntimeError("simulated hook failure")
+
+    monkeypatch.setattr(
+        "apps.changes.services.handle_bound_execution_completed",
+        failing_hook,
+    )
+
+    # Make the ChangeExecutionBinding queryset report this execution as change-bound
+    mock_qs = MagicMock()
+    mock_qs.exists.return_value = True
+    mock_filter = MagicMock(return_value=mock_qs)
+
+    with patch(
+        "apps.changes.models.ChangeExecutionBinding.objects.filter", mock_filter
+    ):
+        with pytest.raises(RuntimeError, match="simulated hook failure"):
+            execution_services.complete_execution(
+                execution=claimed,
+                runner_id="runner-b5-test",
+                claim_token=str(claim_token),
+                outcome="succeeded",
+            )
+
+
+@pytest.mark.django_db
+def test_complete_execution_swallows_hook_failure_for_non_change_execution(
+    monkeypatch, published_workflow
+):
+    """For non-change-bound executions, hook failure must still be swallowed."""
+    from apps.executions import services as execution_services
+
+    _ = execution_services.create_execution(workflow=published_workflow)
+    result = execution_services.claim_next_execution(runner_id="runner-nc-test")
+    assert result is not None
+    claim_token = result["claim_token"]
+    claimed = result["execution"]
+
+    def failing_hook(*args, **kwargs):
+        raise RuntimeError("non-change hook failure")
+
+    monkeypatch.setattr(
+        "apps.changes.services.handle_bound_execution_completed",
+        failing_hook,
+    )
+
+    result_exec = execution_services.complete_execution(
+        execution=claimed,
+        runner_id="runner-nc-test",
+        claim_token=str(claim_token),
+        outcome="succeeded",
+    )
+    assert result_exec.status == "succeeded"

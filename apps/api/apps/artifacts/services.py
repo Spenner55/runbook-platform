@@ -244,6 +244,17 @@ def create_from_runner_upload(
       3. Create DB row in transaction; on DB failure attempt storage delete
     """
     _validate_runner_ownership(execution, runner_id, claim_token)
+    try:
+        from apps.changes import services as change_services  # avoid circular
+
+        change_services.assert_execution_change_binding_ready(
+            execution,
+            runner_id=runner_id,
+            claim_token=claim_token,
+        )
+    except ImportError:
+        logger.exception("Could not import change services for artifact binding guard")
+        raise
 
     if execution.status in _TERMINAL_EXECUTION_STATUSES:
         raise InvalidStateTransitionError(
