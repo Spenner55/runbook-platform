@@ -179,7 +179,9 @@ def test_terminal_status_rejects_all_transitions(terminal_status, draft_change):
 def test_single_audit_event_per_transition(draft_change):
     """Each call to transition_change emits exactly one status_changed event."""
     before = _status_changed_count(draft_change)
-    transition_change(change=draft_change, new_status=ChangeRecord.Status.PENDING_APPROVAL)
+    transition_change(
+        change=draft_change, new_status=ChangeRecord.Status.PENDING_APPROVAL
+    )
     assert _status_changed_count(draft_change) == before + 1
 
     transition_change(change=draft_change, new_status=ChangeRecord.Status.APPROVED)
@@ -200,7 +202,9 @@ def test_rejected_transition_emits_no_audit_event(draft_change):
 
 @pytest.mark.django_db
 def test_audit_event_metadata_contains_previous_and_new_status(draft_change):
-    transition_change(change=draft_change, new_status=ChangeRecord.Status.PENDING_APPROVAL)
+    transition_change(
+        change=draft_change, new_status=ChangeRecord.Status.PENDING_APPROVAL
+    )
     event = AuditEvent.objects.filter(
         event_type="change.status_changed",
         object_id=draft_change.id,
@@ -311,9 +315,7 @@ def test_transition_table_covers_all_statuses():
     defined = {s.value for s in ChangeRecord.Status}
     table_keys = set(ALLOWED_STATUS_TRANSITIONS.keys())
     missing = defined - table_keys
-    assert not missing, (
-        f"Statuses missing from ALLOWED_STATUS_TRANSITIONS: {missing}"
-    )
+    assert not missing, f"Statuses missing from ALLOWED_STATUS_TRANSITIONS: {missing}"
 
 
 def test_transition_table_targets_are_valid_statuses():

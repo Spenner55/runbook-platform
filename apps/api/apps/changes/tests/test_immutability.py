@@ -278,10 +278,17 @@ class TestAdminImmutability:
         request = rf.get("/")
         request.user = None
         fields = admin_instance.get_readonly_fields(request, obj=submitted_change)
-        for field in ("approval_request", "policy_evaluation", "policy_decision_snapshot", "terminal_reason"):
+        for field in (
+            "approval_request",
+            "policy_evaluation",
+            "policy_decision_snapshot",
+            "terminal_reason",
+        ):
             assert field in fields, f"Expected {field} in always-readonly fields"
 
-    def test_change_record_approval_fields_readonly_even_for_draft(self, draft_change, rf):
+    def test_change_record_approval_fields_readonly_even_for_draft(
+        self, draft_change, rf
+    ):
         from django.contrib.admin.sites import AdminSite
 
         from apps.changes.admin import ChangeRecordAdmin
@@ -290,8 +297,15 @@ class TestAdminImmutability:
         request = rf.get("/")
         request.user = None
         fields = admin_instance.get_readonly_fields(request, obj=draft_change)
-        for field in ("approval_request", "policy_evaluation", "policy_decision_snapshot", "terminal_reason"):
-            assert field in fields, f"Expected {field} in always-readonly even for draft"
+        for field in (
+            "approval_request",
+            "policy_evaluation",
+            "policy_decision_snapshot",
+            "terminal_reason",
+        ):
+            assert field in fields, (
+                f"Expected {field} in always-readonly even for draft"
+            )
 
     def test_change_execution_binding_admin_blocks_add(self, rf):
         from django.contrib.admin.sites import AdminSite
@@ -299,7 +313,9 @@ class TestAdminImmutability:
         from apps.changes.admin import ChangeExecutionBindingAdmin
         from apps.changes.models import ChangeExecutionBinding
 
-        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        admin_instance = ChangeExecutionBindingAdmin(
+            ChangeExecutionBinding, AdminSite()
+        )
         request = rf.get("/")
         request.user = None
         assert not admin_instance.has_add_permission(request)
@@ -310,7 +326,9 @@ class TestAdminImmutability:
         from apps.changes.admin import ChangeExecutionBindingAdmin
         from apps.changes.models import ChangeExecutionBinding
 
-        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        admin_instance = ChangeExecutionBindingAdmin(
+            ChangeExecutionBinding, AdminSite()
+        )
         request = rf.get("/")
         request.user = None
         assert not admin_instance.has_change_permission(request)
@@ -321,7 +339,9 @@ class TestAdminImmutability:
         from apps.changes.admin import ChangeExecutionBindingAdmin
         from apps.changes.models import ChangeExecutionBinding
 
-        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
+        admin_instance = ChangeExecutionBindingAdmin(
+            ChangeExecutionBinding, AdminSite()
+        )
         request = rf.get("/")
         request.user = None
         assert not admin_instance.has_delete_permission(request)
@@ -332,9 +352,17 @@ class TestAdminImmutability:
         from apps.changes.admin import ChangeExecutionBindingAdmin
         from apps.changes.models import ChangeExecutionBinding
 
-        admin_instance = ChangeExecutionBindingAdmin(ChangeExecutionBinding, AdminSite())
-        for field in ("change_record", "execution", "organization", "operation_profile_key",
-                      "requested_inputs_sha256", "bound_by_runner_id"):
+        admin_instance = ChangeExecutionBindingAdmin(
+            ChangeExecutionBinding, AdminSite()
+        )
+        for field in (
+            "change_record",
+            "execution",
+            "organization",
+            "operation_profile_key",
+            "requested_inputs_sha256",
+            "bound_by_runner_id",
+        ):
             assert field in admin_instance.readonly_fields, (
                 f"Expected {field} in ChangeExecutionBindingAdmin.readonly_fields"
             )
@@ -351,11 +379,19 @@ class TestBindingModelImmutability:
             workflow_id=str(published_workflow.id),
             title="Binding Immutability Test",
             justification="Needed",
-            targets=[{"target_type": "server", "target_identifier": "prod-bind-01", "environment": "production"}],
+            targets=[
+                {
+                    "target_type": "server",
+                    "target_identifier": "prod-bind-01",
+                    "environment": "production",
+                }
+            ],
         )
         return change_services.submit_change_record(change=change)
 
-    def test_identity_field_immutable_after_creation(self, org, operation_profile, published_workflow):
+    def test_identity_field_immutable_after_creation(
+        self, org, operation_profile, published_workflow
+    ):
         from django.core.exceptions import ValidationError
 
         change = self._make_dispatchable(org, operation_profile, published_workflow)
@@ -367,7 +403,9 @@ class TestBindingModelImmutability:
         binding.refresh_from_db()
         assert binding.operation_profile_key == original
 
-    def test_non_identity_field_can_update(self, org, operation_profile, published_workflow):
+    def test_non_identity_field_can_update(
+        self, org, operation_profile, published_workflow
+    ):
         change = self._make_dispatchable(org, operation_profile, published_workflow)
         binding = change.execution_binding
         # runner_payload_snapshot is not an identity field — it may be updated

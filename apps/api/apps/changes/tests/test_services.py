@@ -507,7 +507,9 @@ class TestDispatchableAndBinding:
         with pytest.raises(ValidationError):
             with transaction.atomic():
                 operation_profile.allowed_workflows.add(published_workflow)
-        assert not operation_profile.allowed_workflows.filter(pk=published_workflow.pk).exists()
+        assert not operation_profile.allowed_workflows.filter(
+            pk=published_workflow.pk
+        ).exists()
 
 
 @pytest.mark.django_db
@@ -663,11 +665,7 @@ class TestTargetMetadataValidation:
                         "target_type": "server",
                         "target_identifier": "prod-01",
                         "environment": "production",
-                        "metadata": {
-                            "connection": {
-                                "password": "secret123"
-                            }
-                        },
+                        "metadata": {"connection": {"password": "secret123"}},
                     }
                 ],
             )
@@ -800,9 +798,7 @@ class TestApprovalOrganizationMismatch:
             )
         assert exc_info.value.code == "approval_change_organization_mismatch"
 
-    def test_create_change_approval_request_same_org_succeeds(
-        self, org, draft_change
-    ):
+    def test_create_change_approval_request_same_org_succeeds(self, org, draft_change):
         from apps.approvals import services as approval_services
         from apps.approvals.models import ApprovalRequest
 
@@ -929,7 +925,9 @@ class TestApprovalDecisionFailClosed:
         assert exc_info.value.code == "change_approval_decision_orphaned"
 
     @pytest.mark.django_db
-    def test_raises_when_change_not_pending_approval(self, draft_change, operation_profile):
+    def test_raises_when_change_not_pending_approval(
+        self, draft_change, operation_profile
+    ):
         from apps.changes.services import handle_change_approval_decision
 
         operation_profile.requires_approval = True
@@ -939,7 +937,9 @@ class TestApprovalDecisionFailClosed:
         ar = change.approval_request
 
         # Force the change out of pending_approval without going through the decision path
-        ChangeRecord.objects.filter(pk=change.pk).update(status=ChangeRecord.Status.DRAFT)
+        ChangeRecord.objects.filter(pk=change.pk).update(
+            status=ChangeRecord.Status.DRAFT
+        )
 
         with pytest.raises(InvalidStateTransitionError) as exc_info:
             handle_change_approval_decision(

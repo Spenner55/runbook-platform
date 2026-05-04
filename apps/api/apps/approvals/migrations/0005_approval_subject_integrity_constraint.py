@@ -18,7 +18,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(backfill_execution_step_subject_id, migrations.RunPython.noop),
+        migrations.RunPython(
+            backfill_execution_step_subject_id, migrations.RunPython.noop
+        ),
         migrations.AddConstraint(
             model_name="approvalrequest",
             constraint=models.CheckConstraint(

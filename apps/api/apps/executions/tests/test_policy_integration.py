@@ -429,7 +429,11 @@ def test_step_update_cannot_bypass_policy_to_set_running(claimed):
     c = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
     response = c.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/update/",
-        data={"runner_id": "runner-1", "claim_token": str(claim_token), "status": "running"},
+        data={
+            "runner_id": "runner-1",
+            "claim_token": str(claim_token),
+            "status": "running",
+        },
         content_type="application/json",
     )
     assert response.status_code == 400

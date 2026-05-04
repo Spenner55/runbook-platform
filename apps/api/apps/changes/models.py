@@ -399,13 +399,15 @@ class ChangeExecutionBinding(BaseModel):
                 "Binding change and execution organizations must match."
             )
 
-    _IMMUTABLE_AFTER_CREATION = frozenset([
-        "change_record_id",
-        "execution_id",
-        "organization_id",
-        "operation_profile_key",
-        "requested_inputs_sha256",
-    ])
+    _IMMUTABLE_AFTER_CREATION = frozenset(
+        [
+            "change_record_id",
+            "execution_id",
+            "organization_id",
+            "operation_profile_key",
+            "requested_inputs_sha256",
+        ]
+    )
 
     def save(self, *args, **kwargs):
         if self.pk:

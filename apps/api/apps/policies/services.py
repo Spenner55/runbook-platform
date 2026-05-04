@@ -682,6 +682,7 @@ def _create_policy_evaluation_with_audit(**fields) -> PolicyEvaluation:
     with transaction.atomic():
         evaluation = PolicyEvaluation.objects.create(**fields)
         from apps.changes import services as change_services  # avoid circular
+
         change_services.link_policy_evaluation(
             execution=fields["execution"],
             policy_evaluation=evaluation,

@@ -263,7 +263,9 @@ class TestOperationProfileServiceGovernance:
 class TestAdminCrossOrgGovernance:
     """Verify the M2M signal prevents cross-org allowlisting via any code path."""
 
-    def test_m2m_add_rejects_cross_org_workflow(self, org, operation_profile, published_workflow):
+    def test_m2m_add_rejects_cross_org_workflow(
+        self, org, operation_profile, published_workflow
+    ):
         from django.core.exceptions import ValidationError
         from django.db import transaction
 
@@ -281,16 +283,22 @@ class TestAdminCrossOrgGovernance:
         with pytest.raises(ValidationError):
             with transaction.atomic():
                 other_profile.allowed_workflows.add(published_workflow)
-        assert not other_profile.allowed_workflows.filter(pk=published_workflow.pk).exists()
+        assert not other_profile.allowed_workflows.filter(
+            pk=published_workflow.pk
+        ).exists()
 
-    def test_m2m_set_rejects_cross_org_workflow(self, org, operation_profile, published_workflow):
+    def test_m2m_set_rejects_cross_org_workflow(
+        self, org, operation_profile, published_workflow
+    ):
         from django.core.exceptions import ValidationError
         from django.db import transaction
 
         from apps.changes.models import OperationProfile
         from apps.organizations.models import Organization
 
-        other_org = Organization.objects.create(name="Admin Other2", slug="admin-other2")
+        other_org = Organization.objects.create(
+            name="Admin Other2", slug="admin-other2"
+        )
         other_profile = OperationProfile.objects.create(
             organization=other_org,
             key="admin-other-profile-2",
@@ -300,7 +308,9 @@ class TestAdminCrossOrgGovernance:
         with pytest.raises(ValidationError):
             with transaction.atomic():
                 other_profile.allowed_workflows.set([published_workflow])
-        assert not other_profile.allowed_workflows.filter(pk=published_workflow.pk).exists()
+        assert not other_profile.allowed_workflows.filter(
+            pk=published_workflow.pk
+        ).exists()
 
     def test_admin_save_related_fallback_removes_cross_org(
         self, org, operation_profile, published_workflow
@@ -313,7 +323,9 @@ class TestAdminCrossOrgGovernance:
         from apps.changes.models import OperationProfile
         from apps.organizations.models import Organization
 
-        other_org = Organization.objects.create(name="Admin Other3", slug="admin-other3")
+        other_org = Organization.objects.create(
+            name="Admin Other3", slug="admin-other3"
+        )
         other_profile = OperationProfile.objects.create(
             organization=other_org,
             key="admin-other-profile-3",
@@ -333,7 +345,9 @@ class TestAdminCrossOrgGovernance:
         for wf in cross_org:
             other_profile.allowed_workflows.remove(wf)
 
-        assert not other_profile.allowed_workflows.filter(pk=published_workflow.pk).exists()
+        assert not other_profile.allowed_workflows.filter(
+            pk=published_workflow.pk
+        ).exists()
 
 
 @pytest.mark.django_db

@@ -71,7 +71,9 @@ class TestWorkflowAdminReadOnly:
 
     def test_superseded_workflow_cannot_be_deleted(self, superseded_workflow, rf):
         admin_instance, request = self._admin(rf)
-        assert not admin_instance.has_delete_permission(request, obj=superseded_workflow)
+        assert not admin_instance.has_delete_permission(
+            request, obj=superseded_workflow
+        )
 
     def test_draft_workflow_delete_not_blocked_by_our_guard(self, draft_workflow, rf):
         """The guard must not block draft deletion — it only returns False for published/superseded."""

@@ -78,7 +78,9 @@ class ApprovalRequest(BaseModel):
                 name="approval_req_status_valid_chk",
             ),
             models.CheckConstraint(
-                condition=models.Q(subject_type__in=["execution_step", "change_record"]),
+                condition=models.Q(
+                    subject_type__in=["execution_step", "change_record"]
+                ),
                 name="approval_req_subject_type_valid_chk",
             ),
             models.CheckConstraint(

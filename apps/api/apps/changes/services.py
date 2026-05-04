@@ -924,7 +924,9 @@ def submit_change_record(
         change.request_snapshot_sha256 = snapshot_hash
         change.operation_profile_key_snapshot = profile.key
         change.workflow_version_snapshot = workflow.version
-        change.workflow_definition_sha256 = sha256_canonical_json(workflow.definition or {})
+        change.workflow_definition_sha256 = sha256_canonical_json(
+            workflow.definition or {}
+        )
         change.submitted_at = now
         if actor and actor.actor_type == AuditEvent.ActorType.USER:
             change.submitted_by_id = actor.actor_id

@@ -238,7 +238,11 @@ def test_step_update_accepts_succeeded_after_start(queued_execution):
     )
     response = client.post(
         f"/api/v1/internal/executions/{execution.id}/steps/{step.id}/update/",
-        data={"runner_id": "runner-1", "claim_token": claim_token, "status": "succeeded"},
+        data={
+            "runner_id": "runner-1",
+            "claim_token": claim_token,
+            "status": "succeeded",
+        },
         content_type="application/json",
     )
     assert response.status_code == 200

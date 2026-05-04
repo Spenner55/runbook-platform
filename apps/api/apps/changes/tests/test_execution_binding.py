@@ -535,7 +535,9 @@ class TestChangeLifecycleInvariantFixes:
         execution = binding.execution
 
         # Claim before expiry so claim_next_execution's guard passes.
-        claim_result = execution_services.claim_next_execution(runner_id="test-runner-1")
+        claim_result = execution_services.claim_next_execution(
+            runner_id="test-runner-1"
+        )
         assert claim_result is not None
         execution.refresh_from_db()
 
@@ -592,7 +594,9 @@ class TestChangeLifecycleInvariantFixes:
         binding = change.execution_binding
         execution = binding.execution
 
-        claim_result = execution_services.claim_next_execution(runner_id="test-runner-1")
+        claim_result = execution_services.claim_next_execution(
+            runner_id="test-runner-1"
+        )
         assert claim_result is not None
         claim_token = claim_result["claim_token"]
         execution.refresh_from_db()
@@ -633,7 +637,9 @@ class TestChangeLifecycleInvariantFixes:
         binding = change.execution_binding
         execution = binding.execution
 
-        claim_result = execution_services.claim_next_execution(runner_id="test-runner-1")
+        claim_result = execution_services.claim_next_execution(
+            runner_id="test-runner-1"
+        )
         assert claim_result is not None
         claim_token = claim_result["claim_token"]
         execution.refresh_from_db()
@@ -817,7 +823,9 @@ class TestStaleRunnerBlocked:
         self, draft_change, operation_profile, runner_client
     ):
         """Runner B is rejected by step-start guard after runner A binds."""
-        _, execution, _, _ = self._setup_bound_execution(draft_change, operation_profile)
+        _, execution, _, _ = self._setup_bound_execution(
+            draft_change, operation_profile
+        )
         claim_token_B = self._simulate_reclaim_by_runner_b(execution)
         step = execution.steps.order_by("position").first()
 
@@ -834,7 +842,9 @@ class TestStaleRunnerBlocked:
         self, draft_change, operation_profile, runner_client
     ):
         """Runner B is rejected by step-update guard after runner A binds."""
-        _, execution, _, _ = self._setup_bound_execution(draft_change, operation_profile)
+        _, execution, _, _ = self._setup_bound_execution(
+            draft_change, operation_profile
+        )
         claim_token_B = self._simulate_reclaim_by_runner_b(execution)
         step = execution.steps.order_by("position").first()
 
@@ -855,7 +865,9 @@ class TestStaleRunnerBlocked:
         self, draft_change, operation_profile, runner_client
     ):
         """Runner B is rejected by complete guard after runner A binds."""
-        _, execution, _, _ = self._setup_bound_execution(draft_change, operation_profile)
+        _, execution, _, _ = self._setup_bound_execution(
+            draft_change, operation_profile
+        )
         claim_token_B = self._simulate_reclaim_by_runner_b(execution)
 
         response = runner_client.post(
@@ -877,7 +889,9 @@ class TestStaleRunnerBlocked:
         """Approval-status polling is also guarded — runner B cannot bypass via it."""
         from apps.executions.models import ExecutionStep
 
-        _, execution, _, _ = self._setup_bound_execution(draft_change, operation_profile)
+        _, execution, _, _ = self._setup_bound_execution(
+            draft_change, operation_profile
+        )
         claim_token_B = self._simulate_reclaim_by_runner_b(execution)
 
         step = execution.steps.order_by("position").first()
@@ -893,14 +907,14 @@ class TestStaleRunnerBlocked:
         assert response.status_code == 403
         assert response.json()["errors"][0]["code"] == "change_binding_runner_mismatch"
 
-    def test_runner_b_cannot_upload_artifact(
-        self, draft_change, operation_profile
-    ):
+    def test_runner_b_cannot_upload_artifact(self, draft_change, operation_profile):
         """assert_execution_change_binding_ready blocks runner B from artifact upload."""
         from apps.changes.services import assert_execution_change_binding_ready
         from apps.common.exceptions import InvalidStateTransitionError
 
-        _, execution, _, _ = self._setup_bound_execution(draft_change, operation_profile)
+        _, execution, _, _ = self._setup_bound_execution(
+            draft_change, operation_profile
+        )
         claim_token_B = self._simulate_reclaim_by_runner_b(execution)
         execution.refresh_from_db()
 

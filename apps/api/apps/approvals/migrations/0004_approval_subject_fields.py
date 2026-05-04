@@ -7,7 +7,9 @@ def backfill_subject_fields(apps, schema_editor):
     ApprovalRequest.objects.filter(subject_type__isnull=True).update(
         subject_type="execution_step",
     )
-    for ar in ApprovalRequest.objects.filter(subject_id__isnull=True, step_id__isnull=False):
+    for ar in ApprovalRequest.objects.filter(
+        subject_id__isnull=True, step_id__isnull=False
+    ):
         ApprovalRequest.objects.filter(pk=ar.pk).update(subject_id=ar.step_id)
 
 

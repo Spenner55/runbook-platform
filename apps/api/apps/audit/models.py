@@ -36,7 +36,10 @@ class AuditEvent(BaseModel):
         OPERATION_PROFILE = "operation_profile", "Operation Profile"
         CHANGE_RECORD = "change_record", "Change Record"
         CHANGE_TARGET = "change_target", "Change Target"
-        CHANGE_EXECUTION_BINDING = "change_execution_binding", "Change Execution Binding"
+        CHANGE_EXECUTION_BINDING = (
+            "change_execution_binding",
+            "Change Execution Binding",
+        )
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)

@@ -400,7 +400,9 @@ def test_complete_execution_reraises_hook_failure_for_change_bound(
     mock_qs.exists.return_value = True
     mock_filter = MagicMock(return_value=mock_qs)
 
-    with patch("apps.changes.models.ChangeExecutionBinding.objects.filter", mock_filter):
+    with patch(
+        "apps.changes.models.ChangeExecutionBinding.objects.filter", mock_filter
+    ):
         with pytest.raises(RuntimeError, match="simulated hook failure"):
             execution_services.complete_execution(
                 execution=claimed,
