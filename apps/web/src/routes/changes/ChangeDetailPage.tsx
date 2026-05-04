@@ -146,8 +146,8 @@ function ChangeTargetsList({ change }: { change: ChangeRecord }) {
       <ul className="step-list">
         {change.targets.map((t) => (
           <li key={t.id} className="step-list__item">
-            <span className="pill">{t.environment}</span>{' '}
-            <strong>{t.target_type}</strong>: {t.target_identifier}
+            <span className="pill">{t.environment}</span> <strong>{t.target_type}</strong>:{' '}
+            {t.target_identifier}
             {t.display_name && <span className="muted"> ({t.display_name})</span>}
           </li>
         ))}

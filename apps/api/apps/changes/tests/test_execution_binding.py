@@ -563,7 +563,6 @@ class TestChangeLifecycleInvariantFixes:
     ):
         """When an execution completes but its change is still dispatchable (binding never
         confirmed), handle_bound_execution_completed must expire the change."""
-        from apps.executions import services as execution_services
         from apps.executions.models import Execution
 
         change = self._make_dispatchable(draft_change, operation_profile)
@@ -943,6 +942,7 @@ class TestStaleRunnerBlocked:
         """If execution.claim_token rotates (e.g. after a heartbeat reset) but
         runner_id still matches the binding, the old claim_token is rejected."""
         import uuid
+
         from apps.changes.services import assert_execution_change_binding_ready
         from apps.common.exceptions import InvalidStateTransitionError
 

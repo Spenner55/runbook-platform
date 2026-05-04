@@ -174,10 +174,7 @@ describe('ChangeDetailPage', () => {
 
   it('shows error state when change not found', async () => {
     fetchMock.mockResolvedValueOnce(
-      createJsonResponse(
-        { errors: [{ code: 'not_found', detail: 'Not found.' }] },
-        { status: 404 },
-      ),
+      createJsonResponse({ errors: [{ code: 'not_found', detail: 'Not found.' }] }, { status: 404 })
     )
     renderPage()
 

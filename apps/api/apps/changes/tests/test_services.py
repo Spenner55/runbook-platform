@@ -496,6 +496,7 @@ class TestDispatchableAndBinding:
         self, operation_profile, published_workflow
     ):
         from django.db import transaction
+
         from apps.organizations.models import Organization
 
         operation_profile.allowed_workflows.clear()

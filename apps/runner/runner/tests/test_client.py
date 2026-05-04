@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from runner.client import (
     ARTIFACT_UPLOAD_TIMEOUT,
@@ -15,8 +16,6 @@ from runner.client import (
     RUNNER_API_TIMEOUT,
     ApiClient,
 )
-from pydantic import ValidationError
-
 from runner.schemas import (
     ApprovalStatusResponse,
     ClaimNextResponse,
@@ -24,7 +23,6 @@ from runner.schemas import (
     HeartbeatResponse,
     StepStartResponse,
     StepUpdateRequest,
-    StepUpdateResponse,
 )
 
 # ---------------------------------------------------------------------------

@@ -381,7 +381,7 @@ def test_complete_execution_reraises_hook_failure_for_change_bound(
 
     from apps.executions import services as execution_services
 
-    execution = execution_services.create_execution(workflow=published_workflow)
+    _ = execution_services.create_execution(workflow=published_workflow)
     result = execution_services.claim_next_execution(runner_id="runner-b5-test")
     assert result is not None
     claimed = result["execution"]
@@ -417,7 +417,7 @@ def test_complete_execution_swallows_hook_failure_for_non_change_execution(
     """For non-change-bound executions, hook failure must still be swallowed."""
     from apps.executions import services as execution_services
 
-    execution = execution_services.create_execution(workflow=published_workflow)
+    _ = execution_services.create_execution(workflow=published_workflow)
     result = execution_services.claim_next_execution(runner_id="runner-nc-test")
     assert result is not None
     claim_token = result["claim_token"]

@@ -10,6 +10,7 @@ import pytest
 
 from runner.executor import Executor
 from runner.schemas import (
+    BindChangeExecutionRequest,
     BindChangeExecutionResponse,
     ClaimedExecution,
     ClaimedStep,
@@ -207,9 +208,7 @@ class TestExecutorChangeBound:
 class TestBindChangeExecutionRequestSecret:
     """dispatch_token in BindChangeExecutionRequest must be treated as a secret."""
 
-    def _make_request(self) -> "BindChangeExecutionRequest":
-        from runner.schemas import BindChangeExecutionRequest
-
+    def _make_request(self) -> BindChangeExecutionRequest:
         return BindChangeExecutionRequest(
             runner_id="r1",
             claim_token=uuid4(),

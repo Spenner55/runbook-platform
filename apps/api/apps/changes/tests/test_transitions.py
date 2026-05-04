@@ -8,8 +8,6 @@ Covers:
 - ``schedule_or_make_dispatchable()`` rejects every status except ``approved``.
 """
 
-import itertools
-
 import pytest
 
 from apps.audit.models import AuditEvent
@@ -17,7 +15,6 @@ from apps.changes import services as change_services
 from apps.changes.models import ChangeRecord
 from apps.changes.transitions import ALLOWED_STATUS_TRANSITIONS, transition_change
 from apps.common.exceptions import InvalidStateTransitionError
-
 
 # ---------------------------------------------------------------------------
 # Helpers

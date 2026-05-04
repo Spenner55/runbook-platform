@@ -61,7 +61,10 @@ export function ChangeCreatePage() {
 
   function addTarget() {
     const firstType = selectedProfile?.allowed_target_types[0] ?? ''
-    setTargets((prev) => [...prev, { target_type: firstType, target_identifier: '', display_name: '' }])
+    setTargets((prev) => [
+      ...prev,
+      { target_type: firstType, target_identifier: '', display_name: '' },
+    ])
   }
 
   function removeTarget(index: number) {
@@ -92,9 +95,7 @@ export function ChangeCreatePage() {
 
     const dupIdx = findDuplicateTarget(targets)
     if (dupIdx !== null) {
-      setErrorMsg(
-        `Duplicate target at row ${dupIdx + 1}: same type and identifier already exists.`,
-      )
+      setErrorMsg(`Duplicate target at row ${dupIdx + 1}: same type and identifier already exists.`)
       return
     }
 
@@ -119,7 +120,7 @@ export function ChangeCreatePage() {
           navigate(`/changes/${change.id}`)
         },
         onError: (err) => setErrorMsg(getApiErrorMessage(err)),
-      },
+      }
     )
   }
 
@@ -278,7 +279,12 @@ export function ChangeCreatePage() {
             {targets.map((target, idx) => (
               <div
                 key={idx}
-                style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr auto', gap: '0.5rem', alignItems: 'end' }}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'auto 1fr 1fr auto',
+                  gap: '0.5rem',
+                  alignItems: 'end',
+                }}
                 data-testid={`target-row-${idx}`}
               >
                 {/* Target type — driven by profile */}

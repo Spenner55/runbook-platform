@@ -66,6 +66,7 @@ jobs:
       CORS_ALLOWED_ORIGINS: http://localhost:5173
       RUNNER_REGISTRATION_TOKEN: ci-runner-token-not-for-production
       INTEGRATION_FERNET_KEY: ci-fernet-key-not-for-production
+      CHANGE_DISPATCH_TOKEN_SECRET: ci-dispatch-token-secret-not-for-production
     defaults:
       run:
         working-directory: apps/api

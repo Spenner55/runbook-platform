@@ -266,8 +266,9 @@ class TestAdminCrossOrgGovernance:
     def test_m2m_add_rejects_cross_org_workflow(self, org, operation_profile, published_workflow):
         from django.core.exceptions import ValidationError
         from django.db import transaction
-        from apps.organizations.models import Organization
+
         from apps.changes.models import OperationProfile
+        from apps.organizations.models import Organization
 
         other_org = Organization.objects.create(name="Admin Other", slug="admin-other")
         other_profile = OperationProfile.objects.create(
@@ -285,8 +286,9 @@ class TestAdminCrossOrgGovernance:
     def test_m2m_set_rejects_cross_org_workflow(self, org, operation_profile, published_workflow):
         from django.core.exceptions import ValidationError
         from django.db import transaction
-        from apps.organizations.models import Organization
+
         from apps.changes.models import OperationProfile
+        from apps.organizations.models import Organization
 
         other_org = Organization.objects.create(name="Admin Other2", slug="admin-other2")
         other_profile = OperationProfile.objects.create(

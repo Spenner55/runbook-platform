@@ -8,9 +8,9 @@ import logging
 
 from rest_framework import serializers
 
-logger = logging.getLogger(__name__)
-
 from apps.executions.models import Execution, ExecutionStep
+
+logger = logging.getLogger(__name__)
 
 
 class ClaimNextRequestSerializer(serializers.Serializer):

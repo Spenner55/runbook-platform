@@ -3,7 +3,7 @@ import type { ChangeRecord, CreateChangeInput, OperationProfile } from '../types
 
 export function listOperationProfiles() {
   return apiRequest<{ results: OperationProfile[] }>('/api/v1/changes/operation-profiles/').then(
-    (r) => r.results,
+    (r) => r.results
   )
 }
 

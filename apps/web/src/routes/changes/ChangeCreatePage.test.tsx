@@ -141,8 +141,8 @@ describe('ChangeCreatePage', () => {
       .mockResolvedValueOnce(
         createJsonResponse(
           { errors: [{ code: 'invalid_operation_profile', detail: 'Profile not found.' }] },
-          { status: 400 },
-        ),
+          { status: 400 }
+        )
       )
 
     renderPage()
@@ -256,7 +256,10 @@ describe('ChangeCreatePage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     const [, createCall] = fetchMock.mock.calls
-    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<string, unknown>
+    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<
+      string,
+      unknown
+    >
     expect(body.requested_inputs).toEqual({ ticket: 'CHG-99' })
   })
 
@@ -290,7 +293,10 @@ describe('ChangeCreatePage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     const [, createCall] = fetchMock.mock.calls
-    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<string, unknown>
+    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<
+      string,
+      unknown
+    >
     expect(typeof body.scheduled_for).toBe('string')
     expect(body.scheduled_for).toContain('2026-06-01')
   })
@@ -390,7 +396,7 @@ describe('ChangeCreatePage', () => {
 
   it('resets target type to first allowed type when profile changes', async () => {
     fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ results: [mockProfileSingleType, mockProfileMultiType] }),
+      createJsonResponse({ results: [mockProfileSingleType, mockProfileMultiType] })
     )
     renderPage()
     await waitFor(() => screen.getByLabelText(/operation profile/i))
@@ -409,7 +415,7 @@ describe('ChangeCreatePage', () => {
 
   it('resets targets to a single row when profile changes', async () => {
     fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ results: [mockProfileSingleType, mockProfileMultiType] }),
+      createJsonResponse({ results: [mockProfileSingleType, mockProfileMultiType] })
     )
     renderPage()
     await waitFor(() => screen.getByLabelText(/operation profile/i))
