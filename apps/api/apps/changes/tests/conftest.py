@@ -59,6 +59,26 @@ def operation_profile(org, published_workflow):
 
 
 @pytest.fixture
+def org_factory():
+    from apps.organizations.models import Organization
+
+    def _make(slug):
+        return Organization.objects.create(name=slug, slug=slug)
+
+    return _make
+
+
+@pytest.fixture
+def org_user(org, db):
+    from apps.users.models import User
+
+    return User.objects.create_user(
+        email="org-user@example.com",
+        password="s3cr3tpass!",
+    )
+
+
+@pytest.fixture
 def draft_change(org, operation_profile, published_workflow):
     # Create via service directly to avoid HTTP overhead in non-API tests
     actor = AuditActor(actor_type=AuditEvent.ActorType.SYSTEM, actor_label="test")

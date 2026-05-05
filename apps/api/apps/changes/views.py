@@ -13,9 +13,16 @@ from apps.changes import selectors, services
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
     ChangeRecordDetailSerializer,
+    ChangeWindowInputSerializer,
+    ChangeWindowOutputSerializer,
     CreateChangeRecordSerializer,
+    CreateFreezeRuleSerializer,
+    DispatchEligibilityCheckSerializer,
+    ExecutionTimingCallbackSerializer,
+    FreezeRuleSerializer,
     OperationProfileSerializer,
     SubmitChangeRecordSerializer,
+    UpdateFreezeRuleSerializer,
 )
 from apps.common.authentication import RunnerBearerTokenAuthentication
 from apps.common.exceptions import (
@@ -25,6 +32,7 @@ from apps.common.exceptions import (
 )
 from apps.common.org_context import require_organization_id
 from apps.common.permissions import (
+    ADMIN_ROLES,
     OPERATOR_ROLES,
     IsRunnerAuthenticated,
     assert_organization_member,
@@ -193,6 +201,240 @@ class ChangeRecordSubmitView(APIView):
         return Response(ChangeRecordDetailSerializer(change).data)
 
 
+class ChangeWindowView(APIView):
+    """PATCH /api/v1/changes/{change_id}/window/ — create or update the execution window."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeWindowInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            window = services.create_or_update_change_window(
+                change=change,
+                starts_at=d["starts_at"],
+                ends_at=d["ends_at"],
+                timezone_name=d.get("timezone", ""),
+                reason=d.get("reason", ""),
+                actor=actor,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+            return _error_response(exc)
+
+        return Response(ChangeWindowOutputSerializer(window).data)
+
+
+class FreezeRuleListCreateView(APIView):
+    """
+    GET  /api/v1/freeze-rules/ — list all freeze rules for the org
+    POST /api/v1/freeze-rules/ — create a new freeze rule (admin only)
+    """
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        rules = selectors.list_freeze_rules_for_org(organization=org)
+        return Response({"results": FreezeRuleSerializer(rules, many=True).data})
+
+    def post(self, request):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=ADMIN_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        serializer = CreateFreezeRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            rule = services.create_freeze_rule(
+                organization=org,
+                name=d["name"],
+                description=d.get("description", ""),
+                behavior=d["behavior"],
+                starts_at=d["starts_at"],
+                ends_at=d["ends_at"],
+                scope_type=d["scope_type"],
+                target_type=d.get("target_type", ""),
+                target_identifier=d.get("target_identifier", ""),
+                requires_exception_reference=d.get("requires_exception_reference", False),
+                actor=actor,
+            )
+        except (DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
+
+        return Response(FreezeRuleSerializer(rule).data, status=http_status.HTTP_201_CREATED)
+
+
+class FreezeRuleDetailView(APIView):
+    """
+    GET   /api/v1/freeze-rules/{id}/ — retrieve a freeze rule
+    PATCH /api/v1/freeze-rules/{id}/ — update a freeze rule (admin only)
+    """
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def _get_rule(self, request, rule_id):
+        organization_id = require_organization_id(request)
+        org = Organization.objects.get(pk=organization_id)
+        rule = selectors.get_freeze_rule(rule_id=rule_id, organization=org)
+        if rule is None:
+            return None, None, org
+        return rule, organization_id, org
+
+    def get(self, request, rule_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+        rule = selectors.get_freeze_rule(rule_id=rule_id, organization=org)
+        if rule is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Freeze rule not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+        return Response(FreezeRuleSerializer(rule).data)
+
+    def patch(self, request, rule_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=ADMIN_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        rule = selectors.get_freeze_rule(rule_id=rule_id, organization=org)
+        if rule is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Freeze rule not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = UpdateFreezeRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            rule = services.update_freeze_rule(
+                rule=rule,
+                actor=actor,
+                **d,
+            )
+        except (DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
+
+        return Response(FreezeRuleSerializer(rule).data)
+
+
+class FreezeRuleDeactivateView(APIView):
+    """POST /api/v1/freeze-rules/{id}/deactivate/ — deactivate a freeze rule (admin only)"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, rule_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=ADMIN_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        rule = selectors.get_freeze_rule(rule_id=rule_id, organization=org)
+        if rule is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Freeze rule not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        rule = services.deactivate_freeze_rule(rule=rule, actor=actor)
+        return Response(FreezeRuleSerializer(rule).data)
+
+
+class DispatchPreflightRunView(APIView):
+    """POST /api/v1/changes/{change_id}/preflight/ — run dispatch preflight checks."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            check = services.run_dispatch_preflight(change=change, actor=actor)
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+            return _error_response(exc)
+
+        return Response(
+            DispatchEligibilityCheckSerializer(check).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class DispatchPreflightLatestView(APIView):
+    """GET /api/v1/changes/{change_id}/preflight/latest/ — retrieve the most recent preflight check."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        check = selectors.get_latest_dispatch_preflight(
+            change_id=change_id, organization=org
+        )
+        if check is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "No preflight check found for this change."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(DispatchEligibilityCheckSerializer(check).data)
+
+
 class BindChangeExecutionView(APIView):
     """POST /api/v1/internal/changes/{change_id}/bind-execution/"""
 
@@ -236,5 +478,77 @@ class BindChangeExecutionView(APIView):
                 {"errors": [{"code": exc.code, "detail": exc.detail}]},
                 status=http_code,
             )
+
+        return Response(result)
+
+
+class ExecutionAcceptedView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/execution-accepted/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        serializer = ExecutionTimingCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            result = services.record_execution_accepted(
+                change_id=str(change_id),
+                runner_id=d["runner_id"],
+                execution_id=str(d["execution_id"]),
+                observed_at=d.get("observed_at"),
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+            return _error_response(exc)
+
+        return Response(result)
+
+
+class ExecutionStartedView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/execution-started/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        serializer = ExecutionTimingCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            result = services.record_execution_started(
+                change_id=str(change_id),
+                runner_id=d["runner_id"],
+                execution_id=str(d["execution_id"]),
+                observed_at=d.get("observed_at"),
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+            return _error_response(exc)
+
+        return Response(result)
+
+
+class ExecutionFinishedView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/execution-finished/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        serializer = ExecutionTimingCallbackSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            result = services.record_execution_finished(
+                change_id=str(change_id),
+                runner_id=d["runner_id"],
+                execution_id=str(d["execution_id"]),
+                observed_at=d.get("observed_at"),
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+            return _error_response(exc)
 
         return Response(result)

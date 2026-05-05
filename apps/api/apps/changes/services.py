@@ -8,7 +8,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
@@ -17,7 +17,11 @@ from apps.changes.models import (
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
+    ChangeWindow,
+    DispatchEligibilityCheck,
+    FreezeRule,
     OperationProfile,
+    TargetLock,
 )
 from apps.changes.transitions import transition_change  # noqa: F401 – re-exported
 from apps.common.exceptions import (
@@ -1115,6 +1119,80 @@ def schedule_or_make_dispatchable(
         make_dispatchable(change=change, actor=actor)
 
 
+def _get_fresh_passed_preflight(
+    change: ChangeRecord, now
+) -> DispatchEligibilityCheck | None:
+    """Return the latest PASSED, non-expired preflight check for change, or None."""
+    return (
+        DispatchEligibilityCheck.objects.filter(
+            change_record=change,
+            result=DispatchEligibilityCheck.Result.PASSED,
+            expires_at__gt=now,
+        )
+        .order_by("-checked_at")
+        .first()
+    )
+
+
+def _acquire_target_locks_for_dispatch(
+    *,
+    change: ChangeRecord,
+    execution: "Execution",
+    now,
+    actor: AuditActor,
+) -> list[TargetLock]:
+    """Create ACTIVE TargetLock rows for every change target inside an open transaction.
+
+    Raises DomainConflictError(code='target_lock_conflict') if any target is already
+    locked by another change. The IntegrityError from the DB unique constraint is caught
+    via a savepoint so the outer transaction remains usable.
+    """
+    targets = list(change.targets.order_by("position"))
+    if not targets:
+        return []
+
+    locks: list[TargetLock] = []
+    for target in targets:
+        try:
+            with transaction.atomic():
+                lock = TargetLock.objects.create(
+                    organization=change.organization,
+                    change_record=change,
+                    execution=execution,
+                    change_target=target,
+                    target_type=target.target_type,
+                    target_identifier=target.target_identifier,
+                    normalized_identifier=target.normalized_identifier,
+                    status=TargetLock.Status.ACTIVE,
+                    acquired_at=now,
+                )
+                locks.append(lock)
+        except IntegrityError:
+            raise DomainConflictError(
+                code="target_lock_conflict",
+                detail=(
+                    f"Dispatch blocked: active target lock exists for "
+                    f"{target.target_type}:{target.target_identifier}."
+                ),
+            )
+
+    for lock in locks:
+        _emit(
+            change=change,
+            event_type="change.target_lock_acquired",
+            object_type=AuditEvent.ObjectType.TARGET_LOCK,
+            actor=actor,
+            metadata={
+                "target_type": lock.target_type,
+                "target_identifier": lock.target_identifier,
+                "execution_id": str(execution.id),
+            },
+            object_id=lock.id,
+        )
+
+    return locks
+
+
 def make_dispatchable(
     *,
     change: ChangeRecord,
@@ -1122,6 +1200,8 @@ def make_dispatchable(
 ) -> None:
     """Reserve an execution and create the ChangeExecutionBinding."""
     from apps.executions import services as execution_services  # avoid circular
+
+    effective_actor = actor or system_actor("Change service")
 
     with transaction.atomic():
         change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
@@ -1133,16 +1213,32 @@ def make_dispatchable(
                 code="invalid_state_transition",
                 detail=f"Cannot dispatch change with status '{change.status}'.",
             )
+        now = timezone.now()
         if (
             change.status == ChangeRecord.Status.SCHEDULED
             and change.scheduled_for
-            and change.scheduled_for > timezone.now()
+            and change.scheduled_for > now
         ):
             raise InvalidStateTransitionError(
                 code="invalid_state_transition",
                 detail="Cannot dispatch scheduled change before scheduled_for.",
             )
         validate_request_integrity(change)
+
+        # Phase 11.2: gate on a fresh PASSED preflight eligibility check.
+        fresh_check = _get_fresh_passed_preflight(change, now)
+        if fresh_check is None:
+            fresh_check = run_dispatch_preflight(change=change, actor=effective_actor)
+        if fresh_check.result != DispatchEligibilityCheck.Result.PASSED:
+            conflict_count = len(fresh_check.conflicts)
+            raise DomainConflictError(
+                code="dispatch_preflight_failed",
+                detail=(
+                    f"Dispatch blocked: preflight failed with {conflict_count} conflict(s)."
+                    if conflict_count
+                    else "Dispatch blocked: preflight check failed."
+                ),
+            )
 
         profile = OperationProfile.objects.get(pk=change.operation_profile_id)
         workflow = Workflow.objects.get(pk=change.workflow_id)
@@ -1159,11 +1255,17 @@ def make_dispatchable(
 
         execution = execution_services.create_execution(
             workflow=workflow,
-            actor=actor or system_actor("Change service"),
+            actor=effective_actor,
             _from_change_service=True,
         )
 
-        now = timezone.now()
+        _acquire_target_locks_for_dispatch(
+            change=change,
+            execution=execution,
+            now=now,
+            actor=effective_actor,
+        )
+
         nonce = secrets.token_hex(32)
         ttl_seconds = profile.dispatch_ttl_seconds
         expires_at = now + timedelta(seconds=ttl_seconds)
@@ -1211,7 +1313,7 @@ def make_dispatchable(
             change=change,
             event_type="change.execution_binding_reserved",
             object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
-            actor=actor or system_actor("Change service"),
+            actor=effective_actor,
             metadata={
                 "change_record_id": str(change.id),
                 "execution_id": str(execution.id),
@@ -1584,6 +1686,283 @@ def link_policy_evaluation(
 
 
 # ---------------------------------------------------------------------------
+# Runner timing callbacks (accepted / started / finished)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_bound_binding(
+    *, change_id: str, runner_id: str, execution_id: str
+) -> tuple["ChangeRecord", "ChangeExecutionBinding"]:
+    """Fetch and validate a bound ChangeExecutionBinding inside a transaction.
+
+    Raises DomainValidationError / InvalidStateTransitionError on mismatch.
+    Caller must be inside transaction.atomic() and should pass select_for_update
+    locks already acquired before calling this.
+    """
+    try:
+        change = ChangeRecord.objects.select_for_update().get(pk=change_id)
+    except ChangeRecord.DoesNotExist:
+        raise DomainValidationError(
+            code="change_not_found",
+            detail="Change record not found.",
+        )
+    try:
+        binding = ChangeExecutionBinding.objects.select_for_update().get(
+            change_record=change
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        raise DomainValidationError(
+            code="binding_not_found",
+            detail="No execution binding found for this change.",
+        )
+    if str(binding.execution_id) != str(execution_id):
+        raise DomainValidationError(
+            code="execution_id_mismatch",
+            detail="Execution ID does not match binding.",
+        )
+    if not binding.bound_at:
+        raise InvalidStateTransitionError(
+            code="execution_not_bound",
+            detail="Execution has not been bound yet.",
+        )
+    if binding.bound_by_runner_id != runner_id:
+        raise InvalidStateTransitionError(
+            code="runner_ownership_mismatch",
+            detail="Runner does not own this execution.",
+        )
+    return change, binding
+
+
+def record_execution_accepted(
+    *,
+    change_id: str,
+    runner_id: str,
+    execution_id: str,
+    observed_at=None,
+) -> dict:
+    """Record that the runner has accepted the change execution dispatch.
+
+    Stores a runner-observed timestamp on the binding. Idempotent: if
+    execution_accepted_at is already set the call succeeds without overwriting.
+    """
+    now = observed_at or timezone.now()
+
+    with transaction.atomic():
+        change, binding = _resolve_bound_binding(
+            change_id=change_id,
+            runner_id=runner_id,
+            execution_id=execution_id,
+        )
+
+        if binding.execution_accepted_at is None:
+            binding.execution_accepted_at = now
+            binding.save(update_fields=["execution_accepted_at", "updated_at"])
+
+        _emit(
+            change=change,
+            event_type="change.execution_accepted",
+            object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
+            actor=_runner_actor(runner_id),
+            metadata={
+                "execution_id": str(execution_id),
+                "runner_id": runner_id,
+                "observed_at": now.isoformat(),
+            },
+            object_id=binding.id,
+        )
+
+    return {
+        "change_record_id": str(change.id),
+        "binding_id": str(binding.id),
+        "execution_id": str(execution_id),
+        "execution_accepted_at": binding.execution_accepted_at,
+    }
+
+
+def record_execution_started(
+    *,
+    change_id: str,
+    runner_id: str,
+    execution_id: str,
+    observed_at=None,
+) -> dict:
+    """Record that the runner has started executing the change.
+
+    Stores a runner-observed timestamp on the binding. Idempotent: if
+    execution_started_at is already set the call succeeds without overwriting.
+    """
+    now = observed_at or timezone.now()
+
+    with transaction.atomic():
+        change, binding = _resolve_bound_binding(
+            change_id=change_id,
+            runner_id=runner_id,
+            execution_id=execution_id,
+        )
+
+        if binding.execution_started_at is None:
+            binding.execution_started_at = now
+            binding.save(update_fields=["execution_started_at", "updated_at"])
+
+        _emit(
+            change=change,
+            event_type="change.execution_started",
+            object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
+            actor=_runner_actor(runner_id),
+            metadata={
+                "execution_id": str(execution_id),
+                "runner_id": runner_id,
+                "observed_at": now.isoformat(),
+            },
+            object_id=binding.id,
+        )
+
+    return {
+        "change_record_id": str(change.id),
+        "binding_id": str(binding.id),
+        "execution_id": str(execution_id),
+        "execution_started_at": binding.execution_started_at,
+    }
+
+
+def _release_active_target_locks(
+    *, change: ChangeRecord, now, runner_id: str
+) -> int:
+    """Release all ACTIVE target locks for the change. Returns count released."""
+    locks = list(
+        TargetLock.objects.select_for_update().filter(
+            change_record=change, status=TargetLock.Status.ACTIVE
+        )
+    )
+    for lock in locks:
+        lock.status = TargetLock.Status.RELEASED
+        lock.released_at = now
+        lock.release_reason = "execution_finished"
+        lock.save(update_fields=["status", "released_at", "release_reason", "updated_at"])
+        AuditService.emit(
+            organization_id=change.organization_id,
+            actor_type=AuditEvent.ActorType.RUNNER,
+            actor_id=runner_id,
+            actor_label=runner_id,
+            event_type="target_lock.released",
+            object_type=AuditEvent.ObjectType.TARGET_LOCK,
+            object_id=lock.id,
+            metadata={
+                "change_record_id": str(change.id),
+                "target_type": lock.target_type,
+                "target_identifier": lock.target_identifier,
+                "release_reason": "execution_finished",
+            },
+        )
+    return len(locks)
+
+
+def _finalize_window_on_execution_finished(
+    *, change: ChangeRecord, now, runner_id: str
+) -> str | None:
+    """Update the change window status when execution finishes.
+
+    Returns the new window status, or None if no window exists or it was
+    already in a final state.
+    """
+    try:
+        window = ChangeWindow.objects.select_for_update().get(change_record=change)
+    except ChangeWindow.DoesNotExist:
+        return None
+
+    if window.status in (ChangeWindow.Status.CLOSED, ChangeWindow.Status.OVERRUN):
+        return window.status
+
+    if now > window.ends_at:
+        new_status = ChangeWindow.Status.OVERRUN
+        window.status = new_status
+        window.overrun_at = now
+        window.save(update_fields=["status", "overrun_at", "updated_at"])
+        event_type = "change.window_overrun"
+    else:
+        new_status = ChangeWindow.Status.CLOSED
+        window.status = new_status
+        window.closed_at = now
+        window.save(update_fields=["status", "closed_at", "updated_at"])
+        event_type = "change.window_closed"
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=AuditEvent.ActorType.RUNNER,
+        actor_id=runner_id,
+        actor_label=runner_id,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.CHANGE_WINDOW,
+        object_id=window.id,
+        metadata={
+            "change_record_id": str(change.id),
+            "window_ends_at": window.ends_at.isoformat(),
+            "observed_finished_at": now.isoformat(),
+        },
+    )
+    return new_status
+
+
+def record_execution_finished(
+    *,
+    change_id: str,
+    runner_id: str,
+    execution_id: str,
+    observed_at=None,
+) -> dict:
+    """Record that the runner has finished executing the change.
+
+    Stores a runner-observed timestamp, releases all active target locks, and
+    finalizes the change window status (CLOSED or OVERRUN). Idempotent: if
+    execution_finished_at is already set the locks and window are still
+    re-evaluated (both are no-ops when already in terminal state).
+    """
+    now = observed_at or timezone.now()
+
+    with transaction.atomic():
+        change, binding = _resolve_bound_binding(
+            change_id=change_id,
+            runner_id=runner_id,
+            execution_id=execution_id,
+        )
+
+        if binding.execution_finished_at is None:
+            binding.execution_finished_at = now
+            binding.save(update_fields=["execution_finished_at", "updated_at"])
+
+        locks_released = _release_active_target_locks(
+            change=change, now=now, runner_id=runner_id
+        )
+        window_status = _finalize_window_on_execution_finished(
+            change=change, now=now, runner_id=runner_id
+        )
+
+        _emit(
+            change=change,
+            event_type="change.execution_finished",
+            object_type=AuditEvent.ObjectType.CHANGE_EXECUTION_BINDING,
+            actor=_runner_actor(runner_id),
+            metadata={
+                "execution_id": str(execution_id),
+                "runner_id": runner_id,
+                "observed_at": now.isoformat(),
+                "locks_released": locks_released,
+                "window_status": window_status,
+            },
+            object_id=binding.id,
+        )
+
+    return {
+        "change_record_id": str(change.id),
+        "binding_id": str(binding.id),
+        "execution_id": str(execution_id),
+        "execution_finished_at": binding.execution_finished_at,
+        "locks_released": locks_released,
+        "window_status": window_status,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Execution completion hook
 # ---------------------------------------------------------------------------
 
@@ -1704,3 +2083,871 @@ def _runner_actor(runner_id: str) -> AuditActor:
         actor_id=runner_id,
         actor_label=runner_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Change window service
+# ---------------------------------------------------------------------------
+
+# Statuses that allow window creation / update.
+_WINDOW_ALLOWED_STATUSES = frozenset(
+    [
+        ChangeRecord.Status.DRAFT,
+        ChangeRecord.Status.PENDING_APPROVAL,
+        ChangeRecord.Status.APPROVED,
+        ChangeRecord.Status.SCHEDULED,
+    ]
+)
+
+# Statuses where a window update must invalidate the existing approval.
+_WINDOW_INVALIDATION_STATUSES = frozenset(
+    [
+        ChangeRecord.Status.APPROVED,
+        ChangeRecord.Status.SCHEDULED,
+    ]
+)
+
+# Terminal ChangeRecord statuses that map the window to CLOSED.
+_CHANGE_TERMINAL_STATUSES = frozenset(
+    [
+        ChangeRecord.Status.CLOSED,
+        ChangeRecord.Status.VERIFIED,
+        ChangeRecord.Status.REJECTED,
+        ChangeRecord.Status.CANCELED,
+        ChangeRecord.Status.EXPIRED,
+    ]
+)
+
+# ChangeRecord statuses considered "running" for overrun detection.
+_CHANGE_RUNNING_STATUSES = frozenset(
+    [
+        ChangeRecord.Status.RUNNING,
+        ChangeRecord.Status.VERIFICATION_PENDING,
+    ]
+)
+
+
+def _window_status_from_time(starts_at, ends_at, now) -> str:
+    """Compute window status from time boundaries only."""
+    if now < starts_at:
+        return ChangeWindow.Status.SCHEDULED
+    if now <= ends_at:
+        return ChangeWindow.Status.OPEN
+    return ChangeWindow.Status.EXPIRED
+
+
+def recompute_window_status(window: ChangeWindow, now=None) -> str:
+    """Compute window status from starts_at, ends_at, change execution status, and current time."""
+    now = now or timezone.now()
+    change_status = window.change_record.status
+
+    if change_status in _CHANGE_TERMINAL_STATUSES:
+        return ChangeWindow.Status.CLOSED
+
+    if change_status in _CHANGE_RUNNING_STATUSES and now > window.ends_at:
+        return ChangeWindow.Status.OVERRUN
+
+    return _window_status_from_time(window.starts_at, window.ends_at, now)
+
+
+def _invalidate_change_approval(
+    *, change: ChangeRecord, actor: AuditActor, now
+) -> None:
+    """Reset an approved/scheduled change to pending_approval, voiding the approval.
+
+    This bypasses the transition table intentionally: approval invalidation is a
+    reverse transition that exists only in this context (window update after approval).
+    The caller is responsible for holding a select_for_update lock on `change`.
+    """
+    previous_status = change.status
+    change.status = ChangeRecord.Status.PENDING_APPROVAL
+    change.approved_at = None
+    change.save(update_fields=["status", "approved_at", "updated_at"])
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change.approval_invalidated",
+        object_type=AuditEvent.ObjectType.CHANGE_RECORD,
+        object_id=change.id,
+        metadata={
+            "previous_status": previous_status,
+            "reason": "window_updated",
+        },
+    )
+
+
+def create_or_update_change_window(
+    *,
+    change: ChangeRecord,
+    starts_at,
+    ends_at,
+    timezone_name: str = "",
+    reason: str = "",
+    actor: AuditActor | None = None,
+) -> ChangeWindow:
+    """Create or replace the ChangeWindow for a change record.
+
+    Allowed while the change is draft, pending_approval, approved, or scheduled.
+    Updating the window for an approved/scheduled change with requires_approval=True
+    invalidates the approval and resets the change to pending_approval.
+    """
+    if change.status not in _WINDOW_ALLOWED_STATUSES:
+        raise InvalidStateTransitionError(
+            code="window_update_not_allowed",
+            detail=(
+                f"Cannot update window for change with status '{change.status}'. "
+                "Window updates are only allowed before dispatch."
+            ),
+        )
+
+    if ends_at <= starts_at:
+        raise DomainValidationError(
+            code="window_ends_before_starts",
+            detail="ends_at must be after starts_at.",
+        )
+
+    audit_actor = actor or system_actor("Change service")
+    now = timezone.now()
+    approval_invalidated = False
+
+    with transaction.atomic():
+        change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+
+        if change.status not in _WINDOW_ALLOWED_STATUSES:
+            raise InvalidStateTransitionError(
+                code="window_update_not_allowed",
+                detail=(
+                    f"Cannot update window for change with status '{change.status}'."
+                ),
+            )
+
+        if change.status in _WINDOW_INVALIDATION_STATUSES:
+            profile = OperationProfile.objects.get(pk=change.operation_profile_id)
+            if profile.requires_approval:
+                _invalidate_change_approval(change=change, actor=audit_actor, now=now)
+                approval_invalidated = True
+
+        computed_status = _window_status_from_time(starts_at, ends_at, now)
+        updated_by_id = (
+            audit_actor.actor_id
+            if audit_actor.actor_type == AuditEvent.ActorType.USER
+            else None
+        )
+
+        try:
+            window = ChangeWindow.objects.select_for_update().get(change_record=change)
+            window.starts_at = starts_at
+            window.ends_at = ends_at
+            window.timezone = timezone_name
+            window.reason = reason
+            window.status = computed_status
+            window.updated_by_id = updated_by_id
+            window.save(
+                update_fields=[
+                    "starts_at",
+                    "ends_at",
+                    "timezone",
+                    "reason",
+                    "status",
+                    "updated_by",
+                    "updated_at",
+                ]
+            )
+        except ChangeWindow.DoesNotExist:
+            window = ChangeWindow.objects.create(
+                change_record=change,
+                organization=change.organization,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                timezone=timezone_name,
+                reason=reason,
+                status=computed_status,
+                updated_by_id=updated_by_id,
+            )
+
+        AuditService.emit(
+            organization_id=change.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="change.window_updated",
+            object_type=AuditEvent.ObjectType.CHANGE_WINDOW,
+            object_id=window.id,
+            metadata={
+                "change_record_id": str(change.id),
+                "starts_at": starts_at.isoformat(),
+                "ends_at": ends_at.isoformat(),
+                "window_status": window.status,
+                "approval_invalidated": approval_invalidated,
+            },
+        )
+
+    return window
+
+
+# ---------------------------------------------------------------------------
+# FreezeRule governance service functions
+# ---------------------------------------------------------------------------
+
+
+def emit_freeze_rule_audit(
+    *,
+    rule: FreezeRule,
+    event_type: str,
+    actor: AuditActor | None = None,
+    metadata: dict | None = None,
+) -> None:
+    audit_actor = actor or system_actor("Change service")
+    AuditService.emit(
+        organization_id=rule.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.FREEZE_RULE,
+        object_id=rule.id,
+        metadata={
+            "name": rule.name,
+            "behavior": rule.behavior,
+            "scope_type": rule.scope_type,
+            "is_active": rule.is_active,
+            **(metadata or {}),
+        },
+    )
+
+
+def create_freeze_rule(
+    *,
+    organization,
+    name: str,
+    behavior: str,
+    starts_at,
+    ends_at,
+    scope_type: str,
+    description: str = "",
+    target_type: str = "",
+    target_identifier: str = "",
+    requires_exception_reference: bool = False,
+    actor: AuditActor | None = None,
+) -> FreezeRule:
+    """Create a new FreezeRule with org scoping, validation, and audit."""
+    if behavior not in (FreezeRule.Behavior.BLOCK, FreezeRule.Behavior.ALLOW_WITH_EXCEPTION):
+        raise DomainValidationError(
+            code="invalid_behavior",
+            detail="behavior must be 'block' or 'allow_with_exception'.",
+        )
+    if scope_type not in (
+        FreezeRule.ScopeType.ALL_PRODUCTION,
+        FreezeRule.ScopeType.TARGET_TYPE,
+        FreezeRule.ScopeType.TARGET_IDENTIFIER,
+    ):
+        raise DomainValidationError(
+            code="invalid_scope_type",
+            detail="scope_type must be 'all_production', 'target_type', or 'target_identifier'.",
+        )
+    if ends_at <= starts_at:
+        raise DomainValidationError(
+            code="invalid_time_range",
+            detail="ends_at must be after starts_at.",
+        )
+    if (
+        behavior == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION
+        and not requires_exception_reference
+    ):
+        raise DomainValidationError(
+            code="exception_behavior_requires_ref",
+            detail="allow_with_exception behavior requires requires_exception_reference=True.",
+        )
+    if scope_type == FreezeRule.ScopeType.TARGET_TYPE and not target_type:
+        raise DomainValidationError(
+            code="target_type_required",
+            detail="target_type is required when scope_type is 'target_type'.",
+        )
+    if scope_type == FreezeRule.ScopeType.TARGET_IDENTIFIER and not target_identifier:
+        raise DomainValidationError(
+            code="target_identifier_required",
+            detail="target_identifier is required when scope_type is 'target_identifier'.",
+        )
+
+    audit_actor = actor or system_actor("Change service")
+    normalized = (
+        normalize_target_identifier(target_identifier)
+        if target_identifier
+        else ""
+    )
+    rule = FreezeRule(
+        organization=organization,
+        name=name,
+        description=description,
+        behavior=behavior,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        scope_type=scope_type,
+        target_type=target_type,
+        target_identifier=target_identifier,
+        normalized_identifier=normalized,
+        requires_exception_reference=requires_exception_reference,
+        is_active=True,
+        created_by_id=audit_actor.actor_id
+        if audit_actor.actor_type == AuditEvent.ActorType.USER
+        else None,
+        updated_by_id=audit_actor.actor_id
+        if audit_actor.actor_type == AuditEvent.ActorType.USER
+        else None,
+    )
+    rule.save()
+    emit_freeze_rule_audit(rule=rule, event_type="freeze_rule.created", actor=audit_actor)
+    return rule
+
+
+def update_freeze_rule(
+    *,
+    rule: FreezeRule,
+    actor: AuditActor | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    behavior: str | None = None,
+    starts_at=None,
+    ends_at=None,
+    scope_type: str | None = None,
+    target_type: str | None = None,
+    target_identifier: str | None = None,
+    requires_exception_reference: bool | None = None,
+) -> FreezeRule:
+    """Update mutable FreezeRule fields with validation and audit."""
+    if not rule.is_active:
+        raise DomainValidationError(
+            code="freeze_rule_inactive",
+            detail="Cannot update an inactive freeze rule.",
+        )
+
+    new_behavior = behavior if behavior is not None else rule.behavior
+    new_starts_at = starts_at if starts_at is not None else rule.starts_at
+    new_ends_at = ends_at if ends_at is not None else rule.ends_at
+    new_scope_type = scope_type if scope_type is not None else rule.scope_type
+    new_target_type = target_type if target_type is not None else rule.target_type
+    new_target_identifier = (
+        target_identifier if target_identifier is not None else rule.target_identifier
+    )
+    new_req_ref = (
+        requires_exception_reference
+        if requires_exception_reference is not None
+        else rule.requires_exception_reference
+    )
+
+    if new_behavior not in (FreezeRule.Behavior.BLOCK, FreezeRule.Behavior.ALLOW_WITH_EXCEPTION):
+        raise DomainValidationError(
+            code="invalid_behavior",
+            detail="behavior must be 'block' or 'allow_with_exception'.",
+        )
+    if new_ends_at <= new_starts_at:
+        raise DomainValidationError(
+            code="invalid_time_range",
+            detail="ends_at must be after starts_at.",
+        )
+    if (
+        new_behavior == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION
+        and not new_req_ref
+    ):
+        raise DomainValidationError(
+            code="exception_behavior_requires_ref",
+            detail="allow_with_exception behavior requires requires_exception_reference=True.",
+        )
+    if new_scope_type == FreezeRule.ScopeType.TARGET_TYPE and not new_target_type:
+        raise DomainValidationError(
+            code="target_type_required",
+            detail="target_type is required when scope_type is 'target_type'.",
+        )
+    if new_scope_type == FreezeRule.ScopeType.TARGET_IDENTIFIER and not new_target_identifier:
+        raise DomainValidationError(
+            code="target_identifier_required",
+            detail="target_identifier is required when scope_type is 'target_identifier'.",
+        )
+
+    audit_actor = actor or system_actor("Change service")
+    update_fields: list[str] = ["updated_at"]
+
+    if name is not None:
+        rule.name = name
+        update_fields.append("name")
+    if description is not None:
+        rule.description = description
+        update_fields.append("description")
+    if behavior is not None:
+        rule.behavior = behavior
+        update_fields.append("behavior")
+    if starts_at is not None:
+        rule.starts_at = starts_at
+        update_fields.append("starts_at")
+    if ends_at is not None:
+        rule.ends_at = ends_at
+        update_fields.append("ends_at")
+    if scope_type is not None:
+        rule.scope_type = scope_type
+        update_fields.append("scope_type")
+    if target_type is not None:
+        rule.target_type = target_type
+        update_fields.append("target_type")
+    if target_identifier is not None:
+        rule.target_identifier = target_identifier
+        rule.normalized_identifier = normalize_target_identifier(target_identifier)
+        update_fields.extend(["target_identifier", "normalized_identifier"])
+    if requires_exception_reference is not None:
+        rule.requires_exception_reference = requires_exception_reference
+        update_fields.append("requires_exception_reference")
+    if audit_actor.actor_type == AuditEvent.ActorType.USER:
+        rule.updated_by_id = audit_actor.actor_id
+        if "updated_by" not in update_fields:
+            update_fields.append("updated_by")
+
+    rule.save(update_fields=update_fields)
+    emit_freeze_rule_audit(rule=rule, event_type="freeze_rule.updated", actor=audit_actor)
+    return rule
+
+
+def deactivate_freeze_rule(
+    *,
+    rule: FreezeRule,
+    actor: AuditActor | None = None,
+) -> FreezeRule:
+    """Deactivate a FreezeRule. Idempotent when already inactive."""
+    if not rule.is_active:
+        return rule
+    audit_actor = actor or system_actor("Change service")
+    update_fields = ["is_active", "updated_at"]
+    rule.is_active = False
+    if audit_actor.actor_type == AuditEvent.ActorType.USER:
+        rule.updated_by_id = audit_actor.actor_id
+        update_fields.append("updated_by")
+    rule.save(update_fields=update_fields)
+    emit_freeze_rule_audit(rule=rule, event_type="freeze_rule.deactivated", actor=audit_actor)
+    return rule
+
+
+def get_active_matching_freeze_rules(
+    *,
+    organization,
+    target_type: str = "",
+    target_identifier: str = "",
+    at=None,
+) -> models.QuerySet:
+    """Return active FreezeRule objects that match the given target at the given time.
+
+    Used as a helper for dispatch preflight — callers receive the queryset
+    so they can inspect behavior (block vs. allow_with_exception) themselves.
+    """
+    from django.utils import timezone as tz
+
+    now = at or tz.now()
+    normalized = normalize_target_identifier(target_identifier) if target_identifier else ""
+
+    # Base: active, time window covers now, same org.
+    qs = FreezeRule.objects.filter(
+        organization=organization,
+        is_active=True,
+        starts_at__lte=now,
+        ends_at__gt=now,
+    )
+
+    from django.db.models import Q
+
+    scope_filter = Q(scope_type=FreezeRule.ScopeType.ALL_PRODUCTION)
+    if target_type:
+        scope_filter |= Q(
+            scope_type=FreezeRule.ScopeType.TARGET_TYPE,
+            target_type=target_type,
+        )
+    if normalized:
+        scope_filter |= Q(
+            scope_type=FreezeRule.ScopeType.TARGET_IDENTIFIER,
+            normalized_identifier=normalized,
+        )
+
+    return qs.filter(scope_filter).order_by("starts_at")
+
+
+# ---------------------------------------------------------------------------
+# Dispatch preflight service
+# ---------------------------------------------------------------------------
+
+_PREFLIGHT_TTL_SECONDS = 300  # 5 minutes
+
+# Change statuses that are valid candidates for dispatch preflight.
+_PREFLIGHT_ELIGIBLE_STATUSES = frozenset(
+    [
+        ChangeRecord.Status.APPROVED,
+        ChangeRecord.Status.SCHEDULED,
+        ChangeRecord.Status.DISPATCHABLE,
+    ]
+)
+
+
+def run_dispatch_preflight(
+    *,
+    change: ChangeRecord,
+    actor: AuditActor | None = None,
+) -> DispatchEligibilityCheck:
+    """Run all dispatch preflight checks and persist an immutable snapshot.
+
+    Checks (in order):
+    1. approved_status   — change is approved/scheduled/dispatchable and approval is valid
+    2. policy_pass       — policy evaluation (if any) has an effective pass outcome
+    3. window_open       — no window exists, or the change window is currently open
+    4. freeze_conflicts  — no blocking freeze rules match the change's targets
+    5. target_locks      — no active target locks conflict with the change's targets
+    6. actor_authorized  — actor is present (view layer enforces operator role)
+
+    All checks run regardless of prior failures so the caller gets a full picture.
+    The result is PASSED only when every individual check passes.
+    """
+    from django.db.models import Q
+
+    now = timezone.now()
+
+    change = (
+        ChangeRecord.objects.select_related(
+            "operation_profile",
+            "approval_request",
+            "policy_evaluation",
+        )
+        .prefetch_related("targets")
+        .get(pk=change.pk)
+    )
+
+    targets = list(change.targets.order_by("position"))
+    checks: list[dict] = []
+    conflicts: list[dict] = []
+
+    approved_status_ok = _preflight_check_approval_status(change, checks)
+    policy_pass_ok = _preflight_check_policy_gate(change, checks)
+    window_open_ok, window_snapshot_sha256 = _preflight_check_window(change, now, checks)
+    freeze_conflicts_ok = _preflight_check_freeze_conflicts(change, targets, now, checks, conflicts)
+    target_locks_ok = _preflight_check_target_locks(change, targets, checks, conflicts)
+    actor_authorized_ok = _preflight_check_actor(actor, checks)
+
+    overall = all(
+        [
+            approved_status_ok,
+            policy_pass_ok,
+            window_open_ok,
+            freeze_conflicts_ok,
+            target_locks_ok,
+            actor_authorized_ok,
+        ]
+    )
+    result = (
+        DispatchEligibilityCheck.Result.PASSED
+        if overall
+        else DispatchEligibilityCheck.Result.FAILED
+    )
+
+    input_snapshot_sha256 = change.request_snapshot_sha256 or sha256_canonical_json(
+        change.request_snapshot
+    )
+
+    check = DispatchEligibilityCheck.objects.create(
+        organization=change.organization,
+        change_record=change,
+        requested_by_id=(
+            actor.actor_id
+            if actor and actor.actor_type == AuditEvent.ActorType.USER
+            else None
+        ),
+        result=result,
+        checked_at=now,
+        expires_at=now + timedelta(seconds=_PREFLIGHT_TTL_SECONDS),
+        approved_status_ok=approved_status_ok,
+        policy_pass_ok=policy_pass_ok,
+        window_open_ok=window_open_ok,
+        freeze_conflicts_ok=freeze_conflicts_ok,
+        target_locks_ok=target_locks_ok,
+        actor_authorized_ok=actor_authorized_ok,
+        checks=checks,
+        conflicts=conflicts,
+        input_snapshot_sha256=input_snapshot_sha256,
+        window_snapshot_sha256=window_snapshot_sha256,
+    )
+
+    audit_actor = actor or system_actor("Change service")
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type="change.preflight_checked",
+        object_type=AuditEvent.ObjectType.DISPATCH_ELIGIBILITY_CHECK,
+        object_id=check.id,
+        metadata={
+            "change_record_id": str(change.id),
+            "result": result,
+        },
+    )
+
+    return check
+
+
+def _preflight_check_approval_status(
+    change: ChangeRecord, checks: list
+) -> bool:
+    if change.status not in _PREFLIGHT_ELIGIBLE_STATUSES:
+        checks.append(
+            {
+                "name": "approved_status",
+                "ok": False,
+                "detail": (
+                    f"Change is not in an eligible status for dispatch "
+                    f"(current: '{change.status}')."
+                ),
+            }
+        )
+        return False
+
+    profile = change.operation_profile
+    if profile.requires_approval:
+        ar = change.approval_request
+        if ar is None:
+            checks.append(
+                {
+                    "name": "approved_status",
+                    "ok": False,
+                    "detail": "Profile requires approval but no approval request exists.",
+                }
+            )
+            return False
+        if ar.status != "approved":
+            checks.append(
+                {
+                    "name": "approved_status",
+                    "ok": False,
+                    "detail": f"Approval request is '{ar.status}', expected 'approved'.",
+                }
+            )
+            return False
+
+    checks.append({"name": "approved_status", "ok": True, "detail": "Approval status is valid."})
+    return True
+
+
+def _preflight_check_policy_gate(change: ChangeRecord, checks: list) -> bool:
+    pe = change.policy_evaluation
+    if pe is None:
+        checks.append(
+            {
+                "name": "policy_pass",
+                "ok": True,
+                "detail": "No policy evaluation linked; gate passes by default.",
+            }
+        )
+        return True
+
+    effective = getattr(pe, "effective_outcome", None)
+    if effective == "pass":
+        checks.append({"name": "policy_pass", "ok": True, "detail": "Policy evaluation passed."})
+        return True
+
+    checks.append(
+        {
+            "name": "policy_pass",
+            "ok": False,
+            "detail": (
+                f"Policy evaluation effective outcome is '{effective}', expected 'pass'."
+            ),
+        }
+    )
+    return False
+
+
+def _preflight_check_window(
+    change: ChangeRecord, now, checks: list
+) -> tuple[bool, str]:
+    try:
+        window = change.window
+    except Exception:
+        window = None
+
+    if window is None:
+        checks.append(
+            {
+                "name": "window_open",
+                "ok": True,
+                "detail": "No change window configured; gate passes by default.",
+            }
+        )
+        return True, ""
+
+    computed_status = recompute_window_status(window, now=now)
+    window_snapshot = {
+        "window_id": str(window.id),
+        "starts_at": window.starts_at.isoformat(),
+        "ends_at": window.ends_at.isoformat(),
+        "status": computed_status,
+    }
+    window_sha256 = sha256_canonical_json(window_snapshot)
+
+    if computed_status == ChangeWindow.Status.OPEN:
+        checks.append({"name": "window_open", "ok": True, "detail": "Change window is open."})
+        return True, window_sha256
+
+    checks.append(
+        {
+            "name": "window_open",
+            "ok": False,
+            "detail": f"Change window is '{computed_status}', not open.",
+        }
+    )
+    return False, window_sha256
+
+
+def _preflight_check_freeze_conflicts(
+    change: ChangeRecord,
+    targets: list,
+    now,
+    checks: list,
+    conflicts: list,
+) -> bool:
+    from django.db.models import Q
+
+    if not targets:
+        checks.append(
+            {
+                "name": "freeze_conflicts",
+                "ok": True,
+                "detail": "No targets; freeze check skipped.",
+            }
+        )
+        return True
+
+    base_qs = FreezeRule.objects.filter(
+        organization=change.organization,
+        is_active=True,
+        starts_at__lte=now,
+        ends_at__gt=now,
+    )
+    scope_filter = Q(scope_type=FreezeRule.ScopeType.ALL_PRODUCTION)
+    for t in targets:
+        scope_filter |= Q(
+            scope_type=FreezeRule.ScopeType.TARGET_TYPE,
+            target_type=t.target_type,
+        )
+        scope_filter |= Q(
+            scope_type=FreezeRule.ScopeType.TARGET_IDENTIFIER,
+            normalized_identifier=normalize_target_identifier(t.target_identifier),
+        )
+
+    matching_rules = list(base_qs.filter(scope_filter).order_by("starts_at"))
+
+    blocking: list[FreezeRule] = []
+    for rule in matching_rules:
+        if rule.behavior == FreezeRule.Behavior.BLOCK:
+            blocking.append(rule)
+        elif rule.behavior == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION:
+            if not change.freeze_exception_reference:
+                blocking.append(rule)
+
+    for rule in blocking:
+        conflicts.append(
+            {
+                "type": "freeze_rule",
+                "id": str(rule.id),
+                "name": rule.name,
+                "behavior": rule.behavior,
+                "scope_type": rule.scope_type,
+            }
+        )
+
+    ok = not blocking
+    if ok:
+        checks.append(
+            {
+                "name": "freeze_conflicts",
+                "ok": True,
+                "detail": "No active freeze conflicts.",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "name": "freeze_conflicts",
+                "ok": False,
+                "detail": f"{len(blocking)} freeze rule(s) block dispatch.",
+            }
+        )
+    return ok
+
+
+def _preflight_check_target_locks(
+    change: ChangeRecord,
+    targets: list,
+    checks: list,
+    conflicts: list,
+) -> bool:
+    from django.db.models import Q
+
+    if not targets:
+        checks.append(
+            {"name": "target_locks", "ok": True, "detail": "No targets; lock check skipped."}
+        )
+        return True
+
+    target_filter = Q()
+    for t in targets:
+        target_filter |= Q(
+            target_type=t.target_type,
+            normalized_identifier=normalize_target_identifier(t.target_identifier),
+        )
+
+    conflicting = list(
+        TargetLock.objects.filter(
+            organization=change.organization,
+            status=TargetLock.Status.ACTIVE,
+        )
+        .filter(target_filter)
+        .exclude(change_record=change)
+        .select_related("change_record")
+        .order_by("acquired_at")
+    )
+
+    for lock in conflicting:
+        conflicts.append(
+            {
+                "type": "target_lock",
+                "id": str(lock.id),
+                "target_type": lock.target_type,
+                "target_identifier": lock.target_identifier,
+                "change_record_id": str(lock.change_record_id),
+                "acquired_at": lock.acquired_at.isoformat(),
+            }
+        )
+
+    ok = not conflicting
+    if ok:
+        checks.append(
+            {"name": "target_locks", "ok": True, "detail": "No conflicting target locks."}
+        )
+    else:
+        checks.append(
+            {
+                "name": "target_locks",
+                "ok": False,
+                "detail": f"{len(conflicting)} active lock(s) conflict with this change's targets.",
+            }
+        )
+    return ok
+
+
+def _preflight_check_actor(actor: AuditActor | None, checks: list) -> bool:
+    if actor is not None:
+        checks.append(
+            {"name": "actor_authorized", "ok": True, "detail": "Actor is authorized to dispatch."}
+        )
+        return True
+    checks.append(
+        {
+            "name": "actor_authorized",
+            "ok": False,
+            "detail": "No authenticated actor; dispatch authorization cannot be confirmed.",
+        }
+    )
+    return False

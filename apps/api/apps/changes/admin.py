@@ -6,7 +6,11 @@ from apps.changes.models import (
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
+    ChangeWindow,
+    DispatchEligibilityCheck,
+    FreezeRule,
     OperationProfile,
+    TargetLock,
 )
 
 
@@ -145,6 +149,129 @@ class ChangeExecutionBindingAdmin(admin.ModelAdmin):
         "bound_at",
         "bound_by_runner_id",
         "runner_payload_snapshot",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChangeWindow)
+class ChangeWindowAdmin(admin.ModelAdmin):
+    list_display = ["id", "change_record", "organization", "status", "starts_at", "ends_at"]
+    list_filter = ["status"]
+    readonly_fields = [
+        "id",
+        "status",
+        "approved_snapshot_sha256",
+        "approved_at",
+        "opened_at",
+        "expired_at",
+        "overrun_at",
+        "closed_at",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(FreezeRule)
+class FreezeRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        "name",
+        "organization",
+        "behavior",
+        "scope_type",
+        "is_active",
+        "starts_at",
+        "ends_at",
+    ]
+    list_filter = ["behavior", "scope_type", "is_active"]
+    search_fields = ["name"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+
+
+@admin.register(TargetLock)
+class TargetLockAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "organization",
+        "change_record",
+        "target_type",
+        "target_identifier",
+        "status",
+        "acquired_at",
+    ]
+    list_filter = ["status"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "execution",
+        "change_target",
+        "target_type",
+        "target_identifier",
+        "normalized_identifier",
+        "status",
+        "acquired_at",
+        "released_at",
+        "expires_at",
+        "release_reason",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DispatchEligibilityCheck)
+class DispatchEligibilityCheckAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "organization",
+        "change_record",
+        "result",
+        "checked_at",
+        "expires_at",
+    ]
+    list_filter = ["result"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "requested_by",
+        "result",
+        "checked_at",
+        "expires_at",
+        "approved_status_ok",
+        "policy_pass_ok",
+        "window_open_ok",
+        "freeze_conflicts_ok",
+        "target_locks_ok",
+        "actor_authorized_ok",
+        "checks",
+        "conflicts",
+        "input_snapshot_sha256",
+        "window_snapshot_sha256",
         "created_at",
         "updated_at",
     ]

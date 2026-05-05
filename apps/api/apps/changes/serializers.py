@@ -1,11 +1,15 @@
 """Serializers for the changes app."""
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.changes.models import (
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
+    ChangeWindow,
+    DispatchEligibilityCheck,
+    FreezeRule,
     OperationProfile,
 )
 
@@ -175,3 +179,107 @@ class BindChangeExecutionSerializer(serializers.Serializer):
     requested_inputs_sha256 = serializers.CharField(max_length=64)
     operation_profile_key = serializers.CharField(max_length=96)
     sent_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+
+class ExecutionTimingCallbackSerializer(serializers.Serializer):
+    runner_id = serializers.CharField(max_length=255)
+    execution_id = serializers.UUIDField()
+    observed_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+
+class ChangeWindowOutputSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChangeWindow
+        fields = [
+            "id",
+            "status",
+            "starts_at",
+            "ends_at",
+            "timezone",
+            "reason",
+            "approved_at",
+            "opened_at",
+            "expired_at",
+            "overrun_at",
+            "closed_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class ChangeWindowInputSerializer(serializers.Serializer):
+    starts_at = serializers.DateTimeField()
+    ends_at = serializers.DateTimeField()
+    timezone = serializers.CharField(max_length=64, allow_blank=True, default="")
+    reason = serializers.CharField(allow_blank=True, default="")
+
+
+class FreezeRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FreezeRule
+        fields = [
+            "id",
+            "name",
+            "description",
+            "is_active",
+            "behavior",
+            "starts_at",
+            "ends_at",
+            "scope_type",
+            "target_type",
+            "target_identifier",
+            "requires_exception_reference",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class CreateFreezeRuleSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    description = serializers.CharField(allow_blank=True, default="")
+    behavior = serializers.ChoiceField(choices=FreezeRule.Behavior.choices)
+    starts_at = serializers.DateTimeField()
+    ends_at = serializers.DateTimeField()
+    scope_type = serializers.ChoiceField(choices=FreezeRule.ScopeType.choices)
+    target_type = serializers.CharField(max_length=64, allow_blank=True, default="")
+    target_identifier = serializers.CharField(max_length=255, allow_blank=True, default="")
+    requires_exception_reference = serializers.BooleanField(default=False)
+
+
+class UpdateFreezeRuleSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=False)
+    description = serializers.CharField(allow_blank=True, required=False)
+    behavior = serializers.ChoiceField(choices=FreezeRule.Behavior.choices, required=False)
+    starts_at = serializers.DateTimeField(required=False)
+    ends_at = serializers.DateTimeField(required=False)
+    scope_type = serializers.ChoiceField(choices=FreezeRule.ScopeType.choices, required=False)
+    target_type = serializers.CharField(max_length=64, allow_blank=True, required=False)
+    target_identifier = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    requires_exception_reference = serializers.BooleanField(required=False)
+
+
+class DispatchEligibilityCheckSerializer(serializers.ModelSerializer):
+    is_stale = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DispatchEligibilityCheck
+        fields = [
+            "id",
+            "result",
+            "checked_at",
+            "expires_at",
+            "is_stale",
+            "approved_status_ok",
+            "policy_pass_ok",
+            "window_open_ok",
+            "freeze_conflicts_ok",
+            "target_locks_ok",
+            "actor_authorized_ok",
+            "checks",
+            "conflicts",
+            "input_snapshot_sha256",
+            "window_snapshot_sha256",
+        ]
+
+    def get_is_stale(self, obj):
+        return timezone.now() > obj.expires_at

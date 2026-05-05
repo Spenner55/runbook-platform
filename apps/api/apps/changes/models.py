@@ -151,6 +151,20 @@ class ChangeRecord(BaseModel):
     expired_at = models.DateTimeField(null=True, blank=True)
     terminal_reason = models.CharField(max_length=64, blank=True)
 
+    # Freeze exception fields — support for allow_with_exception freeze rules only.
+    # These are NOT breakglass; they satisfy freeze exception requirements but do not
+    # bypass approval, policy, window, target lock, or authorization checks.
+    freeze_exception_reference = models.CharField(max_length=255, blank=True)
+    freeze_exception_reason = models.TextField(blank=True)
+    freeze_exception_recorded_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recorded_freeze_exceptions",
+    )
+    freeze_exception_recorded_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -356,6 +370,9 @@ class ChangeExecutionBinding(BaseModel):
     bound_at = models.DateTimeField(null=True, blank=True)
     bound_by_runner_id = models.CharField(max_length=255, blank=True)
     runner_payload_snapshot = models.JSONField(default=dict)
+    execution_accepted_at = models.DateTimeField(null=True, blank=True)
+    execution_started_at = models.DateTimeField(null=True, blank=True)
+    execution_finished_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -424,4 +441,349 @@ class ChangeExecutionBinding(BaseModel):
                 ):
                     raise ValidationError("Bound change executions cannot be rebound.")
         self.clean()
+        return super().save(*args, **kwargs)
+
+
+class ChangeWindow(BaseModel):
+    class Status(models.TextChoices):
+        SCHEDULED = "scheduled", "Scheduled"
+        OPEN = "open", "Open"
+        EXPIRED = "expired", "Expired"
+        OVERRUN = "overrun", "Overrun"
+        CLOSED = "closed", "Closed"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="change_windows",
+    )
+    change_record = models.OneToOneField(
+        ChangeRecord,
+        on_delete=models.CASCADE,
+        related_name="window",
+    )
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.SCHEDULED,
+    )
+    timezone = models.CharField(max_length=64, blank=True)
+    reason = models.TextField(blank=True)
+    approved_snapshot_sha256 = models.CharField(max_length=64, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    overrun_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_change_windows",
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["scheduled", "open", "expired", "overrun", "closed"]
+                ),
+                name="change_window_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F("starts_at")),
+                name="change_window_ends_after_starts_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "starts_at"],
+                name="chgwin_org_status_start_idx",
+            ),
+            models.Index(
+                fields=["organization", "ends_at"],
+                name="change_window_org_ends_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"ChangeWindow {self.id} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if self.starts_at and self.ends_at and self.ends_at <= self.starts_at:
+            raise ValidationError("ends_at must be after starts_at.")
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "ChangeWindow organization must match the change organization."
+            )
+
+
+class FreezeRule(BaseModel):
+    class Behavior(models.TextChoices):
+        BLOCK = "block", "Block"
+        ALLOW_WITH_EXCEPTION = "allow_with_exception", "Allow With Exception"
+
+    class ScopeType(models.TextChoices):
+        ALL_PRODUCTION = "all_production", "All Production"
+        TARGET_TYPE = "target_type", "Target Type"
+        TARGET_IDENTIFIER = "target_identifier", "Target Identifier"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="freeze_rules",
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    behavior = models.CharField(max_length=32, choices=Behavior.choices)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()
+    scope_type = models.CharField(max_length=32, choices=ScopeType.choices)
+    target_type = models.CharField(max_length=64, blank=True)
+    target_identifier = models.CharField(max_length=255, blank=True)
+    normalized_identifier = models.CharField(max_length=255, blank=True)
+    requires_exception_reference = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_freeze_rules",
+    )
+    updated_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_freeze_rules",
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(behavior__in=["block", "allow_with_exception"]),
+                name="freeze_rule_behavior_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    scope_type__in=["all_production", "target_type", "target_identifier"]
+                ),
+                name="freeze_rule_scope_type_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F("starts_at")),
+                name="freeze_rule_ends_after_starts_chk",
+            ),
+            # allow_with_exception requires requires_exception_reference=True
+            models.CheckConstraint(
+                condition=~models.Q(behavior="allow_with_exception")
+                | models.Q(requires_exception_reference=True),
+                name="freeze_rule_exception_behavior_requires_ref_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "is_active", "starts_at", "ends_at"],
+                name="freeze_org_active_range_idx",
+            ),
+            models.Index(
+                fields=[
+                    "organization",
+                    "scope_type",
+                    "target_type",
+                    "normalized_identifier",
+                ],
+                name="freeze_org_scope_target_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"FreezeRule {self.name} [{self.behavior}]"
+
+    def clean(self):
+        super().clean()
+        if self.starts_at and self.ends_at and self.ends_at <= self.starts_at:
+            raise ValidationError("ends_at must be after starts_at.")
+        if (
+            self.behavior == self.Behavior.ALLOW_WITH_EXCEPTION
+            and not self.requires_exception_reference
+        ):
+            raise ValidationError(
+                "allow_with_exception behavior requires requires_exception_reference=True."
+            )
+
+
+class TargetLock(BaseModel):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        RELEASED = "released", "Released"
+        EXPIRED = "expired", "Expired"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="target_locks",
+    )
+    change_record = models.ForeignKey(
+        ChangeRecord,
+        on_delete=models.PROTECT,
+        related_name="target_locks",
+    )
+    execution = models.ForeignKey(
+        "executions.Execution",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="target_locks",
+    )
+    change_target = models.ForeignKey(
+        ChangeTarget,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="target_locks",
+    )
+    target_type = models.CharField(max_length=64)
+    target_identifier = models.CharField(max_length=255)
+    normalized_identifier = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    acquired_at = models.DateTimeField()
+    released_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    release_reason = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["active", "released", "expired"]),
+                name="target_lock_status_valid_chk",
+            ),
+            # Partial unique: only one active lock per (org, target_type, normalized_identifier).
+            # This is the DB-level concurrency guard; service preflight queries also check
+            # for conflicts before insert to produce useful error messages.
+            models.UniqueConstraint(
+                fields=["organization", "target_type", "normalized_identifier"],
+                condition=models.Q(status="active"),
+                name="target_lock_active_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "acquired_at"],
+                name="target_lock_org_status_acq_idx",
+            ),
+            models.Index(
+                fields=["change_record", "status"],
+                name="target_lock_change_status_idx",
+            ),
+            models.Index(
+                fields=["execution", "status"],
+                name="target_lock_exec_status_idx",
+            ),
+            models.Index(
+                fields=[
+                    "organization",
+                    "target_type",
+                    "normalized_identifier",
+                    "status",
+                ],
+                name="tlock_org_type_id_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"TargetLock {self.target_type}:{self.normalized_identifier} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "TargetLock organization must match the change organization."
+            )
+
+
+class DispatchEligibilityCheck(BaseModel):
+    class Result(models.TextChoices):
+        PASSED = "passed", "Passed"
+        FAILED = "failed", "Failed"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="dispatch_eligibility_checks",
+    )
+    change_record = models.ForeignKey(
+        ChangeRecord,
+        on_delete=models.PROTECT,
+        related_name="eligibility_checks",
+    )
+    requested_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="requested_eligibility_checks",
+    )
+    result = models.CharField(max_length=16, choices=Result.choices)
+    checked_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    approved_status_ok = models.BooleanField()
+    policy_pass_ok = models.BooleanField()
+    window_open_ok = models.BooleanField()
+    freeze_conflicts_ok = models.BooleanField()
+    target_locks_ok = models.BooleanField()
+    actor_authorized_ok = models.BooleanField()
+    checks = models.JSONField(default=list)
+    conflicts = models.JSONField(default=list)
+    input_snapshot_sha256 = models.CharField(max_length=64)
+    window_snapshot_sha256 = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(result__in=["passed", "failed"]),
+                name="dispatch_check_result_valid_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "change_record", "checked_at"],
+                name="dispatch_chk_org_chg_idx",
+            ),
+            models.Index(
+                fields=["organization", "result", "checked_at"],
+                name="dispatch_chk_org_res_idx",
+            ),
+            models.Index(
+                fields=["expires_at"],
+                name="dispatch_check_expires_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"DispatchEligibilityCheck {self.id} [{self.result}]"
+
+    def save(self, *args, **kwargs):
+        # Immutable after creation — preflight results are append-only snapshots.
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError(
+                "DispatchEligibilityCheck is immutable after creation."
+            )
         return super().save(*args, **kwargs)
