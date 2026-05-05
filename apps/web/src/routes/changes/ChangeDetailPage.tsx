@@ -2,8 +2,12 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { useChangeDetail } from '../../features/changes/hooks/useChangeDetail'
+import { useDispatchChange } from '../../features/changes/hooks/useDispatchChange'
+import { useLatestPreflight } from '../../features/changes/hooks/useLatestPreflight'
+import { usePatchWindow } from '../../features/changes/hooks/usePatchWindow'
+import { useRunPreflight } from '../../features/changes/hooks/useRunPreflight'
 import { useSubmitChange } from '../../features/changes/hooks/useSubmitChange'
-import type { ChangeRecord } from '../../features/changes/types'
+import type { ChangeRecord, DispatchEligibilityCheck } from '../../features/changes/types'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 function formatDateTime(value: string | null | undefined) {
@@ -14,6 +18,10 @@ function formatDateTime(value: string | null | undefined) {
 function truncateHash(hash: string | null | undefined, len = 16) {
   if (!hash) return null
   return hash.length > len ? `${hash.slice(0, len)}…` : hash
+}
+
+function toDatetimeLocal(isoString: string): string {
+  return isoString.slice(0, 16)
 }
 
 function getStatusPillClass(status: string) {
@@ -27,6 +35,14 @@ function getStatusPillClass(status: string) {
   if (status === 'closed') return 'pill pill--success'
   if (status === 'rejected' || status === 'expired' || status === 'canceled')
     return 'pill pill--danger'
+  return 'pill'
+}
+
+function getWindowStatusPillClass(status: string) {
+  if (status === 'open') return 'pill pill--success'
+  if (status === 'scheduled') return 'pill pill--info'
+  if (status === 'overrun') return 'pill pill--warn'
+  if (status === 'expired' || status === 'closed') return 'pill pill--danger'
   return 'pill'
 }
 
@@ -300,6 +316,366 @@ function SubmitChangeSection({ change }: { change: ChangeRecord }) {
   )
 }
 
+const WINDOW_EDITABLE_STATUSES = new Set(['draft', 'pending_approval', 'approved', 'scheduled'])
+const WINDOW_INVALIDATION_STATUSES = new Set(['approved', 'scheduled'])
+
+interface WindowFormProps {
+  changeId: string
+  changeStatus: string
+  initialStartsAt: string
+  initialEndsAt: string
+  initialTz: string
+  initialReason: string
+  onCancel: () => void
+}
+
+function WindowEditForm({
+  changeId,
+  changeStatus,
+  initialStartsAt,
+  initialEndsAt,
+  initialTz,
+  initialReason,
+  onCancel,
+}: WindowFormProps) {
+  const patchMutation = usePatchWindow(changeId)
+  const [startsAt, setStartsAt] = useState(initialStartsAt)
+  const [endsAt, setEndsAt] = useState(initialEndsAt)
+  const [tz, setTz] = useState(initialTz)
+  const [reason, setReason] = useState(initialReason)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    setErrorMsg(null)
+    patchMutation.mutate(
+      {
+        starts_at: new Date(startsAt).toISOString(),
+        ends_at: new Date(endsAt).toISOString(),
+        timezone: tz || undefined,
+        reason: reason || undefined,
+      },
+      {
+        onSuccess: onCancel,
+        onError: (err) => setErrorMsg(getApiErrorMessage(err)),
+      }
+    )
+  }
+
+  return (
+    <form className="stack-md" onSubmit={handleSave}>
+      {WINDOW_INVALIDATION_STATUSES.has(changeStatus) && (
+        <p className="banner banner--warning">
+          Updating the window for an approved change may invalidate the existing approval.
+        </p>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+        <div className="field">
+          <label className="field__label" htmlFor="window-starts-at">
+            Starts at
+          </label>
+          <input
+            id="window-starts-at"
+            className="field__input"
+            type="datetime-local"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+            required
+          />
+        </div>
+        <div className="field">
+          <label className="field__label" htmlFor="window-ends-at">
+            Ends at
+          </label>
+          <input
+            id="window-ends-at"
+            className="field__input"
+            type="datetime-local"
+            value={endsAt}
+            onChange={(e) => setEndsAt(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="window-timezone">
+          Timezone (optional)
+        </label>
+        <input
+          id="window-timezone"
+          className="field__input"
+          type="text"
+          value={tz}
+          onChange={(e) => setTz(e.target.value)}
+          placeholder="e.g. America/New_York"
+        />
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="window-reason">
+          Reason (optional)
+        </label>
+        <textarea
+          id="window-reason"
+          className="field__input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+          placeholder="Why this window was chosen"
+        />
+      </div>
+      {errorMsg && <p className="banner banner--error">{errorMsg}</p>}
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button className="btn btn--primary" type="submit" disabled={patchMutation.isPending}>
+          {patchMutation.isPending ? 'Saving…' : 'Save window'}
+        </button>
+        <button className="btn" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function WindowPanel({ change }: { change: ChangeRecord }) {
+  const isEditable = WINDOW_EDITABLE_STATUSES.has(change.status)
+  const win = change.window
+  const [isEditing, setIsEditing] = useState(false)
+
+  if (!isEditable && !win) return null
+
+  return (
+    <section className="stack-md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h4 style={{ margin: 0 }}>Execution Window</h4>
+        {win && <span className={getWindowStatusPillClass(win.status)}>{win.status}</span>}
+        {isEditable && !isEditing && (
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setIsEditing(true)}>
+            {win ? 'Edit window' : 'Set window'}
+          </button>
+        )}
+      </div>
+
+      {win && !isEditing && (
+        <dl style={{ display: 'grid', gridTemplateColumns: '140px 1fr', rowGap: '0.25rem' }}>
+          <dt className="muted">Starts</dt>
+          <dd>{formatDateTime(win.starts_at)}</dd>
+          <dt className="muted">Ends</dt>
+          <dd>{formatDateTime(win.ends_at)}</dd>
+          {win.timezone && (
+            <>
+              <dt className="muted">Timezone</dt>
+              <dd>{win.timezone}</dd>
+            </>
+          )}
+          {win.reason && (
+            <>
+              <dt className="muted">Reason</dt>
+              <dd>{win.reason}</dd>
+            </>
+          )}
+          {win.opened_at && (
+            <>
+              <dt className="muted">Opened</dt>
+              <dd>{formatDateTime(win.opened_at)}</dd>
+            </>
+          )}
+        </dl>
+      )}
+
+      {isEditing && (
+        <WindowEditForm
+          key={win?.updated_at ?? 'new'}
+          changeId={change.id}
+          changeStatus={change.status}
+          initialStartsAt={win ? toDatetimeLocal(win.starts_at) : ''}
+          initialEndsAt={win ? toDatetimeLocal(win.ends_at) : ''}
+          initialTz={win?.timezone ?? ''}
+          initialReason={win?.reason ?? ''}
+          onCancel={() => setIsEditing(false)}
+        />
+      )}
+    </section>
+  )
+}
+
+const CHECK_LABELS: Record<string, string> = {
+  approved_status: 'Approved status',
+  approved_status_ok: 'Approved status',
+  policy_pass: 'Policy pass',
+  policy_pass_ok: 'Policy pass',
+  window_open: 'Window open',
+  window_open_ok: 'Window open',
+  freeze_conflicts: 'No freeze conflicts',
+  freeze_conflicts_ok: 'No freeze conflicts',
+  target_locks: 'No target locks',
+  target_locks_ok: 'No target locks',
+  actor_authorized: 'Actor authorized',
+  actor_authorized_ok: 'Actor authorized',
+}
+
+function preflightCheckRows(check: DispatchEligibilityCheck) {
+  return [
+    { name: 'approved_status_ok', ok: check.approved_status_ok },
+    { name: 'policy_pass_ok', ok: check.policy_pass_ok },
+    { name: 'window_open_ok', ok: check.window_open_ok },
+    { name: 'freeze_conflicts_ok', ok: check.freeze_conflicts_ok },
+    { name: 'target_locks_ok', ok: check.target_locks_ok },
+    { name: 'actor_authorized_ok', ok: check.actor_authorized_ok },
+  ]
+}
+
+function ConflictDrawer({ check }: { check: DispatchEligibilityCheck }) {
+  const [open, setOpen] = useState(true)
+  if (!check.conflicts.length) return null
+
+  return (
+    <div>
+      <button
+        className="btn"
+        type="button"
+        style={{ marginBottom: '0.5rem' }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? 'Hide' : 'Show'} {check.conflicts.length} conflict
+        {check.conflicts.length !== 1 ? 's' : ''}
+      </button>
+      {open && (
+        <ul className="step-list">
+          {check.conflicts.map((c, i) => (
+            <li key={i} className="step-list__item">
+              <span className="pill pill--danger">{c.type.replace(/_/g, ' ')}</span>{' '}
+              <strong>{c.target_type}</strong>: {c.target_identifier}
+              {c.reason && <span className="muted"> — {c.reason}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+const PREFLIGHT_VISIBLE_STATUSES = new Set(['approved', 'scheduled', 'dispatchable'])
+const DISPATCH_FROM_STATUSES = new Set(['approved', 'scheduled'])
+
+function PreflightCard({ change }: { change: ChangeRecord }) {
+  const preflightQuery = useLatestPreflight(
+    change.id,
+    PREFLIGHT_VISIBLE_STATUSES.has(change.status)
+  )
+  const runPreflightMutation = useRunPreflight(change.id)
+  const dispatchMutation = useDispatchChange(change.id)
+  const [dispatchError, setDispatchError] = useState<string | null>(null)
+
+  if (!PREFLIGHT_VISIBLE_STATUSES.has(change.status)) return null
+
+  const check = preflightQuery.data ?? null
+  const isPassed = check?.result === 'passed'
+  const isFresh = check ? !check.is_stale : false
+  const canDispatch =
+    DISPATCH_FROM_STATUSES.has(change.status) &&
+    isPassed &&
+    isFresh &&
+    !dispatchMutation.isPending
+
+  return (
+    <section className="stack-md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h4 style={{ margin: 0 }}>Dispatch Preflight</h4>
+        {check && (
+          <span
+            className={
+              isPassed ? 'pill pill--success' : 'pill pill--danger'
+            }
+          >
+            {isPassed ? 'eligible' : 'ineligible'}
+          </span>
+        )}
+        {check && check.is_stale && (
+          <span className="pill pill--warn">stale</span>
+        )}
+      </div>
+
+      {preflightQuery.isLoading && <p className="muted">Loading preflight…</p>}
+      {preflightQuery.error && (
+        <p className="banner banner--error">
+          {getApiErrorMessage(preflightQuery.error)}
+        </p>
+      )}
+
+      {check && (
+        <>
+          <dl style={{ display: 'grid', gridTemplateColumns: '200px 1fr', rowGap: '0.25rem' }}>
+            <dt className="muted">Checked at</dt>
+            <dd>{formatDateTime(check.checked_at)}</dd>
+            <dt className="muted">Expires at</dt>
+            <dd>{formatDateTime(check.expires_at)}</dd>
+          </dl>
+
+          <ul className="step-list">
+            {preflightCheckRows(check).map(({ name, ok }) => (
+              <li key={name} className="step-list__item">
+                <span className={ok ? 'pill pill--success' : 'pill pill--danger'}>
+                  {ok ? '✓' : '✗'}
+                </span>{' '}
+                {CHECK_LABELS[name] ?? name.replace(/_/g, ' ')}
+              </li>
+            ))}
+          </ul>
+
+          <ConflictDrawer check={check} />
+        </>
+      )}
+
+      {!check && !preflightQuery.isLoading && (
+        <p className="muted">No preflight result yet. Run preflight before dispatching.</p>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <button
+          className="btn"
+          disabled={runPreflightMutation.isPending}
+          onClick={() => runPreflightMutation.mutate()}
+        >
+          {runPreflightMutation.isPending ? 'Running…' : check ? 'Rerun preflight' : 'Run preflight'}
+        </button>
+
+        {DISPATCH_FROM_STATUSES.has(change.status) && (
+          <button
+            className="btn btn--primary"
+            disabled={!canDispatch}
+            title={
+              !check
+                ? 'Run preflight first'
+                : !isPassed
+                  ? 'Preflight must pass before dispatch'
+                  : check.is_stale
+                    ? 'Preflight result is stale — rerun first'
+                    : dispatchMutation.isPending
+                      ? 'Dispatch in progress…'
+                      : 'Dispatch change for execution'
+            }
+            onClick={() => {
+              setDispatchError(null)
+              dispatchMutation.mutate(undefined, {
+                onError: (err) => setDispatchError(getApiErrorMessage(err)),
+              })
+            }}
+          >
+            {dispatchMutation.isPending ? 'Dispatching…' : 'Dispatch'}
+          </button>
+        )}
+      </div>
+
+      {dispatchError && <p className="banner banner--error">{dispatchError}</p>}
+      {runPreflightMutation.isError && (
+        <p className="banner banner--error">
+          {getApiErrorMessage(runPreflightMutation.error)}
+        </p>
+      )}
+    </section>
+  )
+}
+
 export function ChangeDetailPage() {
   const { changeId } = useParams<{ changeId: string }>()
   const { data: change, isLoading, error } = useChangeDetail(changeId ?? '')
@@ -321,6 +697,8 @@ export function ChangeDetailPage() {
       <ChangeTargetsList change={change} />
       <ApprovalSection change={change} />
       <PolicyDecisionSection change={change} />
+      <WindowPanel change={change} />
+      <PreflightCard change={change} />
       <VerificationSection change={change} />
       <ExecutionBindingSection change={change} />
     </div>

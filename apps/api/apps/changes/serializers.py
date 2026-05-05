@@ -98,6 +98,7 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
     approval_request = serializers.SerializerMethodField()
     execution_binding = serializers.SerializerMethodField()
     policy_decision = serializers.SerializerMethodField()
+    window = serializers.SerializerMethodField()
 
     class Meta:
         model = ChangeRecord
@@ -128,6 +129,7 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
             "approval_request",
             "policy_decision",
             "execution_binding",
+            "window",
             "created_at",
             "updated_at",
         ]
@@ -152,6 +154,12 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
         if not snapshot:
             return None
         return snapshot
+
+    def get_window(self, obj):
+        try:
+            return ChangeWindowOutputSerializer(obj.window).data
+        except Exception:
+            return None
 
 
 class CreateChangeRecordSerializer(serializers.Serializer):

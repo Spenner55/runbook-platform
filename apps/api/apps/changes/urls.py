@@ -6,6 +6,7 @@ from apps.changes.views import (
     ChangeRecordListCreateView,
     ChangeRecordSubmitView,
     ChangeWindowView,
+    DispatchChangeView,
     DispatchPreflightLatestView,
     DispatchPreflightRunView,
     ExecutionAcceptedView,
@@ -33,6 +34,11 @@ public_urlpatterns = [
         "<uuid:change_id>/submit/",
         ChangeRecordSubmitView.as_view(),
         name="change-record-submit",
+    ),
+    path(
+        "<uuid:change_id>/dispatch/",
+        DispatchChangeView.as_view(),
+        name="change-record-dispatch",
     ),
     path(
         "<uuid:change_id>/window/",

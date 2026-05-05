@@ -7,6 +7,7 @@ import { LoginPage } from '../routes/auth/LoginPage'
 import { ChangeCreatePage } from '../routes/changes/ChangeCreatePage'
 import { ChangeDetailPage } from '../routes/changes/ChangeDetailPage'
 import { ChangesPage } from '../routes/changes/ChangesPage'
+import { FreezeRulesPage } from '../routes/freeze-rules/FreezeRulesPage'
 import { ExecutionDetailPage } from '../routes/executions/ExecutionDetailPage'
 import { ExecutionsPage } from '../routes/executions/ExecutionsPage'
 import { IntegrationDetailPage } from '../routes/integrations/IntegrationDetailPage'
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
           { path: 'changes', element: <ChangesPage /> },
           { path: 'changes/new', element: <ChangeCreatePage /> },
           { path: 'changes/:changeId', element: <ChangeDetailPage /> },
+          { path: 'freeze-rules', element: <FreezeRulesPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],
       },

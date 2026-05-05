@@ -101,6 +101,7 @@ class Executor:
                         "Failed to mark execution %s failed: %s", execution_id, exc
                     )
                 return
+            self._notify_execution_started(execution)
 
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
         heartbeat.start()
@@ -154,6 +155,51 @@ class Executor:
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to mark execution %s complete: %s", execution_id, exc)
+
+        if execution.is_change_bound:
+            self._notify_execution_finished(execution)
+
+    def _notify_execution_started(self, execution: ClaimedExecution) -> None:
+        """POST execution-started to Django. Non-fatal on error."""
+        try:
+            self._client.execution_started(
+                execution.change_record_id,
+                execution.id,
+                observed_at=_utcnow(),
+            )
+            logger.info(
+                "execution-started notified for change %s / execution %s",
+                execution.change_record_id,
+                execution.id,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "execution-started callback failed for change %s / execution %s: %s",
+                execution.change_record_id,
+                execution.id,
+                exc,
+            )
+
+    def _notify_execution_finished(self, execution: ClaimedExecution) -> None:
+        """POST execution-finished to Django. Non-fatal on error."""
+        try:
+            self._client.execution_finished(
+                execution.change_record_id,
+                execution.id,
+                observed_at=_utcnow(),
+            )
+            logger.info(
+                "execution-finished notified for change %s / execution %s",
+                execution.change_record_id,
+                execution.id,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "execution-finished callback failed for change %s / execution %s: %s",
+                execution.change_record_id,
+                execution.id,
+                exc,
+            )
 
     def _bind_change_execution(
         self, execution: ClaimedExecution, claim_token: UUID

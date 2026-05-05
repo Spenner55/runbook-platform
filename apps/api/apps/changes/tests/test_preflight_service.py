@@ -405,6 +405,54 @@ def test_preflight_freeze_scoped_to_matching_target_type_conflicts(approved_chan
 
 
 @pytest.mark.django_db
+def test_block_freeze_wins_over_allow_with_exception_freeze(approved_change, org):
+    """BLOCK freeze blocks dispatch even when change satisfies an AWE freeze's exception."""
+    now = _now()
+    # AWE freeze — change has an exception reference, so this one would pass on its own.
+    FreezeRule.objects.create(
+        organization=org,
+        name="AWE Freeze",
+        behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+        starts_at=now - timedelta(hours=1),
+        ends_at=now + timedelta(hours=2),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=True,
+        is_active=True,
+    )
+    # BLOCK freeze — unconditional; exception reference must not help.
+    FreezeRule.objects.create(
+        organization=org,
+        name="Block Freeze",
+        behavior=FreezeRule.Behavior.BLOCK,
+        starts_at=now - timedelta(hours=1),
+        ends_at=now + timedelta(hours=2),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=False,
+        is_active=True,
+    )
+    # Provide the exception reference (satisfies AWE, must not satisfy BLOCK).
+    approved_change.freeze_exception_reference = "CAB-2024-999"
+    approved_change.freeze_exception_reason = "Approved emergency"
+    approved_change.save(
+        update_fields=["freeze_exception_reference", "freeze_exception_reason", "updated_at"]
+    )
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.freeze_conflicts_ok is False
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    # The BLOCK freeze must appear in conflicts.
+    block_conflicts = [
+        c for c in check.conflicts
+        if c["type"] == "freeze_rule" and c["behavior"] == FreezeRule.Behavior.BLOCK
+    ]
+    assert len(block_conflicts) == 1
+    assert block_conflicts[0]["name"] == "Block Freeze"
+
+
+@pytest.mark.django_db
 def test_preflight_expired_freeze_rule_does_not_conflict(approved_change, org):
     now = _now()
     FreezeRule.objects.create(

@@ -39,6 +39,7 @@ def list_change_records_for_org(*, organization):
             "policy_evaluation",
             "execution_binding",
             "execution_binding__execution",
+            "window",
         )
         .prefetch_related("targets")
     )
@@ -56,6 +57,7 @@ def get_change_record_with_binding(*, change_id, organization):
             "policy_evaluation",
             "execution_binding",
             "execution_binding__execution",
+            "window",
         )
         .prefetch_related("targets")
         .first()

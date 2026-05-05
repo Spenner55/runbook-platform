@@ -48,6 +48,60 @@ export interface ExecutionBindingSummary {
   requested_inputs_sha256: string
 }
 
+export interface ChangeWindow {
+  id: string
+  status: string
+  starts_at: string
+  ends_at: string
+  timezone: string
+  reason: string
+  approved_at: string | null
+  opened_at: string | null
+  expired_at: string | null
+  overrun_at: string | null
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PreflightCheckItem {
+  name: string
+  ok: boolean
+  detail: string
+}
+
+export interface PreflightConflict {
+  type: string
+  target_type: string
+  target_identifier: string
+  reason: string
+}
+
+export interface DispatchEligibilityCheck {
+  id: string
+  result: string
+  checked_at: string
+  expires_at: string
+  is_stale: boolean
+  approved_status_ok: boolean
+  policy_pass_ok: boolean
+  window_open_ok: boolean
+  freeze_conflicts_ok: boolean
+  target_locks_ok: boolean
+  actor_authorized_ok: boolean
+  checks: PreflightCheckItem[]
+  conflicts: PreflightConflict[]
+  input_snapshot_sha256: string
+  window_snapshot_sha256: string
+}
+
+export interface PatchWindowInput {
+  starts_at: string
+  ends_at: string
+  timezone?: string
+  reason?: string
+}
+
 export interface ChangeRecord {
   id: string
   status: string
@@ -75,6 +129,7 @@ export interface ChangeRecord {
   approval_request: ApprovalRequestSummary | null
   policy_decision: Record<string, unknown> | null
   execution_binding: ExecutionBindingSummary | null
+  window: ChangeWindow | null
   created_at: string
   updated_at: string
 }

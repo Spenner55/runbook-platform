@@ -5,6 +5,10 @@ Covers:
 - make_dispatchable reuses a fresh PASSED preflight check
 - make_dispatchable re-runs stale (expired) preflight
 - Dispatch blocked when preflight FAILS (freeze rule, target lock conflict)
+- Dispatch blocked when ChangeWindow is SCHEDULED (not yet open)
+- Dispatch blocked when ChangeWindow is EXPIRED (never started)
+- schedule_or_make_dispatchable transitions to SCHEDULED when scheduled_for is future
+- Stale PASSED preflight reruns when expired; new failing conditions block dispatch
 - TargetLock rows created for all targets on successful dispatch
 - Concurrent dispatch blocked by target lock uniqueness constraint
 - Rollback: locks not persisted when dispatch fails partway through
@@ -20,7 +24,9 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes import services as change_services
 from apps.changes.models import (
+    ChangeExecutionBinding,
     ChangeRecord,
+    ChangeWindow,
     DispatchEligibilityCheck,
     FreezeRule,
     TargetLock,
@@ -327,3 +333,156 @@ def test_submit_without_approval_dispatches_with_locks(
     assert TargetLock.objects.filter(
         change_record=change, status=TargetLock.Status.ACTIVE
     ).count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Window-blocked dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_make_dispatchable_blocked_when_window_scheduled(approved_change, org):
+    """SCHEDULED window (future) blocks dispatch via preflight window check."""
+    now = timezone.now()
+    ChangeWindow.objects.create(
+        organization=org,
+        change_record=approved_change,
+        starts_at=now + timedelta(hours=2),
+        ends_at=now + timedelta(hours=4),
+        status=ChangeWindow.Status.SCHEDULED,
+    )
+
+    with pytest.raises(DomainConflictError) as exc_info:
+        change_services.make_dispatchable(change=approved_change, actor=_system_actor())
+
+    assert exc_info.value.code == "dispatch_preflight_failed"
+    approved_change.refresh_from_db()
+    assert approved_change.status == ChangeRecord.Status.APPROVED
+    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+
+
+@pytest.mark.django_db
+def test_make_dispatchable_blocked_when_window_expired(approved_change, org):
+    """EXPIRED window (past, change never started) blocks dispatch — never-started guard."""
+    now = timezone.now()
+    ChangeWindow.objects.create(
+        organization=org,
+        change_record=approved_change,
+        starts_at=now - timedelta(hours=3),
+        ends_at=now - timedelta(hours=1),
+        status=ChangeWindow.Status.EXPIRED,
+    )
+
+    with pytest.raises(DomainConflictError) as exc_info:
+        change_services.make_dispatchable(change=approved_change, actor=_system_actor())
+
+    assert exc_info.value.code == "dispatch_preflight_failed"
+    approved_change.refresh_from_db()
+    assert approved_change.status == ChangeRecord.Status.APPROVED
+    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+
+
+# ---------------------------------------------------------------------------
+# schedule_or_make_dispatchable — future scheduled_for → SCHEDULED
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_schedule_or_make_dispatchable_goes_to_scheduled_with_future_scheduled_for(
+    org, operation_profile, published_workflow
+):
+    """When scheduled_for is in the future the change goes to SCHEDULED, not DISPATCHABLE."""
+    from apps.approvals.models import ApprovalRequest
+
+    actor = _system_actor()
+    now = timezone.now()
+    change = change_services.create_change_record(
+        organization=org,
+        operation_profile_key="prod-maintenance",
+        workflow_id=str(published_workflow.id),
+        title="Scheduled Change",
+        summary="",
+        justification="Needed",
+        requested_inputs={"key": "value"},
+        scheduled_for=now + timedelta(hours=2),
+        targets=[
+            {
+                "target_type": "server",
+                "target_identifier": "srv-sched-01",
+                "environment": "production",
+            }
+        ],
+        actor=actor,
+    )
+    change = change_services.submit_change_record(change=change, actor=actor)
+    if change.approval_request_id:
+        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(status="approved")
+    ChangeRecord.objects.filter(pk=change.pk).update(
+        status=ChangeRecord.Status.APPROVED, approved_at=now
+    )
+    change.refresh_from_db()
+
+    change_services.schedule_or_make_dispatchable(change=change, actor=actor)
+
+    change.refresh_from_db()
+    assert change.status == ChangeRecord.Status.SCHEDULED
+    assert not ChangeExecutionBinding.objects.filter(change_record=change).exists()
+    assert not TargetLock.objects.filter(change_record=change).exists()
+
+
+# ---------------------------------------------------------------------------
+# Stale preflight is re-run; new failing conditions block dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_stale_passed_preflight_reruns_when_conditions_change_and_fails(
+    approved_change, org
+):
+    """Expired PASSED preflight is discarded; re-run fails when a freeze is added."""
+    actor = _system_actor()
+
+    # 1. Run preflight — passes.
+    existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
+    assert existing.result == DispatchEligibilityCheck.Result.PASSED
+
+    # 2. Expire the check so make_dispatchable must re-run it.
+    DispatchEligibilityCheck.objects.filter(pk=existing.pk).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+
+    # 3. Add a BLOCK freeze rule after the original check passed.
+    now = timezone.now()
+    FreezeRule.objects.create(
+        organization=org,
+        name="Post-preflight freeze",
+        behavior=FreezeRule.Behavior.BLOCK,
+        starts_at=now - timedelta(minutes=1),
+        ends_at=now + timedelta(hours=2),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=False,
+        is_active=True,
+    )
+
+    # 4. make_dispatchable re-runs preflight → new check fails → dispatch blocked.
+    # The new check is created inside the atomic block and rolled back with the
+    # DomainConflictError, so we cannot observe it after the fact. What matters
+    # is that the stale PASSED check did NOT allow dispatch to proceed.
+    with pytest.raises(DomainConflictError) as exc_info:
+        change_services.make_dispatchable(change=approved_change, actor=actor)
+
+    assert exc_info.value.code == "dispatch_preflight_failed"
+    approved_change.refresh_from_db()
+    # Change is still APPROVED — the expired PASSED preflight did not bypass the gate.
+    assert approved_change.status == ChangeRecord.Status.APPROVED
+    # No binding or locks were created (transaction rolled back cleanly).
+    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+    assert not TargetLock.objects.filter(change_record=approved_change).exists()
+
+    # Verify the stale check was not used by confirming that running a fresh preflight
+    # now returns a FAILED result (freeze rule is still active).
+    fresh_check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=actor
+    )
+    assert fresh_check.result == DispatchEligibilityCheck.Result.FAILED
+    assert fresh_check.freeze_conflicts_ok is False

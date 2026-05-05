@@ -21,6 +21,9 @@ from runner.schemas import (
     ClaimNextResponse,
     CompleteExecutionRequest,
     CompleteExecutionResponse,
+    ExecutionFinishedResponse,
+    ExecutionStartedResponse,
+    ExecutionTimingCallbackRequest,
     HeartbeatRequest,
     HeartbeatResponse,
     StepStartRequest,
@@ -374,6 +377,40 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return BindChangeExecutionResponse.model_validate(data)
+
+    def execution_started(
+        self,
+        change_record_id: UUID,
+        execution_id: UUID,
+        *,
+        observed_at: datetime | None = None,
+    ) -> ExecutionStartedResponse:
+        data = self._post(
+            f"/api/v1/internal/changes/{change_record_id}/execution-started/",
+            ExecutionTimingCallbackRequest(
+                runner_id=self._runner_id,
+                execution_id=execution_id,
+                observed_at=observed_at,
+            ).model_dump(mode="json"),
+        )
+        return ExecutionStartedResponse.model_validate(data)
+
+    def execution_finished(
+        self,
+        change_record_id: UUID,
+        execution_id: UUID,
+        *,
+        observed_at: datetime | None = None,
+    ) -> ExecutionFinishedResponse:
+        data = self._post(
+            f"/api/v1/internal/changes/{change_record_id}/execution-finished/",
+            ExecutionTimingCallbackRequest(
+                runner_id=self._runner_id,
+                execution_id=execution_id,
+                observed_at=observed_at,
+            ).model_dump(mode="json"),
+        )
+        return ExecutionFinishedResponse.model_validate(data)
 
     def upload_artifact(
         self,

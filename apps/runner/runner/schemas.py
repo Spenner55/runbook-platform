@@ -354,6 +354,34 @@ class BindChangeExecutionResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Execution timing callbacks (change-bound only)
+# ---------------------------------------------------------------------------
+
+
+class ExecutionTimingCallbackRequest(BaseModel):
+    runner_id: str
+    execution_id: UUID
+    observed_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExecutionStartedResponse(BaseModel):
+    change_record_id: UUID
+    execution_started_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ExecutionFinishedResponse(BaseModel):
+    change_record_id: UUID
+    execution_finished_at: datetime | None = None
+    locks_released: int = 0
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
 # Artifact upload
 # ---------------------------------------------------------------------------
 

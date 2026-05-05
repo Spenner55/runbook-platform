@@ -373,6 +373,45 @@ class FreezeRuleDeactivateView(APIView):
         return Response(FreezeRuleSerializer(rule).data)
 
 
+class DispatchChangeView(APIView):
+    """POST /api/v1/changes/{change_id}/dispatch/ — dispatch a change for execution."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            services.make_dispatchable(change=change, actor=actor)
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
+            return _error_response(exc)
+
+        change = selectors.get_change_record_with_binding(
+            change_id=change_id, organization=org
+        )
+        return Response(
+            ChangeRecordDetailSerializer(change).data,
+            status=http_status.HTTP_202_ACCEPTED,
+        )
+
+
 class DispatchPreflightRunView(APIView):
     """POST /api/v1/changes/{change_id}/preflight/ — run dispatch preflight checks."""
 
