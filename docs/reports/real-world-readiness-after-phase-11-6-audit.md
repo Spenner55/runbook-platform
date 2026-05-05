@@ -4,32 +4,49 @@
 |---|---|
 | Audit date | 2026-05-05 |
 | Audited report | `docs/report/real-world-readiness-after-phase-11-6.md` |
-| Output location | `docs/reports/real-world-readiness-after-phase-11-6-audit.md` |
+| Required output path | `docs/reports/real-world-readiness-after-phase-11-6-audit.md` |
+| Repository root | `/home/dylan/code/runbook-platform` |
 | Verdict | Not ready for a real pilot |
 
 ## 1. Executive Verdict
 
-The report is directionally honest about the platform's largest real-world gaps, especially simulated runner execution, local-only artifact storage, missing deployment infrastructure, missing credentials, and enterprise-readiness limitations. However, it is not accurate as a current-state readiness report because it relies on the explicit assumption that Phases 11.1 through 11.6 are complete. The repository does not satisfy that assumption.
+The readiness report is useful as a strategic gap analysis, but it is not accurate as a current-state implementation assessment. Its key assumption is that Phases 11.1 through 11.6 are complete, verified, and blueprint-aligned. The repository does not support that assumption.
 
-The implementation reality is:
+Current implementation reality:
 
-- Phase 11.1 is substantially implemented through the `changes` app.
-- Phase 11.2 is partially implemented in backend models and services, but has important drift from the blueprint around explicit dispatch, mandatory windows, policy gates, freeze exceptions, and UI support.
-- Phase 11.3, Phase 11.4, Phase 11.5, and Phase 11.6 are not implemented as product surfaces. They remain blueprint-only except for status names, small placeholders, or unrelated scaffolding.
-- The runner still simulates execution. It does not execute real production operations.
-- Artifact storage is local-only.
-- AWS/deployment infrastructure is explicitly not implemented.
-- Authorization is organization-scoped but coarse; it lacks pilot-grade separation of duties, scoped auditor access, runner pools, project/service/environment scoping, and enterprise identity.
+- Phase 11.1 is substantially implemented through `apps/api/apps/changes/`.
+- Phase 11.2 is partially implemented: change windows, freeze rules, target locks, and dispatch preflight exist, but dispatch semantics drift from the blueprint.
+- Phase 11.3 is not implemented as modeled in the blueprint. There are status names such as `verification_pending`, but no `VerificationPlan`, `VerificationCheck`, `VerificationResult`, `ChangeClosure`, or closure API.
+- Phase 11.4 is not implemented. Free-text freeze exception fields exist, but emergency exceptions, breakglass sessions, retro-review, and breakglass audit semantics do not.
+- Phase 11.5 is not implemented. There is no sealed evidence bundle model, deterministic manifest, export package, legal hold model, or bundle sealing workflow.
+- Phase 11.6 is not implemented. There is no auditor app, scoped auditor grant model, auditor workspace API/UI, service catalog, external reference snapshot model, or control coverage model.
+- The runner remains simulated. `apps/runner/runner/sandbox.py` is a stub, and `apps/runner/runner/executor.py` simulates command success unless the command contains a fail marker.
+- Artifact storage is local-only. `apps/api/apps/artifacts/storage.py` rejects non-local backends.
+- AWS production infrastructure is explicitly not implemented. `infra/aws/README.md` says there are no live AWS resources, no IaC root, and no deployment workflow.
 
-Final pilot readiness: **Not ready**.
+Pilot readiness: **Not ready**.
 
-A real organization should not use the current repository for governed production-change evidence except as a non-production demo of control-plane concepts. The minimum required next step is an end-to-end pilot vertical slice for one narrowly scoped operation: explicit dispatch gates, real sandboxed execution, secret/target access, verification closure, sealed evidence, and read-only auditor access.
+The highest-risk gap is not a single missing UI page. It is that the platform currently lacks a complete governed change lifecycle after approval, a real execution boundary, sealed evidence, auditor access controls, and pilot-grade operational deployment. A small real organization should not use this repository for governed production-change evidence until those are closed or explicitly scoped out of a non-production demo.
 
 ## 2. Audit Scope and Method
 
-This audit prioritized the requested files and directories:
+Scope reviewed:
 
 - `docs/report/real-world-readiness-after-phase-11-6.md`
+- `docs/blueprints/`
+- `apps/api/`
+- `apps/runner/`
+- `apps/web/`
+- `apps/ai/`
+- `packages/`
+- `infra/`
+- `docker-compose.yml`
+- `Makefile`
+- `.env.example`
+- `.github/workflows/`
+
+Priority blueprint comparison:
+
 - `docs/blueprints/phase-11.1-change-dossier-blueprint.md`
 - `docs/blueprints/phase-11.2-windows-freezes-target-locks-blueprint.md`
 - `docs/blueprints/phase-11.3-verification-closure-blueprint.md`
@@ -38,271 +55,329 @@ This audit prioritized the requested files and directories:
 - `docs/blueprints/phase-11.6-auditor-workspace-control-coverage-blueprint.md`
 - `docs/blueprints/phase-10-platform-expansion-roadmap-blueprint.md`
 - `docs/blueprints/phase-10-09-production-hardening-blueprint.md`
-- `apps/api/`, `apps/runner/`, `apps/web/`, `apps/ai/`, `packages/`, `infra/`
-- `docker-compose.yml`, `Makefile`, `.env.example`, `.github/workflows/`
 
-The review method was:
+Method:
 
-- Read the audited report first and treated its Phase 11.6 completion statement as a claim requiring validation.
-- Compared Phase 11.x blueprint nouns and flows against actual Django apps, models, services, URLs, serializers, tests, frontend API clients, runner behavior, and package schemas.
-- Used repository searches for expected Phase 11.3-11.6 implementation objects such as `VerificationPlan`, `ChangeException`, `BreakglassSession`, `EvidenceBundle`, `AuditorAccessGrant`, `ControlMappingProfile`, and `ChangeControlCoverage`.
-- Inspected runner execution paths to determine whether the platform executes real commands or simulated work.
-- Inspected artifact storage and infrastructure paths for production deployment and evidence durability.
-- Ran or attempted the requested verification commands where possible.
+- Read the target report and treated its major claims as assertions to verify.
+- Compared Phase 11 blueprints against concrete Django models, services, URLs, tests, runner behavior, frontend API clients, and infrastructure files.
+- Classified report claims as Accurate, Partially accurate, Outdated, Missing implementation evidence, Contradicted by repository code, or Too vague to verify.
+- Checked architecture invariants against code boundaries.
+- Ran or attempted the requested verification commands and recorded the result.
 
-`docs/reports/` already exists, so this report uses the requested output path. No fallback to `docs/report/` was needed.
+Uncertainty:
+
+- This audit is source-level and local-environment based. It does not include a live API walkthrough because the `api` and `runner` Docker services were not running.
+- File paths are stable evidence. Line numbers are intentionally omitted in this report because the audit file may remain useful after nearby edits shift line numbers.
 
 ## 3. Report Accuracy Review
 
-| Report claim | Classification | Evidence | Audit finding |
+| Report claim | Classification | Repository evidence | Assessment |
 |---|---|---|---|
-| The report's key assumption is that Phases 11.1 through 11.6 are complete, verified, and aligned with blueprints. | Contradicted by repository code | `docs/report/real-world-readiness-after-phase-11-6.md:5-8`, `apps/api/config/settings/base.py:25-49`, `apps/api/config/api_v1_urls.py:44-67` | The repo registers `apps.changes` but no `apps.evidence`, `apps.auditor`, or separate emergency/verification apps. URL registration has changes/freeze rules but no evidence, auditor, verification, closure, exception, or breakglass APIs. |
-| If Phase 11.6 is fully implemented, the platform would model verification, emergency exceptions, sealed bundles, auditor search, external references, and control coverage. | Missing implementation evidence | `docs/report/real-world-readiness-after-phase-11-6.md:12-16`, `apps/api/apps/` directory listing | This is valid as a hypothetical blueprint summary, but not as a current implementation statement. The corresponding code surfaces are absent. |
-| The runner simulates work and `sandbox.py` is a stub. | Accurate | `docs/report/real-world-readiness-after-phase-11-6.md:16`, `apps/runner/runner/sandbox.py`, `apps/runner/runner/executor.py:316-385` | `Executor._execute_command()` checks for `FAIL_STEP`, sleeps, emits synthetic stdout/stderr, and marks the step terminal. It does not execute the step command. |
-| Django is the control plane. | Accurate | `apps/api/config/api_v1_urls.py:44-67`, `apps/api/apps/changes/services.py`, `apps/api/apps/executions/services.py` | State transitions, approvals, change dispatch, execution claims, artifacts, audit, and organization scoping are controlled through Django services and APIs. |
-| Runner talks only to Django internal APIs. | Accurate | `apps/runner/runner/client.py`, `apps/runner/runner/executor.py:85-103` | Runner binding, heartbeat, step start/update, approvals, completion, and artifact uploads go through Django internal endpoints. |
-| React talks only to Django public APIs. | Accurate | `apps/web/src/shared/api/client.ts:9-10`, `apps/web/src/shared/api/client.ts:190-193` | The browser client explicitly blocks `/api/v1/internal/` paths and goes through the Django API client. |
-| The AI service is advisory and stateless. | Accurate | `apps/ai/app/services/workflow_parser.py`, workflow parser call paths in API | The default parser is deterministic; AI parsing is not in the execution authority path. |
-| Approvals, policies, audit, artifacts, integrations, authentication, live execution streaming, and a substantial `changes` app are present. | Accurate with scope caveat | `apps/api/apps/approvals/`, `apps/api/apps/policies/`, `apps/api/apps/audit/`, `apps/api/apps/artifacts/`, `apps/api/apps/integrations/`, `apps/api/apps/changes/` | These apps exist, but the `changes` app mostly covers Phase 11.1 and part of Phase 11.2. It does not implement the later governance surfaces claimed by the Phase 11.6 assumption. |
-| Production hardening exists in code and documentation, while AWS deployment remains blueprint-only. | Partially accurate | `Makefile`, `.github/workflows/ci.yml`, `infra/aws/README.md:1-21` | CI and local hardening scaffolding are real, but production deployment is absent and the current local Docker API container is unhealthy. |
-| Artifact storage is local-only. | Accurate | `docs/report/real-world-readiness-after-phase-11-6.md:38`, `apps/api/apps/artifacts/storage.py:23-29` | `ArtifactStorage` raises if `ARTIFACT_STORAGE_BACKEND != "local"`. S3 settings exist only as future validation/config placeholders. |
-| AWS infrastructure is not scaffolded. | Accurate | `infra/aws/README.md:1-21` | The README states there are no live resources, no Terraform/CDK/Pulumi root, and no deployment workflow. |
-| Workflow schema is thin. | Accurate | `packages/workflow-schema/workflow.schema.json:1-27` | The schema requires only workflow name and step `id`, `name`, `type`, and `risk`, with optional `command`, approval flag, and approval timeout. It lacks typed action specs, declared secrets, declared artifacts, target requirements, rollback semantics, and output schemas. |
-| The report's real-world gap list is the correct next guidance after Phase 11.6. | Partially accurate, too optimistic | `docs/report/real-world-readiness-after-phase-11-6.md:65-220` | The listed gaps are valid, but the repo is blocked earlier than the report suggests. The first priority is not only post-Phase-11.6 execution maturity; it is also completing or intentionally narrowing Phase 11.3-11.6. |
-| The report is sufficient pilot guidance. | Partially accurate but too broad | Whole report | It lists many real gaps, but does not classify current implementation blockers, blueprint drift, acceptance criteria, test requirements, or AI-agent-sized implementation slices. |
+| "Phases 11.1 through 11.6 are complete, verified, and aligned with their blueprints" | Contradicted by repository code | `apps/api/config/settings/base.py`, `apps/api/config/api_v1_urls.py`, `apps/api/apps/changes/models.py`, `apps/api/apps/changes/urls.py` | Only the `changes` app is registered for Phase 11 work. There are no verification, emergency, evidence, auditor, service catalog, external reference, or control coverage apps/routes/models. |
+| The platform would model production changes, freeze windows, target locks, approvals, policy gates, verification, emergency exceptions, sealed evidence bundles, auditor search, external references, and control coverage | Partially accurate as a hypothetical, inaccurate as repo state | `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py`, missing apps under `apps/api/apps/` | Change records, windows, freezes, locks, approvals, and policy linkage exist. Verification, emergency exceptions, sealed bundles, auditor search, external references, and control coverage are not implemented. |
+| Runner still simulates work | Accurate | `apps/runner/runner/sandbox.py`, `apps/runner/runner/executor.py` | `Sandbox` is empty. `_execute_command()` checks for a fail marker, sleeps, uploads synthetic output, and marks terminal status. |
+| Phase 11.6 does not solve real command execution, credentials, real targets, or operational failures | Accurate | `apps/runner/runner/`, `apps/api/apps/artifacts/storage.py`, `infra/aws/README.md` | These concerns are outside implemented Phase 11 code and remain real blockers. |
+| Django is the control plane and owns persistence, orchestration, validation, state transitions, audit, and API contracts | Accurate with gaps | `apps/api/apps/*/services.py`, `apps/api/config/api_v1_urls.py` | The architecture is mostly preserved. Some service gates are permissive by default and not pilot-safe, but the boundary is correct. |
+| Runner talks only to Django internal APIs | Accurate | `apps/runner/runner/client.py`, `apps/api/apps/executions/internal_views.py`, `apps/api/apps/changes/urls.py` | Runner client uses Django internal endpoints. No direct database or AI access was found in the runner. |
+| React talks only to Django public APIs | Accurate | `apps/web/src/shared/api/client.ts`, `apps/web/src/features/changes/api/changesApi.ts` | The API client blocks internal API paths and uses Django routes. No direct AI or runner calls were found. |
+| AI service is advisory and stateless | Accurate with one config caveat | `apps/ai/app/services/workflow_parser.py`, `apps/ai/app/core/config.py`, `apps/api/apps/workflows/services.py` | AI does not persist state. Django validates and persists. Caveat: if LLM parsing is enabled, `workflow_parser.py` defaults to `gpt-4o` when `AI_PARSE_MODEL` is empty. |
+| Approvals, policies, audit, artifacts, integrations, auth, live execution streaming, and a substantial changes app are present | Accurate, but scope-sensitive | `apps/api/apps/approvals/`, `apps/api/apps/policies/`, `apps/api/apps/audit/`, `apps/api/apps/artifacts/`, `apps/api/apps/integrations/`, `apps/api/apps/users/`, `apps/api/apps/executions/`, `apps/api/apps/changes/` | These apps exist. Their presence should not be read as complete enterprise capability. Authorization remains coarse, artifact storage is local-only, and change lifecycle after execution is incomplete. |
+| Production hardening exists in code and documentation | Partially accurate | `apps/api/config/settings/prod.py`, `.github/workflows/ci.yml`, `Makefile`, `docker-compose.yml` | There is meaningful hardening and CI scaffolding. However, local config drift exists, AWS deployment is absent, and production assumptions remain unvalidated locally. |
+| Artifact storage is local-only | Accurate | `apps/api/apps/artifacts/storage.py`, `apps/api/apps/artifacts/views.py`, `apps/api/apps/artifacts/services.py` | The storage class raises for any backend other than `local`. Downloads stream local files through Django. |
+| AWS infrastructure is not scaffolded | Accurate | `infra/aws/README.md` | The README explicitly states there are no live resources, no Terraform/CDK/Pulumi root, and no deployment workflow. |
+| Default AI parser is deterministic and mostly creates manual tasks | Accurate | `apps/ai/app/services/workflow_parser.py`, `apps/ai/app/core/config.py` | `AI_USE_LLM_PARSER` defaults false. Deterministic parsing creates `manual_task` steps from numbered text. |
+| Workflow schema is thin | Accurate | `packages/workflow-schema/workflow.schema.json` | Schema is minimal: workflow name and step list with basic step fields. |
+| Report's recommended gaps are enough to guide implementation | Partially accurate | `docs/report/real-world-readiness-after-phase-11-6.md` | It identifies real production gaps, but it under-separates current blockers from post-Phase-11 hypothetical gaps and is not granular enough for coding agents. |
+| Report distinguishes pilot blockers from production enhancements | Partially accurate | `docs/report/real-world-readiness-after-phase-11-6.md` | The report discusses major gaps, but it does not rigorously classify blockers, controlled pilot limitations, and future production work against current code. |
 
 ## 4. Repository Implementation Reality
 
-The repository is a strong governed-control-plane prototype, not a pilot-ready production-change platform.
+### Current Implemented Foundations
 
-Implemented or substantially present:
+- Organization-scoped auth exists through JWT and `X-Organization-Id`.
+  Evidence: `apps/api/apps/common/org_context.py`, `apps/api/apps/common/permissions.py`, `apps/api/apps/users/models.py`.
+- Public and internal API separation exists.
+  Evidence: `apps/api/config/api_v1_urls.py`, `apps/api/apps/executions/internal_views.py`, `apps/api/apps/changes/urls.py`.
+- Runner authentication for internal endpoints exists.
+  Evidence: `apps/api/apps/common/authentication.py`, `apps/api/apps/common/permissions.py`.
+- Approval and policy apps exist and are wired into execution/change paths.
+  Evidence: `apps/api/apps/approvals/`, `apps/api/apps/policies/`, `apps/api/apps/executions/internal_views.py`, `apps/api/apps/changes/services.py`.
+- Audit event append-only behavior exists at the Django model/service layer.
+  Evidence: `apps/api/apps/audit/models.py`, `apps/api/apps/audit/services.py`.
+- Artifact upload/download scaffolding exists for local storage.
+  Evidence: `apps/api/apps/artifacts/models.py`, `apps/api/apps/artifacts/services.py`, `apps/api/apps/artifacts/storage.py`, `apps/api/apps/artifacts/views.py`.
+- Change dossier, operation profile, production targets, execution binding, windows, freeze rules, target locks, and dispatch eligibility checks exist.
+  Evidence: `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py`, `apps/api/apps/changes/tests/`.
+- Frontend can create, list, view, and submit changes.
+  Evidence: `apps/web/src/features/changes/api/changesApi.ts`, `apps/web/src/routes/changes/ChangeCreatePage.tsx`, `apps/web/src/routes/changes/ChangeDetailPage.tsx`.
 
-- Organization context enforcement through `X-Organization-Id` in `apps/api/apps/common/org_context.py:8-25`.
-- Basic organization membership roles: owner, admin, operator, viewer in `apps/api/apps/common/permissions.py:6-17`.
-- Email/password user model and JWT-style auth foundations in `apps/api/apps/users/models.py:9-28`.
-- Change dossier primitives: `OperationProfile`, `ChangeRecord`, `ChangeTarget`, and `ChangeExecutionBinding` in `apps/api/apps/changes/models.py`.
-- Phase 11.2 backend primitives: `ChangeWindow`, `FreezeRule`, `TargetLock`, and `DispatchEligibilityCheck`.
-- Backend dispatch binding from change records into execution rows in `apps/api/apps/changes/services.py:1196-1255`.
-- Direct execution guard for workflows controlled by active operation profiles in `apps/api/apps/executions/services.py:71-85`.
-- Runner-side change binding refusal before step execution in `apps/runner/runner/executor.py:85-103`.
-- Runner-owned artifact upload through Django, not direct object storage.
-- Audit metadata key rejection/scrubbing for obvious secret-bearing fields in `apps/api/apps/audit/services.py:18-56`.
-- Frontend guard against browser calls to internal APIs in `apps/web/src/shared/api/client.ts:190-193`.
-- Web lint and production build currently pass locally.
+### Current Partial or Unsafe Areas
 
-Not implemented or not pilot-grade:
+- Dispatch is not a user-visible explicit action. Approval/submission can make a change dispatchable and create an execution reservation automatically.
+  Evidence: `apps/api/apps/changes/services.py`, `apps/api/apps/changes/urls.py`.
+- Dispatch preflight can pass with no policy evaluation linked.
+  Evidence: `apps/api/apps/changes/services.py`, `apps/api/apps/changes/tests/test_preflight_service.py`.
+- Dispatch preflight can pass with no change window.
+  Evidence: `apps/api/apps/changes/services.py`, `apps/api/apps/changes/tests/test_preflight_service.py`.
+- Freeze exceptions are free-text fields on `ChangeRecord`, not typed exception records with approval or retro-review.
+  Evidence: `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py`.
+- Change completion with verification required transitions to `verification_pending`, but no verification workflow exists.
+  Evidence: `apps/api/apps/changes/services.py`, `apps/api/apps/changes/models.py`.
+- Authorization is organization-role based and coarse.
+  Evidence: `apps/api/apps/common/permissions.py`, `apps/api/apps/approvals/views.py`.
+- `.env.example`, `docker-compose.yml`, and `Makefile` do not consistently document/pass `CHANGE_DISPATCH_TOKEN_SECRET`.
+  Evidence: `.env.example`, `docker-compose.yml`, `Makefile`, `apps/api/config/settings/base.py`, `apps/api/config/settings/prod.py`.
 
-- Phase 11.3 verification plans, checks, results, attestations, and closure workflow.
-- Phase 11.4 emergency exceptions, breakglass sessions, and retro-review.
-- Phase 11.5 sealed evidence bundles, immutable manifests, retention, export, and legal holds.
-- Phase 11.6 auditor workspace, auditor grants, external references, service catalog, and control coverage.
-- Real runner execution and sandboxing.
-- Production secret brokerage and target access model.
-- Runner registration records, runner pools, capability labels, environment/network scheduling, and queue isolation.
-- Durable artifact/evidence storage.
-- Production infrastructure, deployment workflow, backup/restore workflow, and private runner networking.
-- Fine-grained RBAC, separation of duties, scoped auditor access, SSO/OIDC/SAML, SCIM, service accounts, and narrow API tokens.
-- UI/API completeness for change windows, freeze exception requests, dispatch preflight review, explicit dispatch, verification, evidence bundles, and auditor search.
+### Current Missing Phase 11 Surface
 
-Current Phase 11 status:
-
-| Phase | Blueprint intent | Repository reality |
-|---|---|---|
-| 11.1 Change dossier | Model governed change records, operation profiles, targets, bindings | Mostly implemented in `apps/api/apps/changes/` |
-| 11.2 Windows, freezes, target locks | Gate dispatch on windows, freezes, locks, and explicit eligibility | Partially implemented in backend; important drift remains |
-| 11.3 Verification and closure | Verification plans/results and controlled closure | Not implemented beyond status names such as `verification_pending` |
-| 11.4 Emergency exceptions/breakglass | Exception records, breakglass sessions, retro-review | Not implemented; only free-text freeze exception fields exist |
-| 11.5 Sealed evidence bundles | Immutable evidence bundles, redaction, export, retention, legal holds | Not implemented |
-| 11.6 Auditor workspace/control coverage | Scoped auditor grants, evidence search, external references, service catalog, control mapping | Not implemented |
+- No verification app or closure models/routes.
+- No emergency exception app, breakglass session, or retro-review model/routes.
+- No evidence bundle app, sealed manifest, export, retention, or legal hold model/routes.
+- No auditor workspace app or scoped read-only auditor grants.
+- No service catalog, external change references, or control coverage models.
+- No frontend screens for verification, breakglass, evidence bundles, auditor workspace, service catalog, or control coverage.
 
 ## 5. Pilot Readiness Assessment
 
-| Domain | Readiness | Evidence | Assessment |
+| Area | Readiness | Evidence | Assessment |
 |---|---|---|---|
-| Authentication and authorization | Partial, not pilot-grade | `apps/api/apps/users/models.py:9-28`, `apps/api/apps/common/permissions.py:6-17` | Basic auth and org roles exist. Missing SSO, fine-grained scopes, auditor role/grants, service accounts, and separation-of-duties rules. |
-| Organization scoping / tenancy | Partial | `apps/api/apps/common/org_context.py:8-25`, `apps/api/apps/common/permissions.py:28-71` | Header and membership enforcement are useful. Needs broader cross-tenant negative tests for every Phase 11 endpoint and future auditor/evidence exports. |
-| ChangeRecord lifecycle | Partial | `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py` | Dossier lifecycle is meaningful through dispatch and execution binding, but verification/closure/emergency/evidence states are incomplete. |
-| Approval and policy gates | Partial, blocking gaps | `apps/api/apps/approvals/views.py:61-90`, `apps/api/apps/changes/services.py:2733-2759` | Operators can decide approvals. No SoD guard. Dispatch preflight passes when no policy evaluation is linked. |
-| Change windows, freezes, target locks | Partial | `apps/api/apps/changes/services.py:2762-2877`, `apps/api/apps/changes/services.py:2880-2937` | Backend checks exist, but no mandatory production window, no typed freeze exception approval, no explicit dispatch API, and limited UI. |
-| Verification and closure | Not ready | `apps/api/apps/changes/services.py:2011-2022`, missing `VerificationPlan`/`VerificationResult` classes | Changes can enter `verification_pending`, but there is no implemented verification or closure workspace to move them safely forward. |
-| Emergency / breakglass controls | Not ready | Missing `ChangeException`, `BreakglassSession`, `RetroReview` implementation | Emergency controls are blueprint-only. Free-text freeze exception references are not enough. |
-| Evidence bundle sealing and export | Not ready | Missing `apps/api/apps/evidence/`; `apps/api/apps/artifacts/storage.py:23-29` | No sealed bundle model, immutable manifest, redaction/export flow, legal hold, or durable storage. |
-| Auditor workspace and scoped read-only access | Not ready | Missing `apps/api/apps/auditor/`; no auditor role in `apps/api/apps/common/permissions.py:6-17` | No scoped external or internal auditor access model. |
-| Runner safety and execution boundaries | Not ready | `apps/runner/runner/sandbox.py`, `apps/runner/runner/executor.py:316-385` | Runner execution is simulated and has no sandbox, resource controls, cancellation semantics, or target access boundary. |
-| Artifact handling | Partial, not durable | `apps/api/apps/artifacts/storage.py:23-61` | Artifact services are useful scaffolding but local storage is not pilot-grade evidence storage. |
-| Audit trail completeness | Partial | `apps/api/apps/audit/models.py:7-12`, `apps/api/apps/audit/models.py:23-49`, `apps/api/apps/audit/services.py:18-56` | Application-layer append-only and metadata scrubbing exist. Audit object coverage stops at Phase 11.2 objects. No tamper-evident chain or sealed evidence export. |
-| Operational hardening | Partial | `Makefile`, `.github/workflows/ci.yml`, `infra/aws/README.md:1-21` | CI/hardening scaffolding exists, but production deployment and restore workflows are absent. The current API service is unhealthy in compose. |
-| Local/demo deployment readiness | Partial | `docker-compose.yml`, `.env.example`, `apps/api/config/settings/base.py:210-213`, `apps/api/config/settings/prod.py:21-24`, verification results in section 13 | Current compose state cannot run API/runner verification because API is exited and runner is not running. `.env.example` and `docker-compose.yml` do not document/pass `CHANGE_DISPATCH_TOKEN_SECRET`, while production settings require it and base settings default it to an insecure placeholder. |
-| CI/testing reliability | Partial | `.github/workflows/ci.yml`, local verification results | Web lint/build pass locally. Docker API/runner checks could not be executed in the current environment. No tests exist for Phase 11.3-11.6 because those surfaces are absent. |
-| Documentation/runbooks | Partial | `docs/blueprints/`, `infra/aws/README.md` | Blueprints are detailed, but implementation status and pilot runbooks are not aligned with current code. |
-| Known unsafe assumptions | Blocking | Report assumption, simulated runner, local storage, missing deployment | The repo cannot yet produce trustworthy evidence for real production work. |
+| Authentication and authorization | Partial | `apps/api/apps/users/`, `apps/api/apps/common/permissions.py` | Auth exists, but roles are coarse. No SSO, SCIM, scoped service accounts, fine-grained RBAC, or separation of duties. |
+| Organization scoping / tenancy | Partial | `apps/api/apps/common/org_context.py`, app querysets/services | `X-Organization-Id` checks are a good base. Pilot still needs broader endpoint-by-endpoint authorization review and auditor scoping. |
+| ChangeRecord lifecycle | Partial | `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py` | Dossier lifecycle through dispatch/running exists. Verification, closure, cancellation semantics, stuck recovery after change binding, and evidence finalization are incomplete. |
+| Approval and policy gates | Partial | `apps/api/apps/approvals/`, `apps/api/apps/policies/`, `apps/api/apps/changes/services.py` | Gates exist but are too permissive for pilot. No SoD; policy preflight passes when no policy evaluation is linked. |
+| Change windows, freezes, target locks | Partial | `apps/api/apps/changes/models.py`, `apps/api/apps/changes/services.py` | Models and checks exist. Defaults allow no window; freeze exception is free text; no typed exception workflow. |
+| Verification and closure | Not ready | `apps/api/apps/changes/models.py`, absence of verification app | Status names exist, but blueprint models and workflow are absent. |
+| Emergency / breakglass controls | Not ready | `apps/api/apps/changes/models.py`, absence of breakglass app | No `ChangeException`, `BreakglassSession`, or `RetroReview`. |
+| Evidence bundle sealing and export | Not ready | `apps/api/apps/artifacts/`, absence of evidence app | Artifacts exist locally; sealed evidence bundles do not. |
+| Auditor workspace and scoped read-only access | Not ready | Absence of auditor app/routes/UI | No scoped external auditor access model or workspace. |
+| Runner safety and execution boundaries | Not ready | `apps/runner/runner/sandbox.py`, `apps/runner/runner/executor.py` | Runner simulates execution and has no real sandbox, target access, cancellation, credential injection, or action isolation. |
+| Artifact handling | Partial | `apps/api/apps/artifacts/storage.py`, `apps/api/apps/artifacts/services.py` | Local upload/download works as a scaffold. Durable object storage and evidence retention are absent. |
+| Audit trail completeness | Partial | `apps/api/apps/audit/models.py`, `apps/api/apps/audit/services.py` | Append-only application audit exists for implemented objects. Missing audit object types for Phases 11.3-11.6. No WORM/tamper-evident backend. |
+| Operational hardening | Partial | `apps/api/config/settings/prod.py`, `.github/workflows/ci.yml`, `Makefile` | Some prod settings and CI checks exist. Deployment, backups, restore, alerts, and production runbooks are absent. |
+| Local/demo deployment readiness | Partial | `docker-compose.yml`, `.env.example` | Compose has core services, but API and runner were not running during verification and dispatch secret config is incomplete. |
+| CI/testing reliability | Partial | `.github/workflows/ci.yml`, app tests | CI is relatively broad. Local Docker checks could not run because services were stopped. Phase 11.3-11.6 tests are absent because features are absent. |
+| Documentation/runbooks | Partial | `docs/blueprints/`, `infra/aws/README.md`, `docs/report/` | Blueprints are strong, but operator runbooks for real pilot deployment, incident handling, onboarding, backups, and evidence export are missing. |
+| Known unsafe assumptions | Not ready | `apps/runner/`, `apps/api/apps/changes/services.py`, `apps/api/apps/artifacts/storage.py` | Simulated execution, permissive dispatch defaults, local artifact storage, and incomplete lifecycle controls are unsafe for real production-change evidence. |
 
 ## 6. Blocking Pilot Gaps
 
-These must be fixed before any real pilot with an actual organization:
+The following must be fixed before a real organization uses the platform for governed production-change evidence.
 
-1. The audited report assumes Phases 11.1 through 11.6 are complete, but Phase 11.3 through Phase 11.6 are not implemented.
-2. The runner does not execute real operations and has no sandbox.
-3. There is no production credential, secret reference, or target access model.
-4. Verification and closure are absent; changes can become `verification_pending` without a completion path.
-5. Emergency exceptions and breakglass controls are absent.
-6. Sealed evidence bundles and immutable exports are absent.
-7. Auditor workspace and scoped read-only evidence access are absent.
-8. Authorization lacks separation of duties and fine-grained scopes.
-9. Dispatch gates drift from the Phase 11.2 blueprint: approval can auto-dispatch, windows and policy evaluations can pass by default, and freeze exceptions can be free-text.
-10. Artifact storage is local-only and unsuitable as durable pilot evidence storage.
-11. Production infrastructure and deployment workflows are absent.
-12. Runner registration, runner pools, capability scheduling, and queue isolation are absent.
-13. Operational recovery is incomplete for real execution: no running cancellation, no step retry/repair flow, and no pilot-grade stuck-execution runbook.
-14. Local/demo verification is currently blocked because the `api` service is exited and the `runner` service is not running.
+1. **Phase 11.3 through 11.6 implementation is missing.**
+   The report assumes these phases are complete, but the repository lacks the models, APIs, UI, and tests for verification/closure, emergency exceptions, sealed evidence bundles, and auditor workspace.
+
+2. **Runner execution is simulated and not sandboxed.**
+   A real pilot cannot treat synthetic step success as production evidence. There is no real command execution boundary, no resource limits, no target credential model, and no hard kill/cancel semantics.
+
+3. **Dispatch gates are too permissive and drift from Phase 11.2.**
+   The blueprint expects explicit, preflighted dispatch. The code can create execution reservations automatically from submit/approval and allows no-policy/no-window cases to pass.
+
+4. **Verification and closure are not implemented.**
+   The system can place a change into `verification_pending`, but it has no controlled verification plan/result/closure workflow.
+
+5. **Emergency and breakglass controls are not implemented.**
+   Free-text freeze exceptions are not equivalent to emergency exceptions, breakglass sessions, typed approvals, or retro-review.
+
+6. **Evidence bundles are mutable/nonexistent as sealed governance artifacts.**
+   Local artifacts can be uploaded, but there is no sealed manifest, export, retention lock, legal hold, or auditor-ready evidence package.
+
+7. **Auditor workspace and scoped read-only access are absent.**
+   There is no way to grant an external or internal auditor a bounded read-only evidence scope.
+
+8. **Authorization is too coarse for governed production changes.**
+   There is no separation of duties, verifier role, dispatcher permission, emergency authority, auditor role, or scoped service account model.
+
+9. **Artifact storage is local-only.**
+   Local filesystem storage is not durable, not independently retained, and not suitable as production evidence storage.
+
+10. **Production deployment architecture is absent.**
+    There is no AWS/IaC/deployment workflow, backup/restore design, monitoring, alerting, or migration procedure for pilot operations.
+
+11. **Configuration drift can break local/prod safety gates.**
+    `CHANGE_DISPATCH_TOKEN_SECRET` is required by production settings and by dispatch token generation, but is not consistently documented or passed by local compose/Makefile paths.
+
+12. **Stuck execution and change recovery is incomplete for real operations.**
+    Execution recovery scaffolding exists, but real runner disappearance, stuck verification, stuck dispatchable changes, and operator repair flows are not pilot-ready.
 
 ## 7. Controlled Pilot Limitations
 
-These are not necessarily blockers if explicitly excluded from the pilot contract, but they must be documented before any controlled pilot:
+These are not necessarily blockers if the pilot is explicitly constrained, but they must be documented in the pilot agreement and operator runbooks.
 
-- No SSO/OIDC/SAML or SCIM. The pilot would rely on local accounts.
-- No high availability, multi-region deployment, or production scaling architecture.
-- Manual onboarding for organizations, users, operation profiles, workflows, and targets.
-- Limited frontend coverage for Phase 11.2 controls; operators cannot manage or inspect the full change-window/freeze/preflight lifecycle from the UI.
-- No ServiceNow/Jira/PagerDuty external change-reference model despite blueprint intent.
-- No service catalog or control coverage model.
-- AI parsing is advisory and default-deterministic; it should not be marketed as reliable production workflow authoring.
-- Workflow authoring is not pilot-grade for typed operational actions, rollback, dry run, declared artifacts, or declared secrets.
-- Audit events are application-layer append-only, not database/WORM/tamper-evident.
-- Branch protection, release management, deployment approval, backup restore, incident response, and customer support runbooks need pilot-specific evidence.
+- No SSO/SAML/OIDC enterprise identity. Local user/JWT auth only.
+- No SCIM or directory-driven onboarding. User and organization setup is manual.
+- No high-availability architecture. Single-region/single-stack assumptions only.
+- No multi-region, disaster recovery, or tested restore drills.
+- No full observability stack. CI has checks, but pilot operations need dashboards, alerts, and incident procedures.
+- Limited integration depth. Integrations exist as app scaffolding, but external ITSM/PagerDuty evidence references from Phase 11.6 are missing.
+- Frontend change-management UI is partial. It supports create/list/detail/submit, not the full operational lifecycle.
+- AI parsing is advisory and limited. Deterministic parsing is intentionally simple; LLM parsing is optional and still requires human review.
+- Workflow/action model is thin and mostly unsuitable for precise production operations without a typed action catalog.
+- Audit trail is append-only at application level, not cryptographically sealed or stored in WORM infrastructure.
+- No formal support model, incident response path, customer data handling procedure, or retention policy.
 
 ## 8. Future Production Gaps
 
-These can come after a narrowly scoped pilot, but they are required for broader production readiness:
+After a constrained pilot is safe, future production readiness should address:
 
-- Enterprise identity: SSO, SCIM, group mapping, service accounts, scoped API tokens, session/device management.
-- Full observability stack: centralized logs, metrics, traces, dashboards, alerting, SLOs, error reporting, and customer-facing status.
-- HA and scale: multi-AZ database, object storage lifecycle, runner autoscaling, queue backpressure, rate limits, and noisy-neighbor isolation.
-- Compliance operations: SOC 2 control mapping, evidence retention policy, legal hold workflows, data export/delete workflows, audit review workflow, and compliance admin UI.
-- Multi-region or customer-managed runner architecture.
-- Workflow testing/promotion lifecycle: lint, dry-run, non-production promotion, rollback association, golden tests, version migration.
-- Advanced action catalog: Terraform/Kubernetes/database/cloud actions with typed contracts and action-specific policy hooks.
-- Support operations: admin diagnostics, impersonation controls, incident runbooks, break-fix access, customer notifications, and support audit trails.
+- SOC 2 control mapping polish and formal evidence taxonomy.
+- SAML/OIDC SSO, SCIM, enterprise group mapping, and service accounts.
+- Fine-grained RBAC by project, service, environment, target, action type, and operation profile.
+- HA deployment with database backups, point-in-time recovery, restore drills, and infrastructure rollbacks.
+- Centralized observability: metrics, traces, logs, dashboards, alerts, SLOs, and support diagnostics.
+- Runner fleet management: registration, pools, labels, scheduling, draining, concurrency, and customer-network install path.
+- Durable artifact and evidence storage with KMS, retention locks, object lifecycle policies, and export monitoring.
+- Release management: migration gates, rollout stages, rollback playbooks, and customer-visible change logs.
+- Load and resilience testing for API, runner, artifact upload, SSE/live events, and evidence export.
+- Formal data retention, deletion, legal hold, and customer offboarding procedures.
 
 ## 9. Blueprint Drift Analysis
 
-| Blueprint | Expected architecture | Repository alignment | Drift |
+| Blueprint | Expected | Repository reality | Drift |
 |---|---|---|---|
-| Phase 10 platform expansion roadmap | Django control plane, runner only through Django APIs, frontend only public Django APIs, AI stateless/advisory, UUIDs, business logic in services, no premature infra | Mostly aligned | The core invariants are preserved. The main issue is not invariant violation; it is missing implementation required for a real pilot. |
-| Phase 10.09 production hardening | Production checks, CI hardening, watchdog/recovery, structured logs, migration/security checks | Partially aligned | Makefile and CI scaffolding exist, but production deployment is absent and local API health currently fails in compose. |
-| Phase 11.1 change dossier | Operation profiles, change records, targets, execution binding, immutable request snapshots | Mostly aligned | Backend implementation is substantial. Remaining pilot concerns are UI/admin completeness, SoD, profile governance, and end-to-end test coverage. |
-| Phase 11.2 windows/freezes/locks | Explicit pre-dispatch eligibility, windows, freezes, target locks, dispatch refusal, auditability | Partially aligned | Backend objects and preflight checks exist. Drift: approval can call `schedule_or_make_dispatchable()` immediately, no explicit public dispatch endpoint is registered, windows pass by default when absent, policy passes by default when absent, and freeze exceptions are free-text references. |
-| Phase 11.3 verification/closure | Verification plans, checks, results, attestation, controlled closure | Not aligned | Code only has status names and transition to `verification_pending`; no verification domain models, URLs, services, or UI. |
-| Phase 11.4 emergency/breakglass | Exception requests, breakglass sessions, expiry, retro-review, audit | Not aligned | No emergency domain objects. `freeze_exception_reference` is not an approved exception model. |
-| Phase 11.5 sealed evidence bundles | Immutable bundles, manifest, redaction, export, retention, legal holds | Not aligned | No evidence app, bundle model, seal/export workflow, legal hold, or durable storage backend. |
-| Phase 11.6 auditor workspace/control coverage | Scoped auditor grants, evidence search, external references, service catalog, control coverage | Not aligned | No auditor app, auditor role/grants, external reference models, service catalog, or control mapping profile. |
-
-The largest documentation drift is that `docs/report/real-world-readiness-after-phase-11-6.md` analyzes what would remain after Phase 11.6, but the repository is still before most of Phase 11.3-11.6.
+| Phase 11.1 Change Dossier | Change records, operation profiles, targets, execution binding, immutable submitted dossier | Mostly implemented in `apps/api/apps/changes/` | Low to medium. The core exists, but downstream lifecycle phases are absent. |
+| Phase 11.2 Windows, Freezes, Target Locks | Explicit dispatch after successful preflight; windows, freeze rules, locks; target serialization | Partially implemented in `apps/api/apps/changes/` | Medium to high. No public dispatch endpoint; auto-dispatch behavior exists; no-policy/no-window gates can pass; freeze exception is free text. |
+| Phase 11.3 Verification and Closure | `VerificationPlan`, checks, results, attestations, `ChangeClosure`, controlled closure | Not implemented | High. Only status labels and transition to `verification_pending` exist. |
+| Phase 11.4 Emergency Exceptions and Breakglass | `ChangeException`, `BreakglassSession`, `RetroReview`, typed emergency workflow | Not implemented | High. Current freeze exception fields explicitly are not breakglass. |
+| Phase 11.5 Sealed Evidence Bundles | Evidence bundles, deterministic manifests, redaction, export packages, retention/legal hold | Not implemented | High. Artifact upload exists, but sealed evidence does not. |
+| Phase 11.6 Auditor Workspace and Control Coverage | Auditor grants, auditor search/detail/export, service catalog, external references, control mapping | Not implemented | High. No auditor app/routes/UI or control coverage models. |
+| Phase 10 Platform Expansion Roadmap | Runner should actually poll, claim, execute, stream logs, and handle failures before platform expansion | Runner polls and reports, but execution is simulated | High. The roadmap warned against expanding on a stub execution foundation. |
+| Phase 10.9 Production Hardening | Prod settings, graceful runner shutdown, health checks, watchdog, CI hardening, no new infra | Some hardening exists | Medium. CI is broader than the blueprint's initial state, PgBouncer exists in compose, and recovery code exists; deployment and runtime validation remain incomplete. |
 
 ## 10. Architecture Invariant Review
 
-| Invariant | Status | Evidence | Risk |
+| Invariant | Status | Evidence | Notes |
 |---|---|---|---|
-| Django is the control plane | Preserved | `apps/api/config/api_v1_urls.py:44-67`, `apps/api/apps/changes/services.py` | Keep this invariant. Future runner/action work must not move state authority into the runner. |
-| Runner only talks to Django APIs | Preserved | `apps/runner/runner/client.py`, `apps/runner/runner/executor.py:85-103` | Future real execution must still report facts to Django and never mutate platform state directly. |
-| Frontend only talks to Django APIs | Preserved | `apps/web/src/shared/api/client.ts:9-10`, `apps/web/src/shared/api/client.ts:190-193` | Future auditor/evidence UI must not call runner, AI, storage, or internal APIs directly. |
-| AI is stateless and advisory | Preserved | `apps/ai/app/services/workflow_parser.py` | Keep AI out of policy, approval, dispatch, verification, and evidence authority. |
-| Business logic in services | Mostly preserved | `apps/api/apps/changes/services.py`, `apps/api/apps/executions/services.py`, `apps/api/apps/artifacts/services.py` | Some view-level permission checks are acceptable, but SoD and dispatch authorization need service-level enforcement too. |
-| UUIDs everywhere | Mostly preserved | Core models use UUID primary keys | Continue for evidence, auditor, exception, runner, and secret-reference models. |
-| No secrets in audit/evidence | Partially preserved | `apps/api/apps/audit/services.py:18-56` | Audit metadata scrubbing exists, but there is no secret model and no sealed evidence redaction pipeline. Real runner stdout/stderr can leak secrets unless masking is implemented before pilot. |
-| No new infra unless justified | Preserved, but now blocks pilot | `infra/aws/README.md:1-21` | This was a good earlier invariant. A real pilot now justifies minimal deployment and storage infrastructure. |
+| Django is the control plane | Preserved | `apps/api/apps/*/services.py`, `apps/api/config/api_v1_urls.py` | Business state is centralized in Django. Missing features should continue this pattern. |
+| Runner only talks to Django APIs | Preserved | `apps/runner/runner/client.py` | Runner does not access DB/AI directly. Keep this invariant when adding real execution. |
+| Frontend only talks to Django APIs | Preserved | `apps/web/src/shared/api/client.ts` | Client blocks internal API paths. Missing UI should use public Django APIs only. |
+| AI is stateless and advisory | Preserved | `apps/ai/app/services/workflow_parser.py`, `apps/api/apps/workflows/services.py` | Django validates and persists workflow candidates. |
+| Business logic in services | Mostly preserved | `apps/api/apps/changes/services.py`, `apps/api/apps/executions/services.py`, `apps/api/apps/approvals/services.py` | Continue implementing lifecycle logic in services, not views. |
+| UUIDs everywhere | Mostly preserved | `apps/api/apps/common/models.py`, domain models | No major exposed integer-ID drift found in reviewed code. |
+| No secrets in audit/evidence | Partially preserved | `apps/api/apps/audit/services.py` | Audit service rejects/scrubs sensitive metadata keys. Real runner/evidence work must extend masking to stdout, stderr, artifacts, exports, and integration payloads. |
+| No new infra unless justified | Preserved so far | `infra/aws/README.md`, `docker-compose.yml` | No premature event queue found. Pilot will justify durable object storage and deployment infrastructure. |
 
 ## 11. Required Fix Examples
 
-### Gap: Phase 11.3 through Phase 11.6 are not implemented
+### Gap: Current report overstates implemented Phase 11 readiness
 
 Severity: Blocking
 
 Current evidence:
 
-- `docs/report/real-world-readiness-after-phase-11-6.md:5-8`
-- `apps/api/config/settings/base.py:25-49`
-- `apps/api/config/api_v1_urls.py:44-67`
-- Missing directories: `apps/api/apps/evidence/`, `apps/api/apps/auditor/`
-- Repository search found no implementation classes for `VerificationPlan`, `VerificationResult`, `ChangeException`, `BreakglassSession`, `EvidenceBundle`, `AuditorAccessGrant`, or `ChangeControlCoverage`.
+- `docs/report/real-world-readiness-after-phase-11-6.md`
+- `apps/api/config/settings/base.py`
+- `apps/api/config/api_v1_urls.py`
+- `apps/api/apps/changes/urls.py`
 
 Why it matters:
 
-The report evaluates a post-Phase-11.6 platform, but the codebase is not there. A pilot plan based on this report would overstate readiness and omit critical implementation tasks.
+The report can mislead an implementation agent or pilot sponsor into treating blueprint-only features as implemented controls. That creates false assurance around verification, breakglass, sealed evidence, and auditor access.
 
 Required fix examples:
 
-- Add an implementation-status matrix to the readiness report family that separates blueprint intent, implemented code, tested behavior, UI support, and pilot status.
-- Complete or intentionally defer Phase 11.3-11.6 with explicit pilot exclusions.
-- Add migration-backed models, services, serializers, URLs, and tests for every Phase 11 object included in the pilot scope.
+- Update the readiness report or add a current-state addendum that separates implemented, partial, and blueprint-only capabilities.
+- Add a Phase 11 status matrix to `docs/report/` or `docs/reports/`.
+- Require implementation prompts to reference current repository status before modifying code.
 
 Acceptance criteria:
 
-- [ ] Every Phase 11.3-11.6 blueprint object is classified as implemented, deferred, or intentionally out of pilot scope.
-- [ ] Deferred objects have documented risk and compensating controls.
-- [ ] Implemented objects have model/service/API tests and cross-org negative tests.
-- [ ] Readiness reports no longer rely on unvalidated assumptions.
+- [ ] Report states that Phase 11.3 through 11.6 are not implemented.
+- [ ] Report distinguishes hypothetical post-Phase-11.6 readiness from repository reality.
+- [ ] Each claimed capability links to concrete model/API/test evidence.
+- [ ] Pilot blockers and controlled pilot limitations are separated.
 
-### Gap: Real sandboxed execution is absent
+### Gap: Dispatch semantics drift from Phase 11.2
+
+Severity: Blocking
+
+Current evidence:
+
+- `apps/api/apps/changes/services.py`
+- `apps/api/apps/changes/urls.py`
+- `apps/api/apps/changes/tests/test_preflight_service.py`
+- `docs/blueprints/phase-11.2-windows-freezes-target-locks-blueprint.md`
+
+Why it matters:
+
+Production change dispatch must be an explicit controlled action with a fresh gate decision. Automatic transition from submit/approval to execution reservation weakens operator intent and makes it harder to prove that a final dispatch decision occurred after all gates were known.
+
+Required fix examples:
+
+- Add explicit public dispatch API, for example `POST /api/v1/changes/{id}/dispatch/`.
+- Require a fresh successful `DispatchEligibilityCheck` within a short TTL before dispatch.
+- Stop creating execution reservations automatically from submit/approval unless the operation profile explicitly allows auto-dispatch for non-production/demo use.
+- Change no-policy/no-window behavior from pass-by-default to profile-configured behavior.
+- Replace free-text freeze exceptions with typed, approved exceptions or require a Phase 11.4 exception object.
+
+Acceptance criteria:
+
+- [ ] A submitted/approved change does not create an execution reservation unless dispatch is explicitly requested or profile policy permits auto-dispatch.
+- [ ] Dispatch fails without a fresh successful preflight.
+- [ ] Dispatch fails when a required policy evaluation is missing.
+- [ ] Dispatch fails when a required window is missing.
+- [ ] Tests cover dispatch denial for missing policy, missing window, active freeze, active lock, stale preflight, and unauthorized actor.
+
+### Gap: Runner execution is simulated
 
 Severity: Blocking
 
 Current evidence:
 
 - `apps/runner/runner/sandbox.py`
-- `apps/runner/runner/executor.py:316-385`
-- `packages/workflow-schema/workflow.schema.json:1-27`
+- `apps/runner/runner/executor.py`
+- `apps/runner/runner/schemas.py`
 
 Why it matters:
 
-The current runner creates evidence around simulated work. A real organization would be relying on audit records and artifacts that do not prove any production operation actually happened.
+A real pilot depends on evidence that work actually ran against intended targets. Synthetic success is acceptable for demos, but it is unsafe as governed production-change evidence.
 
 Required fix examples:
 
-- Introduce a `SandboxProvider` interface owned by the runner.
-- Implement a conservative pilot sandbox for one approved step type, with real command execution, timeout, stdout/stderr capture, exit code capture, workspace cleanup, and kill semantics.
-- Add typed action specs to the workflow schema for the pilot operation instead of relying on free-form `command`.
-- Fail closed on unsupported step types.
-- Keep Django as the state authority; runner executes and reports facts only.
+- Define a `SandboxProvider` interface with local-dev and container-backed implementations.
+- Implement real command execution only for an explicitly allowed pilot action type.
+- Capture exit code, stdout, stderr, timeout, signal, start/end time, and working directory.
+- Enforce wall-clock timeout and cancellation.
+- Mask secrets before logs/artifacts leave the runner.
+- Fail closed for unsupported step types.
+- Add a runner integration test against Django internal APIs.
 
 Acceptance criteria:
 
-- [ ] A pilot step executes real work in an isolated workspace.
-- [ ] Timeout, cancellation, signal handling, exit code, stdout, stderr, and artifact capture are tested.
-- [ ] Unsupported action types fail before dispatch or at step start, not as silent success.
-- [ ] Runner cannot bypass Django step-start, approval, artifact, binding, or completion APIs.
-- [ ] Tests cover successful execution, failed execution, timeout, cancellation, and runner crash.
+- [ ] A pilot step executes a real process in an isolated workspace.
+- [ ] Timeout and cancellation terminate the process and mark the step/execution correctly.
+- [ ] Unsupported step types fail closed.
+- [ ] Logs and artifacts are captured from real process output.
+- [ ] Known secret values are redacted from stdout, stderr, errors, artifacts, audit metadata, and integration payloads.
 
-### Gap: Secret, credential, target access, and runner pool model is absent
+### Gap: Credential and target access model is missing
 
 Severity: Blocking
 
 Current evidence:
 
-- `packages/workflow-schema/workflow.schema.json:1-27`
-- `apps/runner/runner/executor.py:316-385`
-- `docker-compose.yml` runner configuration
-- No runner registry, runner pool, secret reference, target credential, or capability scheduling models found.
+- `apps/runner/runner/executor.py`
+- `apps/api/apps/changes/models.py`
+- `packages/workflow-schema/workflow.schema.json`
 
 Why it matters:
 
-Real production operations need credentials and network access. Without a secret and runner-pool model, the platform either cannot perform useful work or will encourage unsafe secrets in workflows, requested inputs, logs, or artifacts.
+Real operations require credentials and network reachability. Without a safe credential model, teams either cannot execute useful work or will leak powerful secrets through workflows, requested inputs, logs, artifacts, or audit events.
 
 Required fix examples:
 
-- Add secret reference fields to typed action definitions, not raw secret values.
-- Add a secret backend interface and pilot backend decision, such as AWS Secrets Manager, SSM Parameter Store, Vault, or a clearly marked local-dev backend.
-- Add runner registration records in Django, with org, pool, environment, region, capabilities, last heartbeat, version, and status.
-- Add dispatch scheduling constraints so production changes only go to eligible runner pools.
-- Mask secret values in runner logs, stdout/stderr artifacts, exceptions, audit metadata, and integration payloads.
+- Add secret reference fields to typed action specs, not raw secret values.
+- Add per-organization/environment secret namespaces backed by a real secret manager for pilot.
+- Add step-scoped injection of declared secrets only.
+- Add runner target capability labels and scheduling checks.
+- Add target access validation to dispatch preflight.
 
 Acceptance criteria:
 
-- [ ] Pilot workflows declare required secret references without storing raw secrets.
-- [ ] Runner receives only step-scoped credentials.
-- [ ] No raw secret appears in audit events, execution snapshots, artifacts, frontend responses, or integration payloads in tests.
-- [ ] A runner from one org/pool cannot claim another org/pool's execution.
-- [ ] Dispatch fails when no eligible runner is available.
+- [ ] Workflows cannot store raw secret values.
+- [ ] Requested inputs cannot include secret material unless handled as secret references.
+- [ ] Runner receives only scoped short-lived or referenced credentials required by the step.
+- [ ] Dispatch refuses when no eligible runner/target access exists.
+- [ ] Tests prove secret masking across logs, artifacts, audit events, and API errors.
 
 ### Gap: Verification and closure workflow is absent
 
@@ -310,611 +385,577 @@ Severity: Blocking
 
 Current evidence:
 
-- `apps/api/apps/changes/services.py:2011-2022`
-- Missing `VerificationPlan`, `VerificationCheck`, `VerificationResult`, and `ChangeClosure` implementation.
+- `apps/api/apps/changes/models.py`
+- `apps/api/apps/changes/services.py`
+- Missing `apps/api/apps/verification/` or equivalent models/routes
+- `docs/blueprints/phase-11.3-verification-closure-blueprint.md`
 
 Why it matters:
 
-For profiles with `verification_required`, successful executions move to `verification_pending`. There is no implemented workflow to verify results, attest findings, reject closure, or close the change with evidence. A pilot would accumulate stuck governed changes or close them manually outside the system.
+For governed production changes, success of execution is not enough. Operators need controlled verification, failed-verification handling, attestations, and final closure.
 
 Required fix examples:
 
-- Add verification plan/check/result/closure models under the Django control plane.
-- Add service functions for creating verification plans from operation profiles or templates.
-- Add verifier permissions and SoD enforcement so requester/approver/executor cannot automatically verify their own work where policy forbids it.
-- Add closure decisions with outcome, notes, evidence references, and audit events.
-- Add frontend detail views for verification and closure actions.
+- Add `VerificationPlan`, `VerificationCheck`, `VerificationResult`, and `ChangeClosure` models.
+- Add service methods for creating verification plans, recording results, attesting, failing verification, and closing a change.
+- Add public APIs and frontend actions for verification and closure.
+- Add audit object types/actions for verification and closure.
+- Link verification artifacts to sealed evidence bundle inputs.
 
 Acceptance criteria:
 
-- [ ] A succeeded change requiring verification cannot close until all required checks pass or are explicitly waived through an approved path.
-- [ ] Failed verification blocks closure or requires documented exception.
-- [ ] Cross-org users cannot view or act on verification records.
-- [ ] Every verification and closure decision emits audit events.
-- [ ] Tests cover pass, fail, waiver, stale execution, and SoD denial paths.
+- [ ] A change with `verification_required=True` cannot close directly from execution success.
+- [ ] Verification checks can be passed/failed with actor, timestamp, evidence references, and notes.
+- [ ] Failed verification transitions to an explicit failure/remediation state.
+- [ ] Closure requires required verification checks.
+- [ ] Tests cover happy path, failed verification, unauthorized verifier, and double closure.
 
-### Gap: Emergency exceptions and breakglass controls are absent
+### Gap: Emergency and breakglass controls are absent
 
-Severity: Blocking for pilots that include emergency paths; otherwise an explicit pilot exclusion
+Severity: Blocking
 
 Current evidence:
 
-- `apps/api/apps/changes/services.py:2803-2877`
-- No `ChangeException`, `BreakglassSession`, or `RetroReview` implementation.
-- Current freeze exception logic only checks `change.freeze_exception_reference`.
+- `apps/api/apps/changes/models.py`
+- `apps/api/apps/changes/services.py`
+- Missing emergency/breakglass app/routes
+- `docs/blueprints/phase-11.4-emergency-exceptions-breakglass-blueprint.md`
 
 Why it matters:
 
-Free-text exception references are not governed exceptions. Emergency access must be time-bounded, approved or explicitly breakglass, auditable, and followed by retro-review. Otherwise operators can bypass freezes or emergency controls without enforceable evidence.
+Real organizations need emergency changes, but those controls must be typed, bounded, audited, and retro-reviewed. A free-text freeze exception reference is not sufficient.
 
 Required fix examples:
 
 - Add `ChangeException`, `BreakglassSession`, and `RetroReview` models.
-- Replace free-text freeze exception acceptance with a linked approved exception record.
-- Add expiry, scope, approver/activator identity, target constraints, and mandatory retro-review.
-- Add preflight checks that validate the exception record, not only the presence of a string.
+- Require typed exception reason, scope, expiry, approving authority, and affected controls.
+- Enforce session TTL and single-use or bounded-use semantics.
+- Require retro-review before closure/evidence finalization.
+- Add prominent audit events for breakglass activation and use.
 
 Acceptance criteria:
 
-- [ ] Dispatch during an `allow_with_exception` freeze requires a valid approved exception or active breakglass session.
-- [ ] Exception scope must match organization, profile, targets, and time window.
-- [ ] Expired or used-up exceptions fail closed.
-- [ ] Breakglass creates mandatory retro-review before final closure.
-- [ ] Tests cover exception approval, denial, expiry, scope mismatch, and retro-review enforcement.
+- [ ] Breakglass cannot be used without typed scope and expiry.
+- [ ] Breakglass use is visible in change detail, audit trail, and evidence bundle manifest.
+- [ ] Retro-review is mandatory after emergency execution.
+- [ ] Breakglass cannot silently waive verification/evidence unless the exception explicitly says so and is audited.
+- [ ] Tests cover expired, over-scoped, unauthorized, and retro-review-missing cases.
 
-### Gap: Sealed evidence bundles and immutable exports are absent
+### Gap: Sealed evidence bundles are absent
 
 Severity: Blocking
 
 Current evidence:
 
-- Missing `apps/api/apps/evidence/`
-- `apps/api/apps/artifacts/storage.py:23-29`
-- `apps/api/apps/audit/models.py:23-49`
+- `apps/api/apps/artifacts/`
+- Missing evidence bundle app/routes
+- `docs/blueprints/phase-11.5-sealed-evidence-bundles-blueprint.md`
 
 Why it matters:
 
-A governed production-change pilot needs an evidence package that can be handed to an auditor or customer and later proven unchanged. Current audit rows and local artifacts are useful but not sealed evidence.
+Auditors need deterministic, immutable, exportable evidence packages. Local mutable artifacts and regular audit rows do not provide sealed evidence.
 
 Required fix examples:
 
-- Add an evidence app with bundle, bundle item, manifest, export, retention, and legal hold models.
-- Generate deterministic manifests containing change, execution, approval, policy, target, lock, verification, artifact checksum, and audit-event references.
-- Seal bundles with a stable hash and immutable status.
-- Implement redaction profiles and export jobs.
-- Store evidence artifacts in durable object storage before declaring pilot readiness.
+- Add `EvidenceBundle`, manifest, bundle item, export, retention, and legal hold models.
+- Generate deterministic manifests over change, execution, approvals, policy evaluations, verification, exceptions, audit events, and artifact checksums.
+- Add redaction profiles for exports.
+- Seal bundles with a digest and immutable state transition.
+- Support export package generation and audit of export access.
 
 Acceptance criteria:
 
-- [ ] A closed pilot change can produce a sealed evidence bundle.
-- [ ] Bundle manifest is deterministic and hash-stable.
-- [ ] Sealed bundles cannot be mutated through application services.
-- [ ] Export includes all required evidence and excludes secrets.
-- [ ] Tests detect manifest mutation, missing artifacts, checksum mismatch, cross-org export attempts, and redaction failures.
+- [ ] A sealed bundle cannot be modified in application code.
+- [ ] Rebuilding the manifest from unchanged source data produces the same digest.
+- [ ] Export package includes manifest, metadata, and referenced artifacts or references.
+- [ ] Legal hold prevents deletion/retention cleanup.
+- [ ] Tests cover tamper detection, redaction, export authorization, and legal hold.
 
 ### Gap: Auditor workspace and scoped read-only access are absent
 
-Severity: Blocking if pilot includes auditor/customer review; otherwise an explicit pilot exclusion
+Severity: Blocking
 
 Current evidence:
 
-- Missing `apps/api/apps/auditor/`
-- `apps/api/apps/common/permissions.py:6-17`
-- `apps/api/config/api_v1_urls.py:44-67`
+- Missing auditor app/routes/UI
+- `apps/api/config/api_v1_urls.py`
+- `apps/web/src/app/router.tsx`
+- `docs/blueprints/phase-11.6-auditor-workspace-control-coverage-blueprint.md`
 
 Why it matters:
 
-Auditor access cannot be simulated with normal organization viewer permissions. A pilot needs scoped grants, read-only evidence access, limited exports, and audit trails around auditor activity.
+A real pilot with governed evidence needs a safe way to expose only approved evidence to auditors. Normal organization roles are too broad and not audit-specific.
 
 Required fix examples:
 
-- Add auditor access grants with org, scope, expiry, allowed objects, export permissions, and revocation.
-- Add auditor search/detail APIs that only return sealed or explicitly shareable evidence.
+- Add `AuditorAccessGrant` with scope, expiration, export permissions, and revoked state.
+- Add auditor-only read APIs for search, change detail, evidence bundle detail, and export.
+- Add service catalog, external reference, and control coverage models.
 - Add frontend auditor workspace routes.
-- Add audit events for grant creation, access, export, revocation, and expiry.
+- Add audit events for auditor access, search, view, export, revoke, and expiry.
 
 Acceptance criteria:
 
-- [ ] Auditor users can only see granted objects.
-- [ ] Revoked or expired grants deny access immediately.
-- [ ] Auditor export permissions are separate from view permissions.
-- [ ] Auditor activity is itself audited.
-- [ ] Cross-org and over-scope access tests fail closed.
+- [ ] Auditor users can access only granted organizations/projects/services/time ranges/control IDs.
+- [ ] Auditor access is read-only.
+- [ ] Export requires explicit grant permission.
+- [ ] Grant expiry and revocation take effect immediately.
+- [ ] Tests prove cross-scope data is not returned.
 
-### Gap: Authorization is too coarse and lacks separation of duties
+### Gap: Authorization and separation of duties are insufficient
 
 Severity: Blocking
 
 Current evidence:
 
-- `apps/api/apps/common/permissions.py:6-17`
-- `apps/api/apps/approvals/views.py:61-90`
-- `apps/api/apps/changes/services.py:2940-2953`
+- `apps/api/apps/common/permissions.py`
+- `apps/api/apps/organizations/models.py`
+- `apps/api/apps/approvals/views.py`
+- `apps/api/apps/approvals/services.py`
 
 Why it matters:
 
-Owner/admin/operator/viewer is not enough for governed production changes. A requester approving their own change, an executor verifying their own work, or an emergency activator reviewing their own breakglass action undermines the evidence.
+Governed changes require distinct powers: request, approve, dispatch, verify, close, breakglass, retro-review, export, and administer. The current owner/admin/operator/viewer model cannot enforce those distinctions.
 
 Required fix examples:
 
-- Define a pilot permission matrix for requester, approver, dispatcher, executor, verifier, auditor, org admin, and support.
-- Enforce SoD in services, not only in views.
-- Add policy-configurable SoD rules for operation profiles.
-- Include actor identity in dispatch preflight authorization and denial reasons.
+- Add capability checks or scoped role assignments for requester, approver, dispatcher, verifier, closer, breakglass operator, retro-reviewer, auditor, and export operator.
+- Add separation-of-duties policies, especially requester cannot approve, dispatcher cannot verify, breakglass activator cannot retro-review.
+- Add service-level permission helpers and tests around each state transition.
+- Add audit events for denied privileged actions.
 
 Acceptance criteria:
 
-- [ ] Requester self-approval is denied when SoD is enabled.
-- [ ] Executor self-verification is denied when SoD is enabled.
-- [ ] Breakglass activator cannot retro-review the same breakglass session.
-- [ ] Dispatch actor authorization checks specific permissions, not just actor presence.
-- [ ] Tests cover role, scope, and SoD denial for every pilot action.
+- [ ] A user cannot approve their own change when SoD is enabled.
+- [ ] Dispatch requires explicit dispatch permission.
+- [ ] Verification and closure require separate permissions.
+- [ ] Breakglass activation and retro-review require distinct permissions.
+- [ ] Auditor grants do not imply operator permissions.
 
-### Gap: Dispatch, policy, and window gates drift from Phase 11.2 intent
+### Gap: Durable artifact storage is absent
 
 Severity: Blocking
 
 Current evidence:
 
-- `apps/api/apps/changes/services.py:1063-1070`
-- `apps/api/apps/changes/services.py:1096-1119`
-- `apps/api/apps/changes/services.py:1196-1255`
-- `apps/api/apps/changes/services.py:2733-2800`
-- `apps/api/config/api_v1_urls.py:44-67`
+- `apps/api/apps/artifacts/storage.py`
+- `apps/api/apps/artifacts/services.py`
+- `apps/api/apps/artifacts/views.py`
+- `.env.example`
 
 Why it matters:
 
-Approval can immediately make a change dispatchable. Policy and window checks can pass by default. There is no explicit public dispatch endpoint. This weakens the separation between approval, scheduling, preflight review, and dispatch authorization.
+Local filesystem artifacts are not durable evidence. They are vulnerable to container replacement, disk cleanup, partial backup coverage, and local operator tampering.
 
 Required fix examples:
 
-- Add explicit dispatch API/service command for approved/scheduled changes.
-- Stop auto-dispatching immediately on approval unless the pilot scope explicitly requires it and documents why.
-- Require a successful current policy evaluation before dispatch for governed profiles.
-- Require an open change window for production profiles unless an approved exception applies.
-- Surface preflight results in the UI before dispatch.
+- Implement S3 or equivalent object storage backend.
+- Add KMS encryption, bucket policy, object ownership, and lifecycle configuration.
+- Add checksum verification on upload/download.
+- Add retention and legal-hold integration for evidence-related artifacts.
+- Add migration path from local dev storage to pilot storage.
 
 Acceptance criteria:
 
-- [ ] Approval does not create an execution unless explicit dispatch policy allows it.
-- [ ] Production changes without a current open window fail preflight.
-- [ ] Missing policy evaluation fails preflight for governed profiles.
-- [ ] Dispatch actor must have the dispatch permission and satisfy SoD.
-- [ ] Tests cover approval-only, scheduled, explicit dispatch, policy missing/failing, window missing/closed, and target-lock conflict paths.
+- [ ] Pilot environment stores artifacts outside containers/ephemeral disks.
+- [ ] Artifact bytes are checksum-verified.
+- [ ] Download access is authorized and audited.
+- [ ] Deletion is blocked for held/sealed evidence artifacts.
+- [ ] Tests cover object backend upload/download and authorization failures.
 
-### Gap: Artifact storage is local-only and evidence durability is not pilot-grade
+### Gap: Production deployment and operations are absent
 
 Severity: Blocking
 
 Current evidence:
 
-- `apps/api/apps/artifacts/storage.py:1-61`
-- `infra/aws/README.md:1-21`
+- `infra/aws/README.md`
 - `docker-compose.yml`
+- `.github/workflows/ci.yml`
+- `Makefile`
 
 Why it matters:
 
-Local filesystem artifacts are not a reliable evidence substrate for a real organization. Container rebuilds, host loss, volume misconfiguration, or manual file mutation can destroy or alter pilot evidence.
+A pilot needs a repeatable environment with backups, deploy/rollback, secrets, monitoring, incident response, and clear ownership. Local compose is not a pilot operating model.
 
 Required fix examples:
 
-- Implement S3 or equivalent object storage backend behind the existing `ArtifactStorage` abstraction.
-- Use KMS encryption, bucket policies, checksum verification, and lifecycle controls.
-- Add retention and legal-hold controls for evidence-related artifacts.
-- Ensure downloads are short-lived and organization-scoped.
+- Add IaC for the chosen pilot environment.
+- Add staged deployment workflows with migration checks and manual approval.
+- Add database backup/restore runbook and restore test.
+- Add health checks, metrics, alerts, and log retention.
+- Add runner deployment model and private network path.
+- Add incident runbooks for stuck execution, failed dispatch, artifact upload failure, evidence export failure, and breakglass abuse.
 
 Acceptance criteria:
 
-- [ ] Pilot artifacts are stored in durable object storage.
-- [ ] Artifact upload verifies checksum and size constraints.
-- [ ] Artifact download authorization is organization-scoped and audited.
-- [ ] Evidence-related artifacts cannot be deleted while under legal hold or sealed bundle dependency.
-- [ ] Tests cover upload/download/checksum/cross-org/delete/retention behavior.
+- [ ] A new pilot environment can be created from documented steps.
+- [ ] Secrets are not stored in git or compose files.
+- [ ] Deploy and rollback are tested.
+- [ ] Backup restore is tested.
+- [ ] Alerts exist for API down, runner offline, stuck executions, failed artifact writes, and evidence seal/export failures.
 
-### Gap: Production deployment and operational runbooks are absent
+### Gap: Local and production config drift
 
 Severity: Blocking
 
 Current evidence:
 
-- `infra/aws/README.md:1-21`
-- `Makefile`
-- `.github/workflows/ci.yml`
-- Docker verification results in section 13
-
-Why it matters:
-
-A real pilot needs a controlled environment, backups, restore evidence, secrets, logs, network boundaries, deployment rollback, and support playbooks. Local compose is useful for development but not enough for a real organization.
-
-Required fix examples:
-
-- Define minimal pilot deployment architecture, even if intentionally small.
-- Add infrastructure-as-code for API, web, database, object storage, secrets, logs, and private runner connectivity.
-- Add deployment workflow with manual production gate, rollback plan, and migration check.
-- Add backup/restore runbook and evidence.
-- Add pilot incident response and operational support runbooks.
-
-Acceptance criteria:
-
-- [ ] Pilot environment can be rebuilt from code and documented secrets.
-- [ ] Database backup and restore drill has recorded evidence.
-- [ ] Object storage retention and recovery are tested.
-- [ ] Deployment has preflight checks, rollback path, and manual approval.
-- [ ] Logs and alerts cover API health, runner liveness, failed dispatch, failed verification, and artifact errors.
-
-### Gap: Local/demo configuration does not reliably support change dispatch
-
-Severity: Blocking for local pilot rehearsal; pilot limitation if the pilot never uses local compose
-
-Current evidence:
-
-- `apps/api/config/settings/base.py:210-213`
-- `apps/api/config/settings/prod.py:21-24`
 - `.env.example`
 - `docker-compose.yml`
-- Verification results in section 13
+- `Makefile`
+- `apps/api/config/settings/base.py`
+- `apps/api/config/settings/prod.py`
 
 Why it matters:
 
-Change dispatch token generation rejects missing or insecure placeholder secrets, but the sample environment and compose API service do not make that required variable obvious. A pilot rehearsal can fail at dispatch even when the rest of the local stack appears healthy. The current compose state also has the API container exited and runner not running, so the documented verification commands cannot establish readiness.
+Dispatch token generation rejects insecure/missing secrets. If local/demo paths omit `CHANGE_DISPATCH_TOKEN_SECRET`, operators may see confusing failures or bypass real dispatch verification in ad hoc ways.
 
 Required fix examples:
 
-- Add `CHANGE_DISPATCH_TOKEN_SECRET` to `.env.example` with a non-secret placeholder instruction.
-- Pass the variable explicitly through `docker-compose.yml`.
-- Add startup or bootstrap documentation that explains when local dispatch requires a strong dev-only value.
-- Add a local readiness command that checks API health, migrations, required env, runner liveness, and dispatch-token configuration.
+- Document `CHANGE_DISPATCH_TOKEN_SECRET` in `.env.example`.
+- Pass it through `docker-compose.yml` for API.
+- Include it in `Makefile` production check commands.
+- Add startup/system check that detects insecure defaults outside dev/test.
 
 Acceptance criteria:
 
-- [ ] A fresh local bootstrap documents every required variable for change dispatch.
-- [ ] `docker compose exec -T api python manage.py check` runs after documented bootstrap.
-- [ ] A seeded dev change can reach dispatch without hitting insecure dispatch-token configuration.
-- [ ] Local readiness docs distinguish dev-only secrets from production secret handling.
-
-### Gap: Operational recovery for real execution is incomplete
-
-Severity: Blocking for real execution; pilot limitation for simulated demos
-
-Current evidence:
-
-- `apps/api/apps/executions/services.py`
-- `apps/runner/runner/main.py`
-- `apps/runner/runner/poller.py`
-- Current public cancellation supports only queued execution paths.
-
-Why it matters:
-
-Real production operations fail mid-step, hang, lose runner connectivity, or require operator cancellation. Without well-defined cancellation, retry, repair, and lock release semantics, a pilot can strand locks, leave unknown target state, or create misleading evidence.
-
-Required fix examples:
-
-- Add running execution cancellation and runner kill propagation.
-- Add step retry rules with explicit safe/unsafe retry policy.
-- Add lock release and repair workflows for crashed or recovered executions.
-- Add operator runbooks for stuck dispatchable, running, verification-pending, and sealed-bundle-failed states.
-
-Acceptance criteria:
-
-- [ ] Running cancellation stops runner work and records final state.
-- [ ] Stale claimed/running executions recover without cross-tenant or target-lock leakage.
-- [ ] Target locks are released or repaired under documented conditions.
-- [ ] Manual repair actions are permissioned and audited.
-- [ ] Tests simulate runner crash, heartbeat timeout, API restart, cancellation, retry denial, and repair.
+- [ ] `docker compose exec api python manage.py check` passes with documented env.
+- [ ] `make check-prod` passes with required non-placeholder secrets.
+- [ ] Dispatch tests fail if the secret is placeholder/insecure.
+- [ ] No production path uses the base insecure fallback.
 
 ## 12. Recommended Pilot-Readiness Implementation Sequence
 
-### Phase 0: Define the pilot contract and fail-closed scope
+### Phase 0: Reconcile Current-State Documentation
 
 Goal:
 
-Define one real organization pilot scenario and explicitly exclude everything else.
+Make the repository's readiness status impossible to misread.
 
 Scope:
 
-- One organization.
-- One operation profile.
-- One target type/environment.
-- One typed action or small typed action set.
-- One runner pool.
-- One evidence bundle type.
-- One auditor view/export flow.
+- Update readiness documentation to separate implemented, partial, and blueprint-only capabilities.
+- Add a Phase 11 implementation matrix.
+- Define the exact controlled pilot target: production evidence only, non-production execution, or real production execution.
 
 Files touched:
 
-- `docs/runbooks/` or `docs/reports/` for pilot contract and risk register.
-- `docs/blueprints/` implementation-status updates.
-- `.env.example` and deployment docs for required pilot configuration.
+- `docs/report/real-world-readiness-after-phase-11-6.md`
+- `docs/reports/`
+- `docs/blueprints/`
 
 Drift risks:
 
-- Over-scoping into enterprise production before one safe vertical slice works.
-- Treating simulated execution as acceptable pilot evidence.
+- Documentation may continue to describe ideal Phase 11 rather than current code.
+- Agents may implement production runner work before governance blockers are closed.
 
 Verification steps:
 
-- Architecture review confirms all exclusions are documented.
-- Security review confirms excluded paths are disabled or inaccessible.
+- Read report against registered Django apps/routes.
+- Confirm every "implemented" claim has code/test evidence.
 
 Exit criteria:
 
-- Pilot contract names supported workflows, targets, users, roles, runner pools, evidence outputs, and explicit non-goals.
+- Stakeholders can identify exactly what exists today and what must be built before pilot.
 
-### Phase 1: Repair dispatch and authorization gates
+### Phase 1: Close Dispatch and Authorization Safety Gaps
 
 Goal:
 
-Make the current Phase 11.1/11.2 control plane fail closed before adding real execution.
+Prevent unintended or weakly authorized production dispatch.
 
 Scope:
 
-- Explicit dispatch API.
-- No approval-triggered auto-dispatch unless explicitly allowed by operation profile.
-- Mandatory policy evaluation for governed profiles.
-- Mandatory production window or approved exception.
-- Service-level dispatch permission and SoD.
+- Add explicit dispatch semantics.
+- Harden preflight defaults.
+- Add dispatch permission and SoD checks.
+- Fix dispatch secret config drift.
 
 Files touched:
 
 - `apps/api/apps/changes/models.py`
 - `apps/api/apps/changes/services.py`
 - `apps/api/apps/changes/views.py`
-- `apps/api/apps/changes/serializers.py`
 - `apps/api/apps/changes/urls.py`
 - `apps/api/apps/changes/tests/`
-- `apps/web/src/features/changes/`
+- `apps/api/apps/common/permissions.py`
+- `.env.example`
+- `docker-compose.yml`
+- `Makefile`
 
 Drift risks:
 
-- Breaking existing happy-path tests that assume approval auto-dispatches.
-- Duplicating permission checks in views without service-level enforcement.
+- Existing tests encode pass-by-default behavior for missing windows/policies.
+- Frontend may assume submit is enough to progress a change.
 
 Verification steps:
 
-- Unit tests for every preflight gate.
 - API tests for explicit dispatch.
-- Cross-org negative tests.
-- UI smoke tests for preflight and dispatch.
+- Negative tests for missing policy, missing window, stale preflight, active freeze, active lock, unauthorized actor, and SoD failure.
+- `docker compose exec api python manage.py check`
+- `docker compose exec api pytest`
 
 Exit criteria:
 
-- A production change cannot create an execution until explicit dispatch succeeds through policy, window, freeze, lock, actor, and SoD checks.
+- No production change can reach runner reservation without explicit, authorized, fresh dispatch.
 
-### Phase 2: Build real runner execution and target/secret boundaries
+### Phase 2: Implement Pilot-Grade Execution Boundary
 
 Goal:
 
-Replace simulated execution for the pilot operation with a safe, typed, sandboxed execution path.
+Replace simulated execution with a narrowly scoped real execution path suitable for pilot constraints.
 
 Scope:
 
-- Typed pilot action schema.
-- Runner sandbox provider.
-- Secret references and step-scoped injection.
-- Runner registry/pool/capability scheduling.
-- Cancellation/timeout behavior.
+- Add sandbox provider abstraction.
+- Implement one conservative pilot action type.
+- Add real process result envelope and secret masking.
+- Add runner timeout/cancel semantics.
+- Add runner pool/target capability minimum viable model if real targets are included.
 
 Files touched:
 
-- `packages/workflow-schema/`
 - `apps/runner/runner/sandbox.py`
 - `apps/runner/runner/executor.py`
 - `apps/runner/runner/client.py`
+- `apps/runner/runner/schemas.py`
 - `apps/api/apps/executions/`
 - `apps/api/apps/changes/`
-- New or existing Django app for runner registration/secret references.
+- `packages/workflow-schema/workflow.schema.json`
 
 Drift risks:
 
-- Moving state authority into runner.
-- Logging raw secrets.
-- Allowing generic shell execution without a pilot threat model.
+- Accidental broad `shell_command` support can create a large unsafe blast radius.
+- Secret masking must be shared between runner output, artifacts, and audit metadata.
 
 Verification steps:
 
-- Runner unit tests for success, failure, timeout, cancellation, secret masking, and unsupported action denial.
-- API tests for runner pool selection and claim refusal.
-- End-to-end test for one real pilot action.
+- Runner unit tests for timeout, cancellation, unsupported step type, failed exit code, stdout/stderr capture, and secret masking.
+- API integration tests for runner callbacks.
+- Manual smoke test in a non-production target.
 
 Exit criteria:
 
-- A pilot change executes real work in a sandboxed runner and records trustworthy result evidence.
+- The pilot action executes real work in a bounded environment and produces trustworthy result data.
 
-### Phase 3: Implement verification and closure MVP
+### Phase 3: Implement Verification and Closure
 
 Goal:
 
-Give every pilot change a controlled post-execution verification and closure path.
+Make successful execution insufficient for closure unless required verification passes.
 
 Scope:
 
-- Verification plan/check/result models.
-- Closure decision model.
-- Verifier role/permission and SoD.
-- Frontend verification workspace.
+- Add verification and closure models/services/APIs/UI.
+- Add verifier permissions and SoD.
+- Add audit events and evidence inputs.
 
 Files touched:
 
-- `apps/api/apps/changes/` or a new Django verification app.
+- `apps/api/apps/changes/`
+- New or existing verification app under `apps/api/apps/`
 - `apps/api/apps/audit/`
 - `apps/web/src/features/changes/`
-- `apps/web/src/app/router.tsx`
+- `apps/web/src/routes/changes/`
 
 Drift risks:
 
-- Treating verification as a text note instead of structured evidence.
-- Allowing executor self-verification.
+- Treating verification as a text note rather than structured checks.
+- Allowing the same actor to request, approve, verify, and close.
 
 Verification steps:
 
-- Tests for verification pass/fail/waiver.
-- Tests for closure blocked until required checks pass.
-- Cross-org and SoD negative tests.
+- Tests for verification required, failed verification, closure denial, double closure, unauthorized verifier, and audit events.
+- Frontend flow test for recording verification and closure.
 
 Exit criteria:
 
-- A successful pilot execution cannot close until verification requirements are satisfied and audited.
+- Change closure is controlled, auditable, and cannot bypass required verification.
 
-### Phase 4: Implement durable artifacts and sealed evidence bundles
+### Phase 4: Implement Emergency Exceptions and Breakglass
 
 Goal:
 
-Produce immutable, exportable evidence for a closed pilot change.
+Support exceptional operations without hiding governance bypass.
 
 Scope:
 
-- Durable artifact backend.
-- Evidence bundle models.
-- Deterministic manifest.
-- Seal hash.
-- Redaction/export job.
-- Legal hold and retention minimums.
+- Add exception, breakglass session, and retro-review models/services/APIs/UI.
+- Replace free-text freeze exception bypass with typed exception references.
+- Add mandatory retro-review and evidence visibility.
+
+Files touched:
+
+- `apps/api/apps/changes/`
+- New emergency/breakglass app under `apps/api/apps/`
+- `apps/api/apps/audit/`
+- `apps/web/src/`
+
+Drift risks:
+
+- Breakglass can become a generic bypass if scope/expiry/retro-review are weak.
+- Evidence bundles must prominently expose emergency status.
+
+Verification steps:
+
+- Tests for expired session, over-scoped session, missing retro-review, unauthorized activation, and audited use.
+
+Exit criteria:
+
+- Emergency execution is possible only through typed, bounded, audited controls with mandatory review.
+
+### Phase 5: Implement Durable Artifacts and Sealed Evidence Bundles
+
+Goal:
+
+Create auditor-ready immutable evidence packages.
+
+Scope:
+
+- Add object storage backend.
+- Add evidence bundle models, deterministic manifest, sealing, export, retention, legal hold, and redaction.
+- Link artifacts, audit events, approvals, policies, verification, breakglass, and external references.
 
 Files touched:
 
 - `apps/api/apps/artifacts/`
-- New `apps/api/apps/evidence/`
+- New evidence app under `apps/api/apps/`
 - `apps/api/apps/audit/`
+- `apps/api/apps/changes/`
 - `infra/`
 - `.env.example`
-- `.github/workflows/ci.yml`
 
 Drift risks:
 
-- Sealing references to mutable local files.
-- Including secrets in export.
-- Generating non-deterministic manifests.
+- Export package may expose secrets if redaction is not centralized.
+- Bundle sealing must be deterministic and immutable.
 
 Verification steps:
 
-- Bundle determinism tests.
-- Artifact checksum tests.
-- Redaction tests.
-- Cross-org export denial tests.
-- Storage backend integration tests.
+- Tests for digest stability, tamper detection, export authorization, redaction, legal hold, and object-storage failure handling.
 
 Exit criteria:
 
-- A closed pilot change can generate a sealed evidence export that remains hash-stable and excludes secrets.
+- A closed pilot change can produce a sealed, exportable evidence bundle with durable artifact references.
 
-### Phase 5: Implement scoped auditor workspace
+### Phase 6: Implement Auditor Workspace and Control Coverage
 
 Goal:
 
-Allow read-only review of pilot evidence without granting broad organization access.
+Allow scoped read-only evidence access without granting operator privileges.
 
 Scope:
 
-- Auditor access grants.
-- Auditor search/detail APIs.
-- Auditor frontend routes.
-- Export permissions and revocation.
-- Audit events for auditor activity.
+- Add auditor grants, auditor API, auditor UI, service catalog, external references, and control coverage.
+- Add export permissions and access audit.
 
 Files touched:
 
-- New `apps/api/apps/auditor/`
-- `apps/api/apps/common/permissions.py`
+- New auditor app under `apps/api/apps/`
 - `apps/api/config/api_v1_urls.py`
-- `apps/web/src/features/auditor/`
 - `apps/web/src/app/router.tsx`
+- `apps/web/src/`
+- `apps/api/apps/audit/`
 
 Drift risks:
 
-- Reusing viewer membership as auditor access.
-- Allowing auditor search to cross organization or scope boundaries.
+- Auditor APIs may accidentally reuse broad organization member permissions.
+- Search endpoints are common cross-tenant leakage points.
 
 Verification steps:
 
-- Grant/revoke/expire tests.
-- Search scope tests.
+- Cross-tenant and cross-scope negative tests.
+- Expired/revoked grant tests.
 - Export permission tests.
-- UI smoke tests.
 
 Exit criteria:
 
-- An auditor can view and export only the evidence explicitly granted to them, and all access is audited.
+- Auditors can search/view/export only explicitly granted evidence scopes.
 
-### Phase 6: Stand up a pilot operations environment
+### Phase 7: Pilot Deployment and Operations
 
 Goal:
 
-Run the platform in an environment that can support a real organization's controlled pilot.
+Run the platform in a repeatable controlled environment.
 
 Scope:
 
-- Minimal infrastructure-as-code.
-- Durable database and object storage.
-- Secrets management.
-- Private runner connectivity.
-- Deployment workflow.
-- Backup/restore runbook.
-- Monitoring and alerting.
+- Add pilot IaC/deployment path.
+- Add secrets, backups, restore, monitoring, alerts, migration gates, incident runbooks, and support procedures.
+- Add runner deployment and private network design.
 
 Files touched:
 
 - `infra/`
 - `.github/workflows/`
-- `docker-compose.yml` only for local parity, not as production deployment.
+- `docker-compose.yml`
 - `.env.example`
-- `docs/runbooks/`
+- `docs/runbooks/` or equivalent docs path
+- `Makefile`
 
 Drift risks:
 
-- Building unmanaged cloud resources outside IaC.
-- Running production-like pilot from local compose.
-- Skipping restore and rollback evidence.
+- Adding infrastructure before app safety gates are closed can create false production readiness.
+- Long-lived cloud credentials in CI would violate pilot security posture.
 
 Verification steps:
 
-- Deployment dry run.
-- Migration check.
+- Fresh environment build.
+- Deploy/rollback drill.
 - Backup/restore drill.
-- Runner connectivity test.
-- Full pilot e2e test in the pilot environment.
+- Runner offline/stuck execution drill.
+- Evidence export drill.
 
 Exit criteria:
 
-- The pilot environment is reproducible, observable, backed up, and capable of running the end-to-end pilot scenario.
+- A pilot environment can be provisioned, operated, monitored, restored, and retired from documented steps.
 
 ## 13. Verification Plan
 
-Requested verification command results from this audit:
+Requested verification commands and current result:
 
 | Command | Result | Notes |
 |---|---|---|
-| `docker compose exec api python manage.py check` | Not runnable | `api` service is not running. The current compose state shows `runbook-platform-api-1` exited with code 1. |
-| `docker compose exec api pytest` | Not runnable | `api` service is not running. |
-| `docker compose exec runner pytest` | Not runnable | `runner` service is not running; container exists but is in `Created` state. |
-| `cd apps/web && npm run lint` | Passed | Local web lint completed successfully. |
-| `cd apps/web && npm run build` | Passed | Local Vite/TypeScript build completed successfully. |
+| `docker compose exec api python manage.py check` | Not runnable | Docker returned `service "api" is not running`. |
+| `docker compose exec api pytest` | Not runnable | Docker returned `service "api" is not running`. |
+| `docker compose exec runner pytest` | Not runnable | Docker returned `service "runner" is not running`. |
+| `cd apps/web && npm run lint` | Passed | ESLint completed with exit code 0. |
+| `cd apps/web && npm run build` | Passed | TypeScript/Vite production build completed successfully. |
 
-Additional environment evidence:
+Local Docker status during audit:
 
-- `docker compose ps` showed only `postgres`, `pgbouncer`, and `ai` running.
-- `docker compose ps -a` showed `api` exited, `runner` created, and `web` created.
-- `docker compose logs api` showed readiness health checks returning 500 before the API container exited.
+- Running: `ai`, `pgbouncer`, `postgres`
+- Not running: `api`, `runner`
 
-This means the repository should not be considered test-clean from this audit. Web checks passed, but API and runner verification could not be executed in the current Docker state.
+Minimum verification suite before a real pilot:
 
-Required verification before any pilot:
-
-- `docker compose exec -T api python manage.py check`
-- `docker compose exec -T api pytest`
-- `docker compose exec -T runner pytest`
+- `docker compose exec api python manage.py check`
+- `docker compose exec api python manage.py check --deploy` with production settings and non-placeholder secrets
+- `docker compose exec api pytest`
+- `docker compose exec runner pytest`
 - `cd apps/web && npm run lint`
 - `cd apps/web && npm run build`
-- Migration check for every new Django app.
-- Cross-org API negative tests for changes, approvals, verification, evidence, auditor, artifacts, and exports.
-- End-to-end pilot test: create org, configure operation profile, publish typed workflow, create change, add target, attach/open window, approve, preflight, explicitly dispatch, execute real pilot action, verify, close, seal bundle, grant auditor access, export evidence.
-- Security tests for secret redaction in audit metadata, execution snapshots, stdout/stderr artifacts, evidence bundle manifests, exports, frontend responses, and integration payloads.
-- Operational tests for runner crash, API restart, heartbeat timeout, cancellation, stale locks, failed verification, failed bundle sealing, and recovery runbooks.
+- API cross-tenant authorization tests for every change/evidence/auditor endpoint
+- Runner integration tests for real pilot action execution
+- Dispatch gate negative tests
+- Verification/closure lifecycle tests
+- Breakglass and retro-review lifecycle tests
+- Evidence bundle digest/export/redaction/legal-hold tests
+- Auditor grant scope and revocation tests
+- Object storage upload/download/retention tests
+- Backup/restore drill
+- Stuck execution recovery drill
+- Runner offline/drain/requeue drill
+- Evidence export drill with an auditor account
 
 ## 14. Final Recommendation
 
-The repository should not be used for a real organization pilot yet. It is suitable for a non-production demo of control-plane concepts and for continued implementation of the Phase 11 architecture, but not for governed production-change evidence.
+Do not start a real pilot yet.
 
-The audited report should be revised or accompanied by an implementation-status audit before being used as planning input. Its gap list is useful, but its key assumption is false for the current repository.
+The repository is a strong control-plane prototype with meaningful Phase 10 foundations and a substantial Phase 11.1/11.2 start. It is not yet a safe governed production-change evidence platform. The current report should be revised or paired with this audit before it is used as implementation guidance.
+
+The minimum highest-leverage next step is to **close the dispatch/control-plane drift and produce an explicit Phase 11 implementation status matrix**. That creates the safety boundary and planning clarity needed before implementing the larger runner, verification, evidence, and auditor work.
 
 ## Final Verdict
 
@@ -922,8 +963,8 @@ Pilot readiness: **Not ready**
 
 Reason:
 
-The current repository does not implement Phase 11.3 through Phase 11.6, the runner simulates work, evidence bundles and auditor access are absent, artifact storage is local-only, dispatch gates need fail-closed repair, authorization lacks pilot-grade separation of duties, and production deployment is not implemented.
+The repository lacks implemented Phase 11.3-11.6 controls, uses simulated runner execution, has permissive dispatch defaults, stores artifacts locally, lacks auditor/evidence/breakglass workflows, and has no pilot deployment architecture.
 
 Minimum required next step:
 
-Build and verify one end-to-end pilot vertical slice: explicit dispatch gates, real sandboxed runner execution, scoped secret/target access, verification closure, sealed evidence export, and scoped auditor read-only access for one narrowly defined operation.
+Implement explicit, preflighted, authorized dispatch semantics and publish a current-state Phase 11 implementation matrix so future work starts from accurate repository reality.
