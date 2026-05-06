@@ -13,6 +13,7 @@ from runner.schemas import (
     ClaimedExecution,
     ClaimedStep,
     StepStartResponse,
+    VerificationResultResponse,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,31 @@ def make_execution(steps: list[ClaimedStep]) -> ClaimedExecution:
         workflow_version=1,
         workflow_snapshot={},
         steps=steps,
+    )
+
+
+def make_change_execution(steps: list[ClaimedStep]) -> ClaimedExecution:
+    return ClaimedExecution(
+        id=uuid4(),
+        status="claimed",
+        workflow_id=uuid4(),
+        organization_id=uuid4(),
+        workflow_version=1,
+        workflow_snapshot={},
+        steps=steps,
+        change_record_id=uuid4(),
+        dispatch_token="dispatch-token",
+        requested_inputs_sha256="a" * 64,
+        operation_profile_key="prod-maintenance",
+        verification_plan_id=uuid4(),
+        verification_keys=[
+            {
+                "check_key": "runner-health-check",
+                "verification_key": "postdeploy.health.ok",
+                "step_key": "step-1",
+                "check_type": "runner_step",
+            }
+        ],
     )
 
 
@@ -475,3 +501,60 @@ def test_artifact_upload_failure_does_not_affect_step_outcome():
         if c.kwargs.get("status") == "succeeded"
     ]
     assert len(succeeded_updates) == 1
+
+
+def test_executor_emits_verification_fact_when_step_metadata_exists():
+    client = make_client()
+    client.submit_verification_result.return_value = VerificationResultResponse(
+        result_id=uuid4(),
+        check_id=uuid4(),
+        validation_status="accepted",
+        check_status="passed",
+        plan_status="satisfied",
+        change_status="verified",
+        accepted=True,
+    )
+
+    executor = Executor(client)
+    execution = make_change_execution([make_step(1)])
+    run_execution(executor, execution)
+
+    client.submit_verification_result.assert_called_once()
+    call = client.submit_verification_result.call_args
+    assert call.args[0] == execution.change_record_id
+    assert call.args[1] == execution.id
+    assert call.kwargs["check_key"] == "runner-health-check"
+    assert call.kwargs["outcome"] == "passed"
+    assert call.kwargs["verification_key"] == "postdeploy.health.ok"
+    assert call.kwargs["step_key"] == "step-1"
+    assert call.kwargs["observed_value"]["exit_code"] == 0
+
+
+def test_executor_skips_verification_callback_without_metadata():
+    client = make_client()
+    executor = Executor(client)
+    execution = make_execution([make_step(1)])
+
+    run_execution(executor, execution)
+
+    client.submit_verification_result.assert_not_called()
+
+
+def test_executor_does_not_treat_callback_response_as_final_authority():
+    client = make_client()
+    client.submit_verification_result.return_value = VerificationResultResponse(
+        result_id=uuid4(),
+        check_id=uuid4(),
+        validation_status="accepted",
+        check_status="passed",
+        plan_status="satisfied",
+        change_status="verified",
+        accepted=True,
+    )
+
+    executor = Executor(client)
+    execution = make_change_execution([make_step(1)])
+    run_execution(executor, execution)
+
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+    assert not hasattr(client, "close_change") or client.close_change.call_count == 0

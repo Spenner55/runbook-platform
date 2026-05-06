@@ -2,12 +2,22 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { useChangeDetail } from '../../features/changes/hooks/useChangeDetail'
+import { useCloseChange } from '../../features/changes/hooks/useCloseChange'
 import { useDispatchChange } from '../../features/changes/hooks/useDispatchChange'
 import { useLatestPreflight } from '../../features/changes/hooks/useLatestPreflight'
 import { usePatchWindow } from '../../features/changes/hooks/usePatchWindow'
 import { useRunPreflight } from '../../features/changes/hooks/useRunPreflight'
 import { useSubmitChange } from '../../features/changes/hooks/useSubmitChange'
-import type { ChangeRecord, DispatchEligibilityCheck } from '../../features/changes/types'
+import { useSubmitVerificationResult } from '../../features/changes/hooks/useSubmitVerificationResult'
+import { useVerificationPlan } from '../../features/changes/hooks/useVerificationPlan'
+import type {
+  ChangeRecord,
+  ClosureOutcome,
+  DispatchEligibilityCheck,
+  UnmetCheckSummary,
+  VerificationCheck,
+  VerificationPlan,
+} from '../../features/changes/types'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 function formatDateTime(value: string | null | undefined) {
@@ -31,10 +41,27 @@ function getStatusPillClass(status: string) {
     return 'pill pill--info'
   if (status === 'running') return 'pill pill--info'
   if (status === 'verification_pending') return 'pill pill--warn'
+  if (status === 'verification_failed') return 'pill pill--danger'
   if (status === 'verified') return 'pill pill--success'
   if (status === 'closed') return 'pill pill--success'
   if (status === 'rejected' || status === 'expired' || status === 'canceled')
     return 'pill pill--danger'
+  return 'pill'
+}
+
+function getPlanStatusPillClass(status: string) {
+  if (status === 'satisfied') return 'pill pill--success'
+  if (status === 'failed') return 'pill pill--danger'
+  if (status === 'active' || status === 'generated') return 'pill pill--info'
+  if (status === 'canceled') return 'pill pill--danger'
+  return 'pill'
+}
+
+function getCheckStatusPillClass(status: string) {
+  if (status === 'passed') return 'pill pill--success'
+  if (status === 'failed') return 'pill pill--danger'
+  if (status === 'pending') return 'pill pill--warn'
+  if (status === 'not_applicable') return 'pill'
   return 'pill'
 }
 
@@ -270,10 +297,209 @@ function ExecutionBindingSection({ change }: { change: ChangeRecord }) {
   )
 }
 
-function VerificationSection({ change }: { change: ChangeRecord }) {
-  if (change.status !== 'verification_pending' && change.status !== 'verified') return null
+function UnmetChecksBlockingDisplay({ checks }: { checks: UnmetCheckSummary[] }) {
+  if (!checks.length) return null
   return (
-    <section>
+    <div className="banner banner--warning">
+      <strong>Unmet required checks ({checks.length}):</strong>
+      <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
+        {checks.map((c) => (
+          <li key={c.id}>
+            {c.name}{' '}
+            <span className="pill">{c.check_type.replace(/_/g, ' ')}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+interface ManualAttestationModalProps {
+  changeId: string
+  check: VerificationCheck
+  onClose: () => void
+}
+
+function ManualAttestationModal({ changeId, check, onClose }: ManualAttestationModalProps) {
+  const submitMutation = useSubmitVerificationResult(changeId)
+  const [attestationText, setAttestationText] = useState('')
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setErrorMsg(null)
+    submitMutation.mutate(
+      {
+        check_id: check.id,
+        outcome: 'passed',
+        manual_attestation_text: attestationText,
+        verification_key: check.verification_key || undefined,
+      },
+      {
+        onSuccess: onClose,
+        onError: (err) => setErrorMsg(getApiErrorMessage(err)),
+      }
+    )
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Attest: ${check.name}`}
+      style={{
+        border: '1px solid var(--color-border, #ccc)',
+        borderRadius: '4px',
+        padding: '1rem',
+        background: 'var(--color-surface, #fff)',
+        marginTop: '0.75rem',
+      }}
+    >
+      <h5 style={{ margin: '0 0 0.75rem' }}>Attest: {check.name}</h5>
+      {check.description && <p className="muted">{check.description}</p>}
+      <form className="stack-md" onSubmit={handleSubmit}>
+        <div className="field">
+          <label className="field__label" htmlFor="attestation-text">
+            Attestation statement
+          </label>
+          <textarea
+            id="attestation-text"
+            className="field__input"
+            value={attestationText}
+            onChange={(e) => setAttestationText(e.target.value)}
+            rows={4}
+            required
+            placeholder="Describe what you verified…"
+          />
+        </div>
+        {errorMsg && <p className="banner banner--error">{errorMsg}</p>}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            className="btn btn--primary"
+            type="submit"
+            disabled={submitMutation.isPending}
+          >
+            {submitMutation.isPending ? 'Submitting…' : 'Submit attestation'}
+          </button>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+interface VerificationCheckItemProps {
+  check: VerificationCheck
+  onAttest?: () => void
+}
+
+function VerificationCheckItem({ check, onAttest }: VerificationCheckItemProps) {
+  const canAttest =
+    Boolean(onAttest) &&
+    check.check_type === 'manual_attestation' &&
+    (check.status === 'pending' || check.status === 'failed')
+
+  return (
+    <li className="step-list__item">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span className={getCheckStatusPillClass(check.status)}>{check.status}</span>
+        <span className="pill">{check.check_type.replace(/_/g, ' ')}</span>
+        {!check.required && <span className="pill pill--info">optional</span>}
+        <strong>{check.name}</strong>
+        {canAttest && (
+          <button
+            className="btn"
+            style={{ marginLeft: 'auto' }}
+            type="button"
+            onClick={onAttest}
+          >
+            Attest
+          </button>
+        )}
+      </div>
+      {check.last_result && (
+        <div className="muted" style={{ fontSize: '0.85em', marginTop: '0.25rem' }}>
+          Last result:{' '}
+          <span className={check.last_result.outcome === 'passed' ? 'pill pill--success' : 'pill pill--danger'}>
+            {check.last_result.outcome}
+          </span>{' '}
+          by {check.last_result.source} at {formatDateTime(check.last_result.validated_at)}
+        </div>
+      )}
+    </li>
+  )
+}
+
+interface VerificationChecklistPanelProps {
+  change: ChangeRecord
+  plan: VerificationPlan
+}
+
+function VerificationChecklistPanel({ change, plan }: VerificationChecklistPanelProps) {
+  const [attestingCheck, setAttestingCheck] = useState<VerificationCheck | null>(null)
+  const canAttest = change.status === 'verification_pending'
+
+  return (
+    <div className="stack-md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <span className="pill">{plan.mode}</span>
+        <span className={getPlanStatusPillClass(plan.status)}>
+          {plan.status.replace(/_/g, ' ')}
+        </span>
+        <span className="muted">
+          {plan.satisfied_required_count}/{plan.required_check_count} required passed
+        </span>
+        {plan.failed_required_count > 0 && (
+          <span className="muted">{plan.failed_required_count} failed</span>
+        )}
+      </div>
+
+      {plan.unmet_required_checks.length > 0 && (
+        <UnmetChecksBlockingDisplay checks={plan.unmet_required_checks} />
+      )}
+
+      {plan.checks.length > 0 && (
+        <ul className="step-list">
+          {plan.checks.map((check) => (
+            <VerificationCheckItem
+              key={check.id}
+              check={check}
+              onAttest={canAttest ? () => setAttestingCheck(check) : undefined}
+            />
+          ))}
+        </ul>
+      )}
+
+      {attestingCheck && (
+        <ManualAttestationModal
+          changeId={change.id}
+          check={attestingCheck}
+          onClose={() => setAttestingCheck(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+const VERIFICATION_VISIBLE_STATUSES = new Set([
+  'verification_pending',
+  'verification_failed',
+  'verified',
+  'closed',
+])
+
+function VerificationSection({ change }: { change: ChangeRecord }) {
+  const planQuery = useVerificationPlan(
+    change.id,
+    VERIFICATION_VISIBLE_STATUSES.has(change.status)
+  )
+
+  if (!VERIFICATION_VISIBLE_STATUSES.has(change.status)) return null
+
+  return (
+    <section className="stack-md">
       <h4>Verification</h4>
       <dl style={{ display: 'grid', gridTemplateColumns: '200px 1fr', rowGap: '0.25rem' }}>
         <dt className="muted">Status</dt>
@@ -287,6 +513,151 @@ function VerificationSection({ change }: { change: ChangeRecord }) {
           </>
         )}
       </dl>
+
+      {planQuery.isLoading && <p className="muted">Loading verification plan…</p>}
+      {planQuery.error && (
+        <p className="banner banner--error">Could not load verification plan.</p>
+      )}
+      {planQuery.data && (
+        <VerificationChecklistPanel change={change} plan={planQuery.data} />
+      )}
+    </section>
+  )
+}
+
+const CLOSURE_VISIBLE_STATUSES = new Set(['verified', 'verification_failed'])
+
+const CLOSURE_OUTCOMES_BY_STATUS: Record<string, ClosureOutcome[]> = {
+  verified: ['success', 'partial_success', 'rolled_back'],
+  verification_failed: ['failed', 'rolled_back'],
+}
+
+interface ClosureDialogProps {
+  change: ChangeRecord
+  onClose: () => void
+}
+
+function ClosureDialog({ change, onClose }: ClosureDialogProps) {
+  const closeMutation = useCloseChange(change.id)
+  const [outcome, setOutcome] = useState<ClosureOutcome | ''>('')
+  const [summary, setSummary] = useState('')
+  const [reviewerId, setReviewerId] = useState('')
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const outcomeOptions = CLOSURE_OUTCOMES_BY_STATUS[change.status] ?? []
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!outcome) return
+    setErrorMsg(null)
+    closeMutation.mutate(
+      {
+        outcome,
+        summary,
+        independent_reviewer_id: reviewerId || undefined,
+      },
+      {
+        onSuccess: onClose,
+        onError: (err) => setErrorMsg(getApiErrorMessage(err)),
+      }
+    )
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Close change"
+      style={{
+        border: '1px solid var(--color-border, #ccc)',
+        borderRadius: '4px',
+        padding: '1rem',
+        background: 'var(--color-surface, #fff)',
+        marginTop: '0.75rem',
+      }}
+    >
+      <h5 style={{ margin: '0 0 0.75rem' }}>Close Change</h5>
+      <form className="stack-md" onSubmit={handleSubmit}>
+        <div className="field">
+          <label className="field__label" htmlFor="closure-outcome">
+            Outcome
+          </label>
+          <select
+            id="closure-outcome"
+            className="field__input"
+            value={outcome}
+            onChange={(e) => setOutcome(e.target.value as ClosureOutcome | '')}
+            required
+          >
+            <option value="">Select outcome…</option>
+            {outcomeOptions.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label className="field__label" htmlFor="closure-summary">
+            Summary
+          </label>
+          <textarea
+            id="closure-summary"
+            className="field__input"
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            rows={3}
+            required
+            placeholder="Describe the outcome of this change…"
+          />
+        </div>
+        <div className="field">
+          <label className="field__label" htmlFor="reviewer-id">
+            Independent reviewer ID (if required)
+          </label>
+          <input
+            id="reviewer-id"
+            className="field__input"
+            type="text"
+            value={reviewerId}
+            onChange={(e) => setReviewerId(e.target.value)}
+            placeholder="User ID of independent reviewer"
+          />
+        </div>
+        {errorMsg && <p className="banner banner--error">{errorMsg}</p>}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            className="btn btn--primary"
+            type="submit"
+            disabled={closeMutation.isPending || !outcome || !summary}
+          >
+            {closeMutation.isPending ? 'Closing…' : 'Confirm closure'}
+          </button>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function ClosurePanel({ change }: { change: ChangeRecord }) {
+  const [isOpen, setIsOpen] = useState(false)
+
+  if (!CLOSURE_VISIBLE_STATUSES.has(change.status)) return null
+
+  return (
+    <section>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h4 style={{ margin: 0 }}>Close Change</h4>
+        {!isOpen && (
+          <button className="btn btn--primary" onClick={() => setIsOpen(true)}>
+            Close Change
+          </button>
+        )}
+      </div>
+      {isOpen && <ClosureDialog change={change} onClose={() => setIsOpen(false)} />}
     </section>
   )
 }
@@ -700,6 +1071,7 @@ export function ChangeDetailPage() {
       <WindowPanel change={change} />
       <PreflightCard change={change} />
       <VerificationSection change={change} />
+      <ClosurePanel change={change} />
       <ExecutionBindingSection change={change} />
     </div>
   )

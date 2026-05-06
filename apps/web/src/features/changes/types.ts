@@ -134,6 +134,99 @@ export interface ChangeRecord {
   updated_at: string
 }
 
+export type VerificationCheckType =
+  | 'runner_step'
+  | 'artifact_presence'
+  | 'manual_attestation'
+  | 'api_assertion'
+  | 'external_reference'
+
+export type VerificationCheckStatus = 'pending' | 'passed' | 'failed' | 'not_applicable'
+
+export type VerificationPlanStatus = 'generated' | 'active' | 'satisfied' | 'failed' | 'canceled'
+
+export type ClosureOutcome =
+  | 'success'
+  | 'rolled_back'
+  | 'partial_success'
+  | 'failed'
+  | 'canceled'
+
+export interface VerificationResultSummary {
+  id: string
+  outcome: 'passed' | 'failed'
+  source: 'runner' | 'user' | 'system'
+  validated_at: string
+}
+
+export interface VerificationCheck {
+  id: string
+  key: string
+  name: string
+  description: string
+  check_type: VerificationCheckType
+  required: boolean
+  status: VerificationCheckStatus
+  verification_key: string
+  last_result: VerificationResultSummary | null
+}
+
+export interface UnmetCheckSummary {
+  id: string
+  key: string
+  name: string
+  check_type: VerificationCheckType
+}
+
+export interface VerificationPlan {
+  id: string
+  change_record_id: string
+  mode: 'automated' | 'manual' | 'mixed'
+  status: VerificationPlanStatus
+  required_check_count: number
+  satisfied_required_count: number
+  failed_required_count: number
+  checks: VerificationCheck[]
+  unmet_required_checks: UnmetCheckSummary[]
+}
+
+export interface SubmitVerificationResultInput {
+  check_id: string
+  outcome: 'passed' | 'failed'
+  manual_attestation_text?: string
+  external_reference?: string
+  verification_key?: string
+  observed_value?: Record<string, unknown>
+}
+
+export interface VerificationResultResponse {
+  id: string
+  check_id: string
+  outcome: 'passed' | 'failed'
+  validation_status: 'accepted' | 'rejected'
+  change_status: string
+  plan_status: string
+  validated_at: string
+  unmet_required_checks: UnmetCheckSummary[]
+  validation_errors?: unknown[]
+}
+
+export interface CloseChangeInput {
+  outcome: ClosureOutcome
+  summary: string
+  independent_reviewer_id?: string
+}
+
+export interface ClosureResponse {
+  id: string
+  change_record_id: string
+  outcome: ClosureOutcome
+  closed_at: string
+  closed_by: { id: string; username: string }
+  independent_reviewer: { id: string; username: string } | null
+  change_status: string
+}
+
 export interface CreateChangeInput {
   operation_profile_key: string
   workflow_id: string

@@ -30,6 +30,8 @@ from runner.schemas import (
     StepStartResponse,
     StepUpdateRequest,
     StepUpdateResponse,
+    VerificationResultRequest,
+    VerificationResultResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -411,6 +413,40 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return ExecutionFinishedResponse.model_validate(data)
+
+    def submit_verification_result(
+        self,
+        change_record_id: UUID,
+        execution_id: UUID,
+        claim_token: UUID,
+        *,
+        check_key: str,
+        outcome: str,
+        verification_key: str = "",
+        step_key: str = "",
+        artifact_ids: list[UUID] | None = None,
+        artifact_checksums: dict[str, str] | None = None,
+        observed_value: dict | None = None,
+        metadata: dict | None = None,
+    ) -> VerificationResultResponse:
+        data = self._post(
+            f"/api/v1/internal/changes/{change_record_id}/verification-results/",
+            VerificationResultRequest(
+                runner_id=self._runner_id,
+                claim_token=claim_token,
+                execution_id=execution_id,
+                check_key=check_key,
+                verification_key=verification_key,
+                outcome=outcome,  # type: ignore[arg-type]
+                step_key=step_key,
+                artifact_ids=artifact_ids or [],
+                artifact_checksums=artifact_checksums or {},
+                observed_value=observed_value or {},
+                metadata=metadata or {},
+                sent_at=_utcnow(),
+            ).model_dump(mode="json"),
+        )
+        return VerificationResultResponse.model_validate(data)
 
     def upload_artifact(
         self,

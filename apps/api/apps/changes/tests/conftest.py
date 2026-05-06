@@ -50,6 +50,18 @@ def operation_profile(org, published_workflow):
         risk_level="high",
         requires_approval=True,
         verification_required=True,
+        verification_plan_template={
+            "checks": [
+                {
+                    "key": "runner-health-check",
+                    "name": "Runner health check completed",
+                    "type": "runner_step",
+                    "required": True,
+                    "source_step_key": "health-check",
+                    "verification_key": "postdeploy.health.ok",
+                }
+            ]
+        },
         approval_ttl_seconds=3600,
         dispatch_ttl_seconds=900,
         allowed_target_types=["server"],

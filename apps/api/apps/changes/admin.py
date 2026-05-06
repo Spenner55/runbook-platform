@@ -3,6 +3,7 @@ from django.contrib import admin, messages
 from apps.audit.services import actor_from_request
 from apps.changes import services as change_services
 from apps.changes.models import (
+    ChangeClosure,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -11,6 +12,9 @@ from apps.changes.models import (
     FreezeRule,
     OperationProfile,
     TargetLock,
+    VerificationCheck,
+    VerificationPlan,
+    VerificationResult,
 )
 
 
@@ -69,6 +73,7 @@ _CHANGE_RECORD_ALWAYS_READONLY = [
     "dispatchable_at",
     "running_at",
     "verification_pending_at",
+    "verification_failed_at",
     "closed_at",
     "rejected_at",
     "canceled_at",
@@ -165,7 +170,14 @@ class ChangeExecutionBindingAdmin(admin.ModelAdmin):
 
 @admin.register(ChangeWindow)
 class ChangeWindowAdmin(admin.ModelAdmin):
-    list_display = ["id", "change_record", "organization", "status", "starts_at", "ends_at"]
+    list_display = [
+        "id",
+        "change_record",
+        "organization",
+        "status",
+        "starts_at",
+        "ends_at",
+    ]
     list_filter = ["status"]
     readonly_fields = [
         "id",
@@ -272,6 +284,124 @@ class DispatchEligibilityCheckAdmin(admin.ModelAdmin):
         "conflicts",
         "input_snapshot_sha256",
         "window_snapshot_sha256",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(VerificationPlan)
+class VerificationPlanAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "organization",
+        "operation_profile",
+        "mode",
+        "status",
+        "generated_at",
+    ]
+    list_filter = ["mode", "status"]
+    search_fields = ["id", "change_record__id", "operation_profile__key"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+
+
+@admin.register(VerificationCheck)
+class VerificationCheckAdmin(admin.ModelAdmin):
+    list_display = [
+        "key",
+        "plan",
+        "change_record",
+        "check_type",
+        "required",
+        "status",
+    ]
+    list_filter = ["check_type", "required", "status"]
+    search_fields = ["key", "name", "change_record__id"]
+    readonly_fields = ["id", "created_at", "updated_at"]
+
+
+@admin.register(VerificationResult)
+class VerificationResultAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "verification_check",
+        "source",
+        "outcome",
+        "validation_status",
+        "submitted_at",
+    ]
+    list_filter = ["source", "outcome", "validation_status"]
+    search_fields = ["id", "change_record__id", "verification_check__key", "runner_id"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "plan",
+        "verification_check",
+        "source",
+        "outcome",
+        "validation_status",
+        "submitted_by",
+        "runner_id",
+        "verification_key",
+        "artifact",
+        "artifact_checksum_sha256",
+        "external_reference",
+        "api_assertion_snapshot",
+        "manual_attestation_text",
+        "observed_value",
+        "validation_errors",
+        "submitted_at",
+        "validated_at",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChangeClosure)
+class ChangeClosureAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "organization",
+        "outcome",
+        "closed_by",
+        "independent_reviewer",
+        "closed_at",
+    ]
+    list_filter = ["outcome"]
+    search_fields = ["id", "change_record__id", "summary"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "outcome",
+        "closed_by",
+        "independent_reviewer",
+        "summary",
+        "verification_plan",
+        "verification_summary",
+        "execution_summary",
+        "closed_at",
         "created_at",
         "updated_at",
     ]

@@ -86,6 +86,7 @@ def test_allowed_transition_sets_timestamp(from_status, to_status, draft_change)
         "dispatchable": "dispatchable_at",
         "running": "running_at",
         "verification_pending": "verification_pending_at",
+        "verification_failed": "verification_failed_at",
         "verified": "verified_at",
         "closed": "closed_at",
         "rejected": "rejected_at",

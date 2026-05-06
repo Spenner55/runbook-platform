@@ -121,6 +121,9 @@ def test_make_dispatchable_runs_preflight_if_none_exists(approved_change):
 def test_make_dispatchable_reuses_fresh_passed_preflight(approved_change):
     """Existing fresh PASSED check is reused — no duplicate check created."""
     actor = _system_actor()
+    # Phase 11.3: preflight now checks for a verification plan. Ensure one
+    # exists before running the manual preflight so it passes.
+    change_services.ensure_verification_plan(change=approved_change, actor=actor)
     existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
 
     change_services.make_dispatchable(change=approved_change, actor=actor)
@@ -441,6 +444,9 @@ def test_stale_passed_preflight_reruns_when_conditions_change_and_fails(
 ):
     """Expired PASSED preflight is discarded; re-run fails when a freeze is added."""
     actor = _system_actor()
+
+    # Phase 11.3: preflight now checks for a verification plan; create it first.
+    change_services.ensure_verification_plan(change=approved_change, actor=actor)
 
     # 1. Run preflight — passes.
     existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)

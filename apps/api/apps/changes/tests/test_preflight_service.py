@@ -60,6 +60,7 @@ def approved_change(draft_change):
         status=ChangeRecord.Status.APPROVED, approved_at=_now()
     )
     change.refresh_from_db()
+    change_services.ensure_verification_plan(change=change, actor=actor, activate=True)
     return change
 
 
@@ -94,7 +95,7 @@ def test_preflight_passes_for_approved_change(approved_change):
     assert check.target_locks_ok is True
     assert check.actor_authorized_ok is True
     assert check.conflicts == []
-    assert len(check.checks) == 6
+    assert len(check.checks) == 7
     check_names = [c["name"] for c in check.checks]
     assert check_names == [
         "approved_status",
@@ -103,6 +104,7 @@ def test_preflight_passes_for_approved_change(approved_change):
         "freeze_conflicts",
         "target_locks",
         "actor_authorized",
+        "verification_plan",
     ]
 
 
@@ -669,7 +671,7 @@ def test_preflight_emits_audit_event(approved_change):
 
 @pytest.mark.django_db
 def test_all_checks_run_when_status_fails(draft_change, org):
-    """All 6 checks should appear in the result even when approved_status fails."""
+    """All preflight checks should appear in the result even when status fails."""
     now = _now()
     FreezeRule.objects.create(
         organization=org,
@@ -686,7 +688,7 @@ def test_all_checks_run_when_status_fails(draft_change, org):
         change=draft_change, actor=_user_actor()
     )
     assert check.result == DispatchEligibilityCheck.Result.FAILED
-    assert len(check.checks) == 6
+    assert len(check.checks) == 7
 
 
 # ---------------------------------------------------------------------------

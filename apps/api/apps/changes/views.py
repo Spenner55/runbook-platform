@@ -12,6 +12,8 @@ from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
+    ChangeClosureCreateSerializer,
+    ChangeClosureDetailSerializer,
     ChangeRecordDetailSerializer,
     ChangeWindowInputSerializer,
     ChangeWindowOutputSerializer,
@@ -20,10 +22,15 @@ from apps.changes.serializers import (
     DispatchEligibilityCheckSerializer,
     ExecutionTimingCallbackSerializer,
     FreezeRuleSerializer,
+    InternalRunnerVerificationResultSerializer,
     OperationProfileSerializer,
     SubmitChangeRecordSerializer,
     UpdateFreezeRuleSerializer,
+    VerificationPlanDetailSerializer,
+    VerificationResultCreateSerializer,
+    VerificationResultDetailSerializer,
 )
+from apps.changes.models import VerificationPlan
 from apps.common.authentication import RunnerBearerTokenAuthentication
 from apps.common.exceptions import (
     DomainConflictError,
@@ -201,6 +208,176 @@ class ChangeRecordSubmitView(APIView):
         return Response(ChangeRecordDetailSerializer(change).data)
 
 
+class ChangeVerificationPlanView(APIView):
+    """GET /api/v1/changes/{id}/verification-plan/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        plan = (
+            VerificationPlan.objects.filter(change_record=change, organization=org)
+            .prefetch_related("checks", "checks__last_result")
+            .first()
+        )
+        if plan is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Verification plan not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+        return Response(VerificationPlanDetailSerializer(plan).data)
+
+
+class ChangeVerificationResultCreateView(APIView):
+    """POST /api/v1/changes/{id}/verification-results/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = VerificationResultCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            result = services.submit_user_verification_result(
+                change=change,
+                check_key=d["check_key"],
+                user=request.user,
+                outcome=d["outcome"],
+                verification_key=d.get("verification_key", ""),
+                source_step_key=d.get("source_step_key", ""),
+                artifact_id=str(d["artifact_id"]) if d.get("artifact_id") else None,
+                artifact_checksum_sha256=d.get("artifact_checksum_sha256", ""),
+                external_reference=d.get("external_reference", ""),
+                api_assertion_snapshot=d.get("api_assertion_snapshot", {}),
+                manual_attestation_text=d.get("manual_attestation_text", ""),
+                observed_value=d.get("observed_value", {}),
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
+            return _error_response(exc)
+
+        result = result.__class__.objects.select_related("verification_check").get(
+            pk=result.pk
+        )
+        return Response(
+            VerificationResultDetailSerializer(result).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class ChangeCloseView(APIView):
+    """POST /api/v1/changes/{id}/close/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeClosureCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        independent_reviewer = None
+        if d.get("independent_reviewer_id"):
+            from apps.users.models import User
+
+            independent_reviewer = User.objects.filter(
+                pk=d["independent_reviewer_id"],
+                memberships__organization=org,
+            ).first()
+            if independent_reviewer is None:
+                return Response(
+                    {
+                        "errors": [
+                            {
+                                "code": "independent_reviewer_not_found",
+                                "detail": "Independent reviewer was not found in this organization.",
+                            }
+                        ]
+                    },
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
+
+        actor = actor_from_request(request)
+        try:
+            closure = services.close_change(
+                change=change,
+                outcome=d.get("outcome") or "success",
+                summary=d["summary"],
+                actor=actor,
+                closed_by=request.user,
+                independent_reviewer=independent_reviewer,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
+            return _error_response(exc)
+
+        return Response(
+            ChangeClosureDetailSerializer(closure).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
 class ChangeWindowView(APIView):
     """PATCH /api/v1/changes/{change_id}/window/ — create or update the execution window."""
 
@@ -217,7 +394,11 @@ class ChangeWindowView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -235,7 +416,11 @@ class ChangeWindowView(APIView):
                 reason=d.get("reason", ""),
                 actor=actor,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         return Response(ChangeWindowOutputSerializer(window).data)
@@ -281,13 +466,17 @@ class FreezeRuleListCreateView(APIView):
                 scope_type=d["scope_type"],
                 target_type=d.get("target_type", ""),
                 target_identifier=d.get("target_identifier", ""),
-                requires_exception_reference=d.get("requires_exception_reference", False),
+                requires_exception_reference=d.get(
+                    "requires_exception_reference", False
+                ),
                 actor=actor,
             )
         except (DomainValidationError, DomainConflictError) as exc:
             return _error_response(exc)
 
-        return Response(FreezeRuleSerializer(rule).data, status=http_status.HTTP_201_CREATED)
+        return Response(
+            FreezeRuleSerializer(rule).data, status=http_status.HTTP_201_CREATED
+        )
 
 
 class FreezeRuleDetailView(APIView):
@@ -389,7 +578,11 @@ class DispatchChangeView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -428,14 +621,22 @@ class DispatchPreflightRunView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
         actor = actor_from_request(request)
         try:
             check = services.run_dispatch_preflight(change=change, actor=actor)
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         return Response(
@@ -458,7 +659,11 @@ class DispatchPreflightLatestView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -467,7 +672,14 @@ class DispatchPreflightLatestView(APIView):
         )
         if check is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "No preflight check found for this change."}]},
+                {
+                    "errors": [
+                        {
+                            "code": "not_found",
+                            "detail": "No preflight check found for this change.",
+                        }
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -539,7 +751,11 @@ class ExecutionAcceptedView(APIView):
                 execution_id=str(d["execution_id"]),
                 observed_at=d.get("observed_at"),
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         return Response(result)
@@ -563,7 +779,11 @@ class ExecutionStartedView(APIView):
                 execution_id=str(d["execution_id"]),
                 observed_at=d.get("observed_at"),
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         return Response(result)
@@ -587,7 +807,81 @@ class ExecutionFinishedView(APIView):
                 execution_id=str(d["execution_id"]),
                 observed_at=d.get("observed_at"),
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as exc:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
             return _error_response(exc)
 
         return Response(result)
+
+
+class InternalRunnerVerificationResultView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/verification-results/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        serializer = InternalRunnerVerificationResultSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            result = services.record_runner_verification_result(
+                change_id=str(change_id),
+                runner_id=d["runner_id"],
+                claim_token=d["claim_token"],
+                execution_id=str(d["execution_id"]),
+                check_key=d["check_key"],
+                outcome=d["outcome"],
+                verification_key=d.get("verification_key", ""),
+                step_key=d.get("step_key", ""),
+                artifact_ids=d.get("artifact_ids", []),
+                artifact_checksums=d.get("artifact_checksums", {}),
+                observed_value=d.get("observed_value", {}),
+                metadata=d.get("metadata", {}),
+                submitted_at=d.get("sent_at"),
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as exc:
+            code_map = {
+                "change_not_found": http_status.HTTP_404_NOT_FOUND,
+                "binding_not_found": http_status.HTTP_404_NOT_FOUND,
+                "runner_ownership_mismatch": http_status.HTTP_409_CONFLICT,
+                "claim_token_mismatch": http_status.HTTP_409_CONFLICT,
+                "execution_id_mismatch": http_status.HTTP_409_CONFLICT,
+                "execution_not_bound": http_status.HTTP_409_CONFLICT,
+            }
+            http_code = code_map.get(exc.code, http_status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"errors": [{"code": exc.code, "detail": exc.detail}]},
+                status=http_code,
+            )
+        except Exception as exc:
+            from django.core.exceptions import ObjectDoesNotExist
+
+            if isinstance(exc, ObjectDoesNotExist):
+                return Response(
+                    {
+                        "errors": [
+                            {
+                                "code": "change_or_check_not_found",
+                                "detail": "Change or verification check not found.",
+                            }
+                        ]
+                    },
+                    status=http_status.HTTP_404_NOT_FOUND,
+                )
+            raise
+
+        status_code = (
+            http_status.HTTP_201_CREATED
+            if result["accepted"]
+            else http_status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+        return Response(result, status=status_code)

@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.changes.models import (
+    ChangeClosure,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -11,6 +12,9 @@ from apps.changes.models import (
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    VerificationCheck,
+    VerificationPlan,
+    VerificationResult,
 )
 
 
@@ -192,7 +196,180 @@ class BindChangeExecutionSerializer(serializers.Serializer):
 class ExecutionTimingCallbackSerializer(serializers.Serializer):
     runner_id = serializers.CharField(max_length=255)
     execution_id = serializers.UUIDField()
-    observed_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    observed_at = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
+
+
+class InternalRunnerVerificationResultSerializer(serializers.Serializer):
+    runner_id = serializers.CharField(max_length=255)
+    claim_token = serializers.CharField(max_length=128)
+    execution_id = serializers.UUIDField()
+    check_key = serializers.CharField(max_length=128)
+    verification_key = serializers.CharField(
+        max_length=128, required=False, allow_blank=True, default=""
+    )
+    outcome = serializers.ChoiceField(choices=VerificationResult.Outcome.choices)
+    step_key = serializers.CharField(
+        max_length=128, required=False, allow_blank=True, default=""
+    )
+    artifact_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=True,
+        default=list,
+    )
+    artifact_checksums = serializers.DictField(
+        child=serializers.CharField(max_length=64),
+        required=False,
+        default=dict,
+    )
+    observed_value = serializers.DictField(required=False, default=dict)
+    metadata = serializers.DictField(required=False, default=dict)
+    sent_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+
+class VerificationCheckDetailSerializer(serializers.ModelSerializer):
+    last_result_id = serializers.UUIDField(
+        source="last_result.id", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = VerificationCheck
+        fields = [
+            "id",
+            "position",
+            "key",
+            "name",
+            "description",
+            "check_type",
+            "required",
+            "status",
+            "verification_key",
+            "source_step_key",
+            "artifact_kind",
+            "artifact_name_pattern",
+            "api_assertion",
+            "external_reference_config",
+            "manual_attestation_config",
+            "last_result_id",
+            "satisfied_at",
+            "failed_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class VerificationPlanDetailSerializer(serializers.ModelSerializer):
+    checks = VerificationCheckDetailSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = VerificationPlan
+        fields = [
+            "id",
+            "change_record_id",
+            "mode",
+            "status",
+            "generated_from_profile_sha256",
+            "required_check_count",
+            "optional_check_count",
+            "satisfied_required_count",
+            "failed_required_count",
+            "generated_at",
+            "activated_at",
+            "satisfied_at",
+            "failed_at",
+            "checks",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class VerificationResultCreateSerializer(serializers.Serializer):
+    check_key = serializers.CharField(max_length=128)
+    outcome = serializers.ChoiceField(choices=VerificationResult.Outcome.choices)
+    verification_key = serializers.CharField(
+        max_length=128, required=False, allow_blank=True, default=""
+    )
+    source_step_key = serializers.CharField(
+        max_length=128, required=False, allow_blank=True, default=""
+    )
+    artifact_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    artifact_checksum_sha256 = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
+    external_reference = serializers.CharField(
+        max_length=1024, required=False, allow_blank=True, default=""
+    )
+    api_assertion_snapshot = serializers.DictField(required=False, default=dict)
+    manual_attestation_text = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+    observed_value = serializers.DictField(required=False, default=dict)
+
+
+class VerificationResultDetailSerializer(serializers.ModelSerializer):
+    check_key = serializers.CharField(source="verification_check.key", read_only=True)
+
+    class Meta:
+        model = VerificationResult
+        fields = [
+            "id",
+            "change_record_id",
+            "plan_id",
+            "verification_check_id",
+            "check_key",
+            "source",
+            "outcome",
+            "validation_status",
+            "verification_key",
+            "artifact_id",
+            "artifact_checksum_sha256",
+            "external_reference",
+            "api_assertion_snapshot",
+            "manual_attestation_text",
+            "observed_value",
+            "validation_errors",
+            "submitted_at",
+            "validated_at",
+            "created_at",
+        ]
+
+
+class ChangeClosureCreateSerializer(serializers.Serializer):
+    outcome = serializers.ChoiceField(
+        choices=ChangeClosure.Outcome.choices,
+        default=ChangeClosure.Outcome.SUCCESS,
+    )
+    summary = serializers.CharField(allow_blank=False)
+    independent_reviewer_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
+
+
+class ChangeClosureDetailSerializer(serializers.ModelSerializer):
+    closed_by_id = serializers.UUIDField(
+        source="closed_by.id", read_only=True, allow_null=True
+    )
+    independent_reviewer_id = serializers.UUIDField(
+        source="independent_reviewer.id", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = ChangeClosure
+        fields = [
+            "id",
+            "change_record_id",
+            "outcome",
+            "closed_by_id",
+            "independent_reviewer_id",
+            "summary",
+            "verification_plan_id",
+            "verification_summary",
+            "execution_summary",
+            "closed_at",
+            "created_at",
+        ]
 
 
 class ChangeWindowOutputSerializer(serializers.ModelSerializer):
@@ -250,19 +427,27 @@ class CreateFreezeRuleSerializer(serializers.Serializer):
     ends_at = serializers.DateTimeField()
     scope_type = serializers.ChoiceField(choices=FreezeRule.ScopeType.choices)
     target_type = serializers.CharField(max_length=64, allow_blank=True, default="")
-    target_identifier = serializers.CharField(max_length=255, allow_blank=True, default="")
+    target_identifier = serializers.CharField(
+        max_length=255, allow_blank=True, default=""
+    )
     requires_exception_reference = serializers.BooleanField(default=False)
 
 
 class UpdateFreezeRuleSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     description = serializers.CharField(allow_blank=True, required=False)
-    behavior = serializers.ChoiceField(choices=FreezeRule.Behavior.choices, required=False)
+    behavior = serializers.ChoiceField(
+        choices=FreezeRule.Behavior.choices, required=False
+    )
     starts_at = serializers.DateTimeField(required=False)
     ends_at = serializers.DateTimeField(required=False)
-    scope_type = serializers.ChoiceField(choices=FreezeRule.ScopeType.choices, required=False)
+    scope_type = serializers.ChoiceField(
+        choices=FreezeRule.ScopeType.choices, required=False
+    )
     target_type = serializers.CharField(max_length=64, allow_blank=True, required=False)
-    target_identifier = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    target_identifier = serializers.CharField(
+        max_length=255, allow_blank=True, required=False
+    )
     requires_exception_reference = serializers.BooleanField(required=False)
 
 

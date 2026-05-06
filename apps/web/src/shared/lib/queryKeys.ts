@@ -30,6 +30,7 @@ export const queryKeys = {
   changes: ['changes'] as const,
   change: (changeId: string) => ['change', changeId] as const,
   changePreflight: (changeId: string) => ['change', changeId, 'preflight'] as const,
+  changeVerificationPlan: (changeId: string) => ['change', changeId, 'verification-plan'] as const,
   freezeRules: (organizationId: string, isActive?: string) =>
     ['freeze-rules', organizationId, isActive ?? 'all'] as const,
 }

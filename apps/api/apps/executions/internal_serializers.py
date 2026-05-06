@@ -45,6 +45,8 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
     dispatch_token = serializers.SerializerMethodField()
     requested_inputs_sha256 = serializers.SerializerMethodField()
     operation_profile_key = serializers.SerializerMethodField()
+    verification_plan_id = serializers.SerializerMethodField()
+    verification_keys = serializers.SerializerMethodField()
 
     class Meta:
         model = Execution
@@ -63,6 +65,8 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             "dispatch_token",
             "requested_inputs_sha256",
             "operation_profile_key",
+            "verification_plan_id",
+            "verification_keys",
         ]
 
     def _get_binding(self, obj):
@@ -126,6 +130,37 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
     def get_operation_profile_key(self, obj):
         binding = self._get_binding(obj)
         return binding.operation_profile_key if binding else None
+
+    def get_verification_plan_id(self, obj):
+        binding = self._get_binding(obj)
+        if binding is None:
+            return None
+        try:
+            plan = binding.change_record.verification_plan
+        except Exception:
+            return None
+        return str(plan.id)
+
+    def get_verification_keys(self, obj):
+        binding = self._get_binding(obj)
+        if binding is None:
+            return []
+        try:
+            plan = binding.change_record.verification_plan
+        except Exception:
+            return []
+        checks = plan.checks.filter(
+            check_type__in=["runner_step", "artifact_presence"]
+        ).exclude(verification_key="")
+        return [
+            {
+                "check_key": check.key,
+                "verification_key": check.verification_key,
+                "step_key": check.source_step_key,
+                "check_type": check.check_type,
+            }
+            for check in checks.order_by("position")
+        ]
 
 
 class HeartbeatSerializer(serializers.Serializer):

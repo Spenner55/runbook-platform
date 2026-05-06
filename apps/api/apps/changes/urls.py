@@ -2,9 +2,12 @@ from django.urls import path
 
 from apps.changes.views import (
     BindChangeExecutionView,
+    ChangeCloseView,
     ChangeRecordDetailView,
     ChangeRecordListCreateView,
     ChangeRecordSubmitView,
+    ChangeVerificationPlanView,
+    ChangeVerificationResultCreateView,
     ChangeWindowView,
     DispatchChangeView,
     DispatchPreflightLatestView,
@@ -15,6 +18,7 @@ from apps.changes.views import (
     FreezeRuleDeactivateView,
     FreezeRuleDetailView,
     FreezeRuleListCreateView,
+    InternalRunnerVerificationResultView,
     OperationProfileListView,
 )
 
@@ -34,6 +38,21 @@ public_urlpatterns = [
         "<uuid:change_id>/submit/",
         ChangeRecordSubmitView.as_view(),
         name="change-record-submit",
+    ),
+    path(
+        "<uuid:change_id>/verification-plan/",
+        ChangeVerificationPlanView.as_view(),
+        name="change-record-verification-plan",
+    ),
+    path(
+        "<uuid:change_id>/verification-results/",
+        ChangeVerificationResultCreateView.as_view(),
+        name="change-record-verification-result-create",
+    ),
+    path(
+        "<uuid:change_id>/close/",
+        ChangeCloseView.as_view(),
+        name="change-record-close",
     ),
     path(
         "<uuid:change_id>/dispatch/",
@@ -95,5 +114,10 @@ internal_urlpatterns = [
         "<uuid:change_id>/execution-finished/",
         ExecutionFinishedView.as_view(),
         name="internal-change-execution-finished",
+    ),
+    path(
+        "<uuid:change_id>/verification-results/",
+        InternalRunnerVerificationResultView.as_view(),
+        name="internal-change-verification-result-create",
     ),
 ]

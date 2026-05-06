@@ -98,6 +98,96 @@ const mockVerificationPendingChange = {
   verification_pending_at: '2026-05-01T10:30:00Z',
 }
 
+const mockVerifiedChange = {
+  ...mockVerificationPendingChange,
+  status: 'verified',
+  verification_pending_at: '2026-05-01T10:30:00Z',
+}
+
+const mockVerificationFailedChange = {
+  ...mockVerificationPendingChange,
+  status: 'verification_failed',
+  verification_pending_at: '2026-05-01T10:30:00Z',
+}
+
+const mockVerificationPlan = {
+  id: 'plan-1',
+  change_record_id: 'change-1',
+  mode: 'mixed',
+  status: 'active',
+  required_check_count: 3,
+  satisfied_required_count: 1,
+  failed_required_count: 1,
+  checks: [
+    {
+      id: 'check-1',
+      key: 'runner-health-check',
+      name: 'Runner health check',
+      description: '',
+      check_type: 'runner_step',
+      required: true,
+      status: 'passed',
+      verification_key: 'postdeploy.health.ok',
+      last_result: {
+        id: 'result-1',
+        outcome: 'passed',
+        source: 'runner',
+        validated_at: '2026-05-01T10:30:00Z',
+      },
+    },
+    {
+      id: 'check-2',
+      key: 'operator-attestation',
+      name: 'Operator attestation',
+      description: 'Independent operator must verify change',
+      check_type: 'manual_attestation',
+      required: true,
+      status: 'pending',
+      verification_key: 'operator.independent.review',
+      last_result: null,
+    },
+    {
+      id: 'check-3',
+      key: 'diagnostic-artifact',
+      name: 'Diagnostic report',
+      description: '',
+      check_type: 'artifact_presence',
+      required: true,
+      status: 'failed',
+      verification_key: 'postdeploy.diagnostics',
+      last_result: {
+        id: 'result-2',
+        outcome: 'failed',
+        source: 'runner',
+        validated_at: '2026-05-01T10:31:00Z',
+      },
+    },
+  ],
+  unmet_required_checks: [
+    {
+      id: 'check-2',
+      key: 'operator-attestation',
+      name: 'Operator attestation',
+      check_type: 'manual_attestation',
+    },
+    {
+      id: 'check-3',
+      key: 'diagnostic-artifact',
+      name: 'Diagnostic report',
+      check_type: 'artifact_presence',
+    },
+  ],
+}
+
+const mockSatisfiedPlan = {
+  ...mockVerificationPlan,
+  status: 'satisfied',
+  satisfied_required_count: 3,
+  failed_required_count: 0,
+  checks: mockVerificationPlan.checks.map((c) => ({ ...c, status: 'passed' })),
+  unmet_required_checks: [],
+}
+
 describe('ChangeDetailPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
 
@@ -263,7 +353,9 @@ describe('ChangeDetailPage', () => {
   // ---- New: Verification state ----
 
   it('renders verification section when status is verification_pending', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
     await waitFor(() => screen.getByText('Verification'))
@@ -278,6 +370,243 @@ describe('ChangeDetailPage', () => {
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))
     expect(screen.queryByText('Verification')).not.toBeInTheDocument()
+  })
+
+  // ---- Verification checklist ----
+
+  it('renders passed, pending, and failed checks in the checklist', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Runner health check'))
+    // Names appear in both unmet list and checks list
+    expect(screen.getAllByText('Operator attestation').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Diagnostic report').length).toBeGreaterThanOrEqual(1)
+
+    // Status pills (may appear multiple times across check status + last result)
+    expect(screen.getAllByText('passed').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('pending').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('failed').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders plan mode and progress summary in the checklist', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByText('mixed'))
+    expect(screen.getByText(/1\/3 required passed/i)).toBeInTheDocument()
+  })
+
+  it('renders unmet required checks blocking display', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByText(/unmet required checks/i))
+    expect(screen.getAllByText('Operator attestation').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows Attest button only for pending manual_attestation checks', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    // Wait for checklist to load by looking for check names
+    await waitFor(() => screen.getByText('Runner health check'))
+    // manual_attestation pending check gets Attest button
+    expect(screen.getByRole('button', { name: /^attest$/i })).toBeInTheDocument()
+  })
+
+  it('opens attestation form when Attest button is clicked', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^attest$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^attest$/i }))
+
+    expect(screen.getByRole('dialog', { name: /attest: operator attestation/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/attestation statement/i)).toBeInTheDocument()
+  })
+
+  it('manual attestation form submits correct payload', async () => {
+    const resultResponse = {
+      id: 'result-new',
+      check_id: 'check-2',
+      outcome: 'passed',
+      validation_status: 'accepted',
+      change_status: 'verified',
+      plan_status: 'satisfied',
+      validated_at: '2026-05-01T10:35:00Z',
+      unmet_required_checks: [],
+    }
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+      .mockResolvedValueOnce(createJsonResponse(resultResponse, { status: 201 }))
+      // re-fetches after mutation
+      .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
+      .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^attest$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^attest$/i }))
+
+    await userEvent.type(
+      screen.getByLabelText(/attestation statement/i),
+      'I verified production metrics.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /submit attestation/i }))
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        (c) => typeof c[0] === 'string' && c[0].includes('/verification-results/')
+      )
+      expect(postCall).toBeTruthy()
+      const body = JSON.parse(String((postCall?.[1] as RequestInit)?.body ?? '{}'))
+      expect(body.check_id).toBe('check-2')
+      expect(body.outcome).toBe('passed')
+      expect(body.manual_attestation_text).toBe('I verified production metrics.')
+    })
+  })
+
+  it('displays self-review and API rejection errors from the attestation form', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+      .mockResolvedValueOnce(
+        createJsonResponse(
+          { detail: 'Self-review is not allowed for this check.' },
+          { status: 409 }
+        )
+      )
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^attest$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^attest$/i }))
+    await userEvent.type(
+      screen.getByLabelText(/attestation statement/i),
+      'I did the review.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /submit attestation/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/self-review is not allowed/i)
+      ).toBeInTheDocument()
+    })
+  })
+
+  // ---- Closure panel ----
+
+  it('does not show close button for verification_pending change', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Verification'))
+    expect(screen.queryByRole('button', { name: /^close change$/i })).not.toBeInTheDocument()
+  })
+
+  it('shows close button when change is verified', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
+    expect(screen.getByRole('button', { name: /^close change$/i })).toBeInTheDocument()
+  })
+
+  it('shows close button for verification_failed change', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationFailedChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
+    expect(screen.getByRole('button', { name: /^close change$/i })).toBeInTheDocument()
+  })
+
+  it('opens closure dialog on close button click and shows outcome options for verified change', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^close change$/i }))
+
+    expect(screen.getByRole('dialog', { name: /close change/i })).toBeInTheDocument()
+    // success should be available for verified changes
+    expect(screen.getByRole('option', { name: /^success$/i })).toBeInTheDocument()
+  })
+
+  it('closure confirm button is disabled until outcome and summary are filled', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^close change$/i }))
+
+    const confirmBtn = screen.getByRole('button', { name: /confirm closure/i })
+    // disabled initially (no outcome or summary selected)
+    expect(confirmBtn).toBeDisabled()
+  })
+
+  it('server closure rejection displays correctly even after form is filled', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
+      .mockResolvedValueOnce(
+        createJsonResponse(
+          { detail: 'Independent reviewer is required for this profile.' },
+          { status: 409 }
+        )
+      )
+    renderPage()
+
+    await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^close change$/i }))
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: /outcome/i }),
+      'success'
+    )
+    await userEvent.type(
+      screen.getByLabelText(/summary/i),
+      'Change completed successfully.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /confirm closure/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/independent reviewer is required/i)
+      ).toBeInTheDocument()
+    })
+  })
+
+  // ---- No internal API calls (extended) ----
+
+  it('does not call /api/v1/internal/ endpoints during verification flow', async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
+    renderPage()
+
+    await waitFor(() => screen.getByText('Runner health check'))
+    const allUrls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(allUrls.every((url) => !url.includes('/api/v1/internal/'))).toBe(true)
   })
 
   // ---- New: Approval detail link ----
