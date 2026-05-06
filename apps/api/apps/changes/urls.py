@@ -3,6 +3,10 @@ from django.urls import path
 from apps.changes.views import (
     BindChangeExecutionView,
     ChangeCloseView,
+    ChangeExceptionApproveView,
+    ChangeExceptionListCreateView,
+    ChangeExceptionRejectView,
+    ChangeExceptionResolveView,
     ChangeRecordDetailView,
     ChangeRecordListCreateView,
     ChangeRecordSubmitView,
@@ -73,6 +77,26 @@ public_urlpatterns = [
         "<uuid:change_id>/preflight/latest/",
         DispatchPreflightLatestView.as_view(),
         name="change-record-preflight-latest",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/",
+        ChangeExceptionListCreateView.as_view(),
+        name="change-exception-list-create",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/approve/",
+        ChangeExceptionApproveView.as_view(),
+        name="change-exception-approve",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/reject/",
+        ChangeExceptionRejectView.as_view(),
+        name="change-exception-reject",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/resolve/",
+        ChangeExceptionResolveView.as_view(),
+        name="change-exception-resolve",
     ),
 ]
 

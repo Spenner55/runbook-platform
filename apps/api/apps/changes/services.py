@@ -16,7 +16,9 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor, AuditService, system_actor
 from apps.changes.models import (
+    BreakglassSession,
     ChangeClosure,
+    ChangeException,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -24,6 +26,7 @@ from apps.changes.models import (
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    RetroReview,
     TargetLock,
     VerificationCheck,
     VerificationPlan,
@@ -4576,3 +4579,480 @@ def _preflight_check_verification_plan(
         }
     )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 2: Exception services
+# ---------------------------------------------------------------------------
+
+_EXCEPTION_SCOPE_REQUIRED_KEYS: dict[str, frozenset] = {
+    ChangeException.ExceptionType.FREEZE_OVERRIDE: frozenset(
+        ["freeze_rule_id", "target_ids"]
+    ),
+    ChangeException.ExceptionType.WINDOW_OVERRUN: frozenset(
+        ["change_window_id", "allowed_until"]
+    ),
+    ChangeException.ExceptionType.LATE_VERIFICATION: frozenset(
+        ["verification_plan_id", "verification_check_ids", "due_at"]
+    ),
+    ChangeException.ExceptionType.POLICY_OVERRIDE: frozenset(
+        ["policy_evaluation_id", "policy_rule_ids", "overridden_outcome"]
+    ),
+    ChangeException.ExceptionType.MISSING_ARTIFACT: frozenset(
+        ["verification_check_id", "expected_artifact_kind", "replacement_evidence"]
+    ),
+}
+
+# Types that require retro-review once approved.
+_EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES = frozenset(
+    [
+        ChangeException.ExceptionType.POLICY_OVERRIDE,
+        ChangeException.ExceptionType.MISSING_ARTIFACT,
+    ]
+)
+
+_MAX_EXCEPTION_REASON_LENGTH = 4000
+
+
+def _validate_exception_scope(exception_type: str, scope_json: dict) -> None:
+    """Validate that scope_json contains all required keys for the exception type."""
+    required_keys = _EXCEPTION_SCOPE_REQUIRED_KEYS.get(exception_type, frozenset())
+    missing = required_keys - scope_json.keys()
+    if missing:
+        raise DomainValidationError(
+            code="exception_scope_missing_keys",
+            detail=(
+                f"Exception type '{exception_type}' requires scope keys: "
+                f"{sorted(missing)}."
+            ),
+        )
+
+
+def _validate_exception_freeze_override(scope_json: dict) -> None:
+    """freeze_override must not reference block-behavior freeze rules."""
+    freeze_rule_id = scope_json.get("freeze_rule_id", "")
+    if freeze_rule_id:
+        try:
+            rule = FreezeRule.objects.get(pk=freeze_rule_id)
+        except (FreezeRule.DoesNotExist, Exception):
+            return  # organization check done by caller; missing rule is OK here
+        if rule.behavior == FreezeRule.Behavior.BLOCK:
+            raise DomainValidationError(
+                code="freeze_override_cannot_override_block",
+                detail=(
+                    "freeze_override exceptions can only satisfy 'allow_with_exception' "
+                    "freeze rules, not 'block' rules."
+                ),
+            )
+
+
+def request_exception(
+    *,
+    change: ChangeRecord,
+    actor: AuditActor,
+    exception_type: str,
+    reason: str,
+    scope_json: dict,
+    expires_at,
+    actor_user=None,
+) -> ChangeException:
+    """Create a ChangeException in pending_approval status and link an ApprovalRequest."""
+    from apps.approvals.models import ApprovalRequest
+
+    if exception_type not in ChangeException.ExceptionType.values:
+        raise DomainValidationError(
+            code="exception_type_invalid",
+            detail=f"Invalid exception type: '{exception_type}'.",
+        )
+    if not reason or not reason.strip():
+        raise DomainValidationError(
+            code="exception_reason_required",
+            detail="Exception reason is required.",
+        )
+    if len(reason) > _MAX_EXCEPTION_REASON_LENGTH:
+        raise DomainValidationError(
+            code="exception_reason_too_long",
+            detail=f"Exception reason must be {_MAX_EXCEPTION_REASON_LENGTH} characters or fewer.",
+        )
+    if not isinstance(scope_json, dict):
+        raise DomainValidationError(
+            code="exception_scope_invalid",
+            detail="scope_json must be a JSON object.",
+        )
+
+    _validate_exception_scope(exception_type, scope_json)
+
+    now = timezone.now()
+    if expires_at is None or expires_at <= now:
+        raise DomainValidationError(
+            code="exception_expires_at_required",
+            detail="expires_at must be a future datetime.",
+        )
+
+    with transaction.atomic():
+        change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+
+        # freeze_override: cannot reference block rules
+        if exception_type == ChangeException.ExceptionType.FREEZE_OVERRIDE:
+            _validate_exception_freeze_override(scope_json)
+
+        # window_overrun: cannot authorize dispatch before the window opens
+        if exception_type == ChangeException.ExceptionType.WINDOW_OVERRUN:
+            window = getattr(change, "window", None)
+            if window is None:
+                try:
+                    window = ChangeWindow.objects.get(change_record=change)
+                except ChangeWindow.DoesNotExist:
+                    window = None
+            if window is not None and now < window.starts_at:
+                raise DomainValidationError(
+                    code="window_overrun_before_window_opens",
+                    detail=(
+                        "window_overrun exception cannot authorize dispatch before "
+                        "the change window opens."
+                    ),
+                )
+
+        # Create the exception
+        exc = ChangeException.objects.create(
+            organization=change.organization,
+            change_record=change,
+            exception_type=exception_type,
+            status=ChangeException.Status.PENDING_APPROVAL,
+            reason=reason.strip(),
+            scope_json=scope_json,
+            requested_by=actor_user,
+            requested_at=now,
+            expires_at=expires_at,
+        )
+
+        # Create a linked ApprovalRequest
+        approval_request = ApprovalRequest.objects.create(
+            organization=change.organization,
+            subject_type=ApprovalRequest.SubjectType.CHANGE_EXCEPTION,
+            subject_id=exc.id,
+            execution=None,
+            step=None,
+            status=ApprovalRequest.Status.PENDING,
+            requested_by_runner_id="",
+            requested_at=now,
+        )
+        exc.approval_request = approval_request
+        exc.save(update_fields=["approval_request", "updated_at"])
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.requested",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=exc.id,
+        metadata={
+            "change_record_id": str(change.id),
+            "exception_type": exception_type,
+            "exception_id": str(exc.id),
+            "expires_at": expires_at.isoformat(),
+            "approval_request_id": str(approval_request.id),
+            "scope_key_count": len(scope_json),
+        },
+    )
+    return exc
+
+
+def approve_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    actor_user=None,
+) -> ChangeException:
+    """Approve a pending exception. Requester cannot approve their own exception."""
+    from apps.approvals.models import ApprovalDecision, ApprovalRequest
+
+    # Self-approval check before transaction so the audit event is not rolled back.
+    if (
+        actor_user is not None
+        and change_exception.requested_by_id is not None
+        and str(actor_user.pk) == str(change_exception.requested_by_id)
+    ):
+        AuditService.emit(
+            organization_id=change_exception.organization_id,
+            actor_type=actor.actor_type,
+            actor_id=actor.actor_id,
+            actor_label=actor.actor_label,
+            event_type="retro_review.self_review_rejected",
+            object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+            object_id=change_exception.id,
+            metadata={
+                "change_record_id": str(change_exception.change_record_id),
+                "exception_type": change_exception.exception_type,
+                "exception_id": str(change_exception.id),
+            },
+        )
+        raise DomainValidationError(
+            code="exception_self_approval_rejected",
+            detail="The requester cannot approve their own exception.",
+        )
+
+    with transaction.atomic():
+        change_exception = ChangeException.objects.select_for_update().get(
+            pk=change_exception.pk
+        )
+        expire_exceptions(change=change_exception.change_record)
+        change_exception.refresh_from_db()
+
+        if change_exception.status == ChangeException.Status.EXPIRED:
+            raise InvalidStateTransitionError(
+                code="exception_expired",
+                detail="Exception has expired and cannot be approved.",
+            )
+        if change_exception.status != ChangeException.Status.PENDING_APPROVAL:
+            raise InvalidStateTransitionError(
+                code="exception_not_pending",
+                detail=(
+                    f"Exception is in status '{change_exception.status}'; "
+                    "only pending_approval exceptions can be approved."
+                ),
+            )
+
+        now = timezone.now()
+        change_exception.status = ChangeException.Status.APPROVED
+        change_exception.approved_by = actor_user
+        change_exception.approved_at = now
+        change_exception.save(
+            update_fields=["status", "approved_by", "approved_at", "updated_at"]
+        )
+
+        # Resolve the linked ApprovalRequest
+        if change_exception.approval_request_id:
+            approval_request = ApprovalRequest.objects.select_for_update().get(
+                pk=change_exception.approval_request_id
+            )
+            if approval_request.status == ApprovalRequest.Status.PENDING:
+                approval_request.status = ApprovalRequest.Status.APPROVED
+                approval_request.resolved_at = now
+                approval_request.save(
+                    update_fields=["status", "resolved_at", "updated_at"]
+                )
+                ApprovalDecision.objects.create(
+                    approval_request=approval_request,
+                    decision=ApprovalDecision.Decision.APPROVED,
+                    source_type=ApprovalDecision.SourceType.HUMAN,
+                    decided_by_user=actor_user,
+                    decided_by_label=actor.actor_label,
+                    decided_by_label_source="verified_user",
+                    decided_at=now,
+                )
+
+        # Mark retro-review required on change for severe exception types
+        if change_exception.exception_type in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+            ChangeRecord.objects.filter(pk=change_exception.change_record_id).update(
+                retro_review_required=True,
+                retro_review_blocking_status="pending",
+            )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.approved",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "approved_at": change_exception.approved_at.isoformat(),
+            "expires_at": change_exception.expires_at.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def reject_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    actor_user=None,
+) -> ChangeException:
+    """Reject a pending exception."""
+    from apps.approvals.models import ApprovalDecision, ApprovalRequest
+
+    with transaction.atomic():
+        change_exception = ChangeException.objects.select_for_update().get(
+            pk=change_exception.pk
+        )
+        expire_exceptions(change=change_exception.change_record)
+        change_exception.refresh_from_db()
+
+        if change_exception.status == ChangeException.Status.EXPIRED:
+            raise InvalidStateTransitionError(
+                code="exception_expired",
+                detail="Exception has expired and cannot be rejected.",
+            )
+        if change_exception.status != ChangeException.Status.PENDING_APPROVAL:
+            raise InvalidStateTransitionError(
+                code="exception_not_pending",
+                detail=(
+                    f"Exception is in status '{change_exception.status}'; "
+                    "only pending_approval exceptions can be rejected."
+                ),
+            )
+
+        now = timezone.now()
+        change_exception.status = ChangeException.Status.REJECTED
+        change_exception.rejected_at = now
+        change_exception.save(
+            update_fields=["status", "rejected_at", "updated_at"]
+        )
+
+        if change_exception.approval_request_id:
+            approval_request = ApprovalRequest.objects.select_for_update().get(
+                pk=change_exception.approval_request_id
+            )
+            if approval_request.status == ApprovalRequest.Status.PENDING:
+                approval_request.status = ApprovalRequest.Status.REJECTED
+                approval_request.resolved_at = now
+                approval_request.save(
+                    update_fields=["status", "resolved_at", "updated_at"]
+                )
+                ApprovalDecision.objects.create(
+                    approval_request=approval_request,
+                    decision=ApprovalDecision.Decision.REJECTED,
+                    source_type=ApprovalDecision.SourceType.HUMAN,
+                    decided_by_user=actor_user,
+                    decided_by_label=actor.actor_label,
+                    decided_by_label_source="verified_user",
+                    decided_at=now,
+                )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.rejected",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "rejected_at": change_exception.rejected_at.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def resolve_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    resolution_note: str = "",
+    actor_user=None,
+) -> ChangeException:
+    """Mark an approved exception as resolved (the underlying condition is repaired)."""
+    if change_exception.status != ChangeException.Status.APPROVED:
+        raise InvalidStateTransitionError(
+            code="exception_not_approved",
+            detail=(
+                f"Exception is in status '{change_exception.status}'; "
+                "only approved exceptions can be resolved."
+            ),
+        )
+
+    now = timezone.now()
+    change_exception.status = ChangeException.Status.RESOLVED
+    change_exception.resolved_at = now
+    change_exception.resolution_note = (resolution_note or "")[: 2000]
+    change_exception.save(
+        update_fields=["status", "resolved_at", "resolution_note", "updated_at"]
+    )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.resolved",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "resolved_at": now.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def expire_exceptions(
+    *,
+    change: ChangeRecord,
+    now=None,
+) -> list:
+    """
+    Mark all pending/approved exceptions whose expires_at <= now as expired.
+    Called synchronously before gate checks.
+    Returns list of expired ChangeException instances.
+    """
+    if now is None:
+        now = timezone.now()
+
+    expired = []
+    to_expire = list(
+        ChangeException.objects.filter(
+            change_record=change,
+            status__in=[
+                ChangeException.Status.PENDING_APPROVAL,
+                ChangeException.Status.APPROVED,
+            ],
+            expires_at__lte=now,
+        )
+    )
+    for exc in to_expire:
+        exc.status = ChangeException.Status.EXPIRED
+        exc.save(update_fields=["status", "updated_at"])
+        expired.append(exc)
+        AuditService.emit(
+            organization_id=exc.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="expiry-check",
+            event_type="change_exception.expired",
+            object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+            object_id=exc.id,
+            metadata={
+                "change_record_id": str(exc.change_record_id),
+                "exception_type": exc.exception_type,
+                "exception_id": str(exc.id),
+                "expired_at": now.isoformat(),
+            },
+        )
+    return expired
+
+
+def find_applicable_exception(
+    *,
+    change: ChangeRecord,
+    exception_type: str,
+    now=None,
+) -> "ChangeException | None":
+    """
+    Return the first approved, non-expired exception of the given type for this change.
+    Expires stale exceptions before querying.
+    """
+    if now is None:
+        now = timezone.now()
+    expire_exceptions(change=change, now=now)
+    return (
+        ChangeException.objects.filter(
+            change_record=change,
+            exception_type=exception_type,
+            status=ChangeException.Status.APPROVED,
+            expires_at__gt=now,
+        )
+        .order_by("-approved_at")
+        .first()
+    )

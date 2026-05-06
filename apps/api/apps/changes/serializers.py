@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from apps.changes.models import (
     ChangeClosure,
+    ChangeException,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -476,3 +477,64 @@ class DispatchEligibilityCheckSerializer(serializers.ModelSerializer):
 
     def get_is_stale(self, obj):
         return timezone.now() > obj.expires_at
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 2: ChangeException serializers
+# ---------------------------------------------------------------------------
+
+
+class ChangeExceptionCreateSerializer(serializers.Serializer):
+    exception_type = serializers.ChoiceField(
+        choices=ChangeException.ExceptionType.choices
+    )
+    reason = serializers.CharField(max_length=4000)
+    scope_json = serializers.JSONField()
+    expires_at = serializers.DateTimeField()
+
+    def validate_scope_json(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("scope_json must be a JSON object.")
+        return value
+
+    def validate_expires_at(self, value):
+        if value <= timezone.now():
+            raise serializers.ValidationError("expires_at must be a future datetime.")
+        return value
+
+
+class ChangeExceptionApproveRejectSerializer(serializers.Serializer):
+    """Body is empty for approve/reject; actor comes from the JWT."""
+    pass
+
+
+class ChangeExceptionResolveSerializer(serializers.Serializer):
+    resolution_note = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
+
+
+class ChangeExceptionDetailSerializer(serializers.ModelSerializer):
+    requested_by_id = serializers.UUIDField(read_only=True)
+    approved_by_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = ChangeException
+        fields = [
+            "id",
+            "organization_id",
+            "change_record_id",
+            "exception_type",
+            "status",
+            "reason",
+            "scope_json",
+            "requested_by_id",
+            "requested_at",
+            "approval_request_id",
+            "approved_by_id",
+            "approved_at",
+            "rejected_at",
+            "expires_at",
+            "resolved_at",
+            "resolution_note",
+            "created_at",
+            "updated_at",
+        ]

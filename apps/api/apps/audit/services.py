@@ -44,14 +44,19 @@ FORBIDDEN_METADATA_KEYS = {
     "session",
     "session_token",
     "token",
+    "activation_ip",
     "api_assertion_response",
     "attestation_note",
     "attestation_notes",
     "attestation_text",
     "external_access_token",
     "manual_attestation_text",
+    "override_payload",
+    "privilege",
+    "raw_scope",
     "request_payload",
     "response_body",
+    "scope_json",
     "verification_secret",
     "webhook_url",
     "workflow_snapshot",
@@ -59,6 +64,7 @@ FORBIDDEN_METADATA_KEYS = {
 }
 
 REJECTED_METADATA_KEYS = {
+    "breakglass_token",
     "change_dispatch_token",
     "dispatch_token",
     "dispatch_token_hash",

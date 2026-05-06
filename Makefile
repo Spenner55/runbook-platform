@@ -16,6 +16,12 @@ up-d: ## Build images and start all services (detached)
 down: ## Stop and remove containers (volumes preserved)
 	docker compose down
 
+stop: ## Stop containers without removing them
+	docker compose stop
+
+start: ## Start existing containers
+	docker compose start
+
 restart: ## Restart containers without rebuilding images
 	docker compose restart
 

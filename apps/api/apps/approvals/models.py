@@ -13,6 +13,7 @@ class ApprovalRequest(BaseModel):
     class SubjectType(models.TextChoices):
         EXECUTION_STEP = "execution_step", "Execution Step"
         CHANGE_RECORD = "change_record", "Change Record"
+        CHANGE_EXCEPTION = "change_exception", "Change Exception"
 
     organization = models.ForeignKey(
         "organizations.Organization",
@@ -79,7 +80,11 @@ class ApprovalRequest(BaseModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(
-                    subject_type__in=["execution_step", "change_record"]
+                    subject_type__in=[
+                        "execution_step",
+                        "change_record",
+                        "change_exception",
+                    ]
                 ),
                 name="approval_req_subject_type_valid_chk",
             ),
@@ -92,6 +97,12 @@ class ApprovalRequest(BaseModel):
                     )
                     | models.Q(
                         subject_type="change_record",
+                        subject_id__isnull=False,
+                        execution_id__isnull=True,
+                        step_id__isnull=True,
+                    )
+                    | models.Q(
+                        subject_type="change_exception",
                         subject_id__isnull=False,
                         execution_id__isnull=True,
                         step_id__isnull=True,

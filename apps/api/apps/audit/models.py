@@ -47,6 +47,13 @@ class AuditEvent(BaseModel):
             "dispatch_eligibility_check",
             "Dispatch Eligibility Check",
         )
+        VERIFICATION_PLAN = "verification_plan", "Verification Plan"
+        VERIFICATION_CHECK = "verification_check", "Verification Check"
+        VERIFICATION_RESULT = "verification_result", "Verification Result"
+        CHANGE_CLOSURE = "change_closure", "Change Closure"
+        CHANGE_EXCEPTION = "change_exception", "Change Exception"
+        BREAKGLASS_SESSION = "breakglass_session", "Breakglass Session"
+        RETRO_REVIEW = "retro_review", "Retro Review"
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
@@ -124,6 +131,13 @@ class AuditEvent(BaseModel):
                         "freeze_rule",
                         "target_lock",
                         "dispatch_eligibility_check",
+                        "verification_plan",
+                        "verification_check",
+                        "verification_result",
+                        "change_closure",
+                        "change_exception",
+                        "breakglass_session",
+                        "retro_review",
                     ]
                 ),
                 name="audit_object_type_valid_chk",

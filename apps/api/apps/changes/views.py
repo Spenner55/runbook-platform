@@ -10,11 +10,15 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
-from apps.changes.models import VerificationPlan
+from apps.changes.models import ChangeException, VerificationPlan
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
     ChangeClosureCreateSerializer,
     ChangeClosureDetailSerializer,
+    ChangeExceptionApproveRejectSerializer,
+    ChangeExceptionCreateSerializer,
+    ChangeExceptionDetailSerializer,
+    ChangeExceptionResolveSerializer,
     ChangeRecordDetailSerializer,
     ChangeWindowInputSerializer,
     ChangeWindowOutputSerializer,
@@ -885,3 +889,222 @@ class InternalRunnerVerificationResultView(APIView):
             else http_status.HTTP_422_UNPROCESSABLE_ENTITY
         )
         return Response(result, status=status_code)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 2: Exception views
+# ---------------------------------------------------------------------------
+
+
+class ChangeExceptionListCreateView(APIView):
+    """
+    GET  /api/v1/changes/{change_id}/exceptions/ — list exceptions for a change
+    POST /api/v1/changes/{change_id}/exceptions/ — request a new exception
+    """
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def _get_change(self, request, change_id):
+        organization_id = require_organization_id(request)
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        return change, org, organization_id
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        qs = ChangeException.objects.filter(
+            change_record=change, organization=org
+        ).order_by("-requested_at")
+
+        # Optional filters
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        type_filter = request.query_params.get("exception_type")
+        if type_filter:
+            qs = qs.filter(exception_type=type_filter)
+        if request.query_params.get("active") in ("true", "1"):
+            from django.utils import timezone as tz
+            qs = qs.filter(
+                status=ChangeException.Status.APPROVED,
+                expires_at__gt=tz.now(),
+            )
+
+        return Response(
+            {"results": ChangeExceptionDetailSerializer(qs, many=True).data}
+        )
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeExceptionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.request_exception(
+                change=change,
+                actor=actor,
+                exception_type=d["exception_type"],
+                reason=d["reason"],
+                scope_json=d["scope_json"],
+                expires_at=d["expires_at"],
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(
+            ChangeExceptionDetailSerializer(exc).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class ChangeExceptionApproveView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/approve/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.approve_exception(
+                change_exception=exc,
+                actor=actor,
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+class ChangeExceptionRejectView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/reject/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.reject_exception(
+                change_exception=exc,
+                actor=actor,
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+class ChangeExceptionResolveView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/resolve/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeExceptionResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.resolve_exception(
+                change_exception=exc,
+                actor=actor,
+                resolution_note=serializer.validated_data.get("resolution_note", ""),
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
