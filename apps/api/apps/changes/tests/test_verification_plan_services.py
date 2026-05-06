@@ -137,7 +137,9 @@ def test_preflight_blocks_missing_verification_plan(draft_change):
     check = change_services.run_dispatch_preflight(change=change, actor=_actor())
 
     assert check.result == check.Result.FAILED
-    verification_check = next(c for c in check.checks if c["name"] == "verification_plan")
+    verification_check = next(
+        c for c in check.checks if c["name"] == "verification_plan"
+    )
     assert verification_check["ok"] is False
     assert check.conflicts[0]["type"] == "verification_plan"
 

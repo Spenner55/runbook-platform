@@ -22,7 +22,6 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes import services as change_services
 from apps.changes.models import (
-    ChangeExecutionBinding,
     ChangeRecord,
     ChangeWindow,
     TargetLock,
@@ -48,7 +47,9 @@ def _make_running_change(draft_change):
     actor = _system_actor()
     change = change_services.submit_change_record(change=draft_change, actor=actor)
     if change.approval_request_id:
-        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(status="approved")
+        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(
+            status="approved"
+        )
     ChangeRecord.objects.filter(pk=change.pk).update(
         status=ChangeRecord.Status.APPROVED, approved_at=timezone.now()
     )
@@ -154,7 +155,9 @@ def test_record_execution_accepted_idempotent(running_change):
         execution_id=str(execution.id),
     )
 
-    assert first_result["execution_accepted_at"] == second_result["execution_accepted_at"]
+    assert (
+        first_result["execution_accepted_at"] == second_result["execution_accepted_at"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,12 +248,18 @@ def test_record_execution_finished_releases_target_locks(running_change):
         execution_id=str(execution.id),
     )
 
-    assert TargetLock.objects.filter(
-        change_record=change, status=TargetLock.Status.ACTIVE
-    ).count() == 0
-    assert TargetLock.objects.filter(
-        change_record=change, status=TargetLock.Status.RELEASED
-    ).count() == active_before
+    assert (
+        TargetLock.objects.filter(
+            change_record=change, status=TargetLock.Status.ACTIVE
+        ).count()
+        == 0
+    )
+    assert (
+        TargetLock.objects.filter(
+            change_record=change, status=TargetLock.Status.RELEASED
+        ).count()
+        == active_before
+    )
     assert result["locks_released"] == active_before
 
 
@@ -287,7 +296,9 @@ def test_record_execution_finished_emits_execution_finished_event(running_change
 
 
 @pytest.mark.django_db
-def test_record_execution_finished_closes_window_within_window(draft_change, running_change):
+def test_record_execution_finished_closes_window_within_window(
+    draft_change, running_change
+):
     """Window is CLOSED when execution finishes before window.ends_at."""
     change, binding, execution = running_change
     now = timezone.now()
@@ -436,7 +447,9 @@ def test_execution_accepted_endpoint_rejects_no_auth(running_change):
     change, binding, execution = running_change
     client = APIClient()
     url = f"/api/v1/internal/changes/{change.id}/execution-accepted/"
-    resp = client.post(url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json")
+    resp = client.post(
+        url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json"
+    )
     assert resp.status_code in (401, 403)
 
 
@@ -445,7 +458,9 @@ def test_execution_started_endpoint_rejects_no_auth(running_change):
     change, binding, execution = running_change
     client = APIClient()
     url = f"/api/v1/internal/changes/{change.id}/execution-started/"
-    resp = client.post(url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json")
+    resp = client.post(
+        url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json"
+    )
     assert resp.status_code in (401, 403)
 
 
@@ -454,7 +469,9 @@ def test_execution_finished_endpoint_rejects_no_auth(running_change):
     change, binding, execution = running_change
     client = APIClient()
     url = f"/api/v1/internal/changes/{change.id}/execution-finished/"
-    resp = client.post(url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json")
+    resp = client.post(
+        url, {"runner_id": "x", "execution_id": str(execution.id)}, format="json"
+    )
     assert resp.status_code in (401, 403)
 
 
@@ -500,7 +517,9 @@ def test_execution_finished_endpoint_success(running_change, runner_client):
 
 
 @pytest.mark.django_db
-def test_execution_accepted_endpoint_wrong_runner_returns_conflict(running_change, runner_client):
+def test_execution_accepted_endpoint_wrong_runner_returns_conflict(
+    running_change, runner_client
+):
     change, binding, execution = running_change
     url = f"/api/v1/internal/changes/{change.id}/execution-accepted/"
     resp = runner_client.post(
@@ -513,7 +532,9 @@ def test_execution_accepted_endpoint_wrong_runner_returns_conflict(running_chang
 
 
 @pytest.mark.django_db
-def test_execution_finished_endpoint_observed_at_accepted(running_change, runner_client):
+def test_execution_finished_endpoint_observed_at_accepted(
+    running_change, runner_client
+):
     """Runner can supply an explicit observed_at timestamp."""
     change, binding, execution = running_change
     observed = timezone.now() - timedelta(seconds=5)

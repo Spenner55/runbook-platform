@@ -1,6 +1,11 @@
 """Read-only selectors for the changes app."""
 
-from apps.changes.models import ChangeRecord, DispatchEligibilityCheck, FreezeRule, OperationProfile
+from apps.changes.models import (
+    ChangeRecord,
+    DispatchEligibilityCheck,
+    FreezeRule,
+    OperationProfile,
+)
 
 
 def get_active_profiles_for_org(*, organization):

@@ -43,7 +43,10 @@ class TestRecomputeWindowStatus:
             starts_at=now + timedelta(hours=1),
             ends_at=now + timedelta(hours=2),
         )
-        assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.SCHEDULED
+        assert (
+            change_services.recompute_window_status(window, now=now)
+            == ChangeWindow.Status.SCHEDULED
+        )
 
     def test_active_window_is_open(self, draft_change):
         now = _now()
@@ -52,7 +55,10 @@ class TestRecomputeWindowStatus:
             starts_at=now - timedelta(minutes=30),
             ends_at=now + timedelta(minutes=30),
         )
-        assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.OPEN
+        assert (
+            change_services.recompute_window_status(window, now=now)
+            == ChangeWindow.Status.OPEN
+        )
 
     def test_past_window_on_draft_change_is_expired(self, draft_change):
         now = _now()
@@ -61,7 +67,10 @@ class TestRecomputeWindowStatus:
             starts_at=now - timedelta(hours=2),
             ends_at=now - timedelta(hours=1),
         )
-        assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.EXPIRED
+        assert (
+            change_services.recompute_window_status(window, now=now)
+            == ChangeWindow.Status.EXPIRED
+        )
 
     def test_terminal_change_status_yields_closed(self, draft_change):
         now = _now()
@@ -78,7 +87,10 @@ class TestRecomputeWindowStatus:
             ChangeRecord.Status.VERIFIED,
         ):
             window.change_record.status = terminal
-            assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.CLOSED
+            assert (
+                change_services.recompute_window_status(window, now=now)
+                == ChangeWindow.Status.CLOSED
+            )
 
     def test_running_change_past_window_is_overrun(self, draft_change):
         now = _now()
@@ -88,7 +100,10 @@ class TestRecomputeWindowStatus:
             ends_at=now - timedelta(hours=1),
         )
         window.change_record.status = ChangeRecord.Status.RUNNING
-        assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.OVERRUN
+        assert (
+            change_services.recompute_window_status(window, now=now)
+            == ChangeWindow.Status.OVERRUN
+        )
 
     def test_verification_pending_past_window_is_overrun(self, draft_change):
         now = _now()
@@ -98,7 +113,10 @@ class TestRecomputeWindowStatus:
             ends_at=now - timedelta(hours=1),
         )
         window.change_record.status = ChangeRecord.Status.VERIFICATION_PENDING
-        assert change_services.recompute_window_status(window, now=now) == ChangeWindow.Status.OVERRUN
+        assert (
+            change_services.recompute_window_status(window, now=now)
+            == ChangeWindow.Status.OVERRUN
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +277,10 @@ class TestWindowApprovalInvalidation:
         )
         draft_change.refresh_from_db()
         assert draft_change.status == ChangeRecord.Status.DRAFT
-        assert AuditEvent.objects.filter(event_type="change.approval_invalidated").count() == 0
+        assert (
+            AuditEvent.objects.filter(event_type="change.approval_invalidated").count()
+            == 0
+        )
 
     def test_no_invalidation_for_pending_approval_change(self, draft_change):
         change_services.submit_change_record(change=draft_change, actor=_actor())
@@ -273,7 +294,10 @@ class TestWindowApprovalInvalidation:
         )
         draft_change.refresh_from_db()
         assert draft_change.status == ChangeRecord.Status.PENDING_APPROVAL
-        assert AuditEvent.objects.filter(event_type="change.approval_invalidated").count() == 0
+        assert (
+            AuditEvent.objects.filter(event_type="change.approval_invalidated").count()
+            == 0
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +390,9 @@ class TestWindowBlockedStatuses:
 def authed_client(org, org_user):
     from rest_framework_simplejwt.tokens import RefreshToken
 
-    Membership.objects.create(organization=org, user=org_user, role=MembershipRole.OPERATOR)
+    Membership.objects.create(
+        organization=org, user=org_user, role=MembershipRole.OPERATOR
+    )
     client = APIClient()
     token = RefreshToken.for_user(org_user)
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.access_token}")
@@ -388,7 +414,9 @@ class TestChangeWindowAPI:
         return f"/api/v1/changes/{change_id}/window/"
 
     def test_creates_window_returns_200(self, authed_client, draft_change):
-        resp = authed_client.patch(self._url(draft_change.id), _window_payload(), format="json")
+        resp = authed_client.patch(
+            self._url(draft_change.id), _window_payload(), format="json"
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "scheduled"
@@ -396,12 +424,17 @@ class TestChangeWindowAPI:
         assert "ends_at" in data
 
     def test_updates_window_returns_200(self, authed_client, draft_change):
-        authed_client.patch(self._url(draft_change.id), _window_payload(offset_hours=1), format="json")
-        resp = authed_client.patch(self._url(draft_change.id), _window_payload(offset_hours=3), format="json")
+        authed_client.patch(
+            self._url(draft_change.id), _window_payload(offset_hours=1), format="json"
+        )
+        resp = authed_client.patch(
+            self._url(draft_change.id), _window_payload(offset_hours=3), format="json"
+        )
         assert resp.status_code == 200
 
     def test_returns_404_for_unknown_change(self, authed_client):
         import uuid
+
         resp = authed_client.patch(
             self._url(uuid.uuid4()), _window_payload(), format="json"
         )
@@ -410,7 +443,9 @@ class TestChangeWindowAPI:
     def test_returns_409_for_blocked_status(self, authed_client, draft_change):
         draft_change.status = ChangeRecord.Status.RUNNING
         draft_change.save(update_fields=["status", "updated_at"])
-        resp = authed_client.patch(self._url(draft_change.id), _window_payload(), format="json")
+        resp = authed_client.patch(
+            self._url(draft_change.id), _window_payload(), format="json"
+        )
         assert resp.status_code == 409
         assert resp.json()["errors"][0]["code"] == "window_update_not_allowed"
 
@@ -426,10 +461,14 @@ class TestChangeWindowAPI:
     def test_requires_authentication(self, draft_change):
         client = APIClient()
         client.defaults["HTTP_X_ORGANIZATION_ID"] = str(draft_change.organization_id)
-        resp = client.patch(self._url(draft_change.id), _window_payload(), format="json")
+        resp = client.patch(
+            self._url(draft_change.id), _window_payload(), format="json"
+        )
         assert resp.status_code == 401
 
-    def test_window_response_includes_timezone_and_reason(self, authed_client, draft_change):
+    def test_window_response_includes_timezone_and_reason(
+        self, authed_client, draft_change
+    ):
         now = _now()
         payload = {
             "starts_at": (now + timedelta(hours=1)).isoformat(),

@@ -5,7 +5,6 @@ freeze exception fields on ChangeRecord, and the partial unique active-lock
 constraint on TargetLock.
 """
 
-import uuid
 from datetime import timedelta
 
 import pytest
@@ -14,13 +13,11 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.changes.models import (
-    ChangeRecord,
     ChangeWindow,
     DispatchEligibilityCheck,
     FreezeRule,
     TargetLock,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,11 +110,13 @@ class TestChangeWindow:
 
     def test_ends_before_starts_raises_validation(self, draft_change):
         now = _now()
-        window = ChangeWindow(**_window_kwargs(
-            draft_change,
-            starts_at=now + timedelta(hours=2),
-            ends_at=now + timedelta(hours=1),
-        ))
+        window = ChangeWindow(
+            **_window_kwargs(
+                draft_change,
+                starts_at=now + timedelta(hours=2),
+                ends_at=now + timedelta(hours=1),
+            )
+        )
         with pytest.raises(ValidationError, match="ends_at must be after starts_at"):
             window.full_clean()
 
@@ -154,29 +153,35 @@ class TestFreezeRule:
         assert rule.behavior == FreezeRule.Behavior.BLOCK
 
     def test_allow_with_exception_requires_exception_ref(self, org):
-        rule = FreezeRule(**_freeze_kwargs(
-            org,
-            behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
-            requires_exception_reference=False,
-        ))
+        rule = FreezeRule(
+            **_freeze_kwargs(
+                org,
+                behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+                requires_exception_reference=False,
+            )
+        )
         with pytest.raises(ValidationError, match="requires_exception_reference"):
             rule.full_clean()
 
     def test_allow_with_exception_valid_when_ref_true(self, org):
-        rule = FreezeRule(**_freeze_kwargs(
-            org,
-            behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
-            requires_exception_reference=True,
-        ))
+        rule = FreezeRule(
+            **_freeze_kwargs(
+                org,
+                behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+                requires_exception_reference=True,
+            )
+        )
         rule.full_clean()
 
     def test_ends_before_starts_raises(self, org):
         now = _now()
-        rule = FreezeRule(**_freeze_kwargs(
-            org,
-            starts_at=now + timedelta(hours=2),
-            ends_at=now + timedelta(hours=1),
-        ))
+        rule = FreezeRule(
+            **_freeze_kwargs(
+                org,
+                starts_at=now + timedelta(hours=2),
+                ends_at=now + timedelta(hours=1),
+            )
+        )
         with pytest.raises(ValidationError, match="ends_at must be after starts_at"):
             rule.full_clean()
 
@@ -191,21 +196,25 @@ class TestFreezeRule:
             rule.full_clean()
 
     def test_target_type_scope(self, org):
-        rule = FreezeRule.objects.create(**_freeze_kwargs(
-            org,
-            scope_type=FreezeRule.ScopeType.TARGET_TYPE,
-            target_type="database",
-        ))
+        rule = FreezeRule.objects.create(
+            **_freeze_kwargs(
+                org,
+                scope_type=FreezeRule.ScopeType.TARGET_TYPE,
+                target_type="database",
+            )
+        )
         assert rule.scope_type == FreezeRule.ScopeType.TARGET_TYPE
 
     def test_identifier_scope(self, org):
-        rule = FreezeRule.objects.create(**_freeze_kwargs(
-            org,
-            scope_type=FreezeRule.ScopeType.TARGET_IDENTIFIER,
-            target_type="database",
-            target_identifier="prod-primary",
-            normalized_identifier="prod-primary",
-        ))
+        rule = FreezeRule.objects.create(
+            **_freeze_kwargs(
+                org,
+                scope_type=FreezeRule.ScopeType.TARGET_IDENTIFIER,
+                target_type="database",
+                target_identifier="prod-primary",
+                normalized_identifier="prod-primary",
+            )
+        )
         assert rule.scope_type == FreezeRule.ScopeType.TARGET_IDENTIFIER
 
 
@@ -271,7 +280,9 @@ class TestTargetLockActiveUniqueConstraint:
 
     def test_released_lock_allows_new_active_lock(self, draft_change):
         """A released lock for the same key must not block a new active lock."""
-        lock = TargetLock.objects.create(**_lock_kwargs(draft_change, identifier="re-db"))
+        lock = TargetLock.objects.create(
+            **_lock_kwargs(draft_change, identifier="re-db")
+        )
         lock.status = TargetLock.Status.RELEASED
         lock.released_at = _now()
         lock.release_reason = "execution_finished"
@@ -284,7 +295,9 @@ class TestTargetLockActiveUniqueConstraint:
 
     def test_expired_lock_allows_new_active_lock(self, draft_change):
         """An expired lock must not block a new active lock."""
-        lock = TargetLock.objects.create(**_lock_kwargs(draft_change, identifier="ex-db"))
+        lock = TargetLock.objects.create(
+            **_lock_kwargs(draft_change, identifier="ex-db")
+        )
         lock.status = TargetLock.Status.EXPIRED
         lock.released_at = _now()
         lock.save()
@@ -296,7 +309,9 @@ class TestTargetLockActiveUniqueConstraint:
 
     def test_different_target_types_can_both_be_active(self, draft_change):
         """Active locks for different target_types on the same identifier are allowed."""
-        TargetLock.objects.create(**_lock_kwargs(draft_change, target_type="server", identifier="same-id"))
+        TargetLock.objects.create(
+            **_lock_kwargs(draft_change, target_type="server", identifier="same-id")
+        )
         lock2 = TargetLock.objects.create(
             **_lock_kwargs(draft_change, target_type="database", identifier="same-id")
         )
@@ -305,7 +320,9 @@ class TestTargetLockActiveUniqueConstraint:
     def test_different_identifiers_can_both_be_active(self, draft_change):
         """Two active locks for different normalized identifiers must coexist."""
         TargetLock.objects.create(**_lock_kwargs(draft_change, identifier="prod-01"))
-        lock2 = TargetLock.objects.create(**_lock_kwargs(draft_change, identifier="prod-02"))
+        lock2 = TargetLock.objects.create(
+            **_lock_kwargs(draft_change, identifier="prod-02")
+        )
         assert lock2.status == TargetLock.Status.ACTIVE
 
 
@@ -343,9 +360,9 @@ class TestDispatchEligibilityCheck:
             check.save()
 
     def test_invalid_result_rejected(self, draft_change, org_user):
-        check = DispatchEligibilityCheck(**_check_kwargs(
-            draft_change, org_user, result="maybe"
-        ))
+        check = DispatchEligibilityCheck(
+            **_check_kwargs(draft_change, org_user, result="maybe")
+        )
         with pytest.raises(ValidationError):
             check.full_clean()
 
@@ -366,7 +383,9 @@ class TestChangeRecordFreezeExceptionFields:
     def test_set_freeze_exception_reference(self, draft_change):
         draft_change.freeze_exception_reference = "CHG-FREEZE-001"
         draft_change.freeze_exception_reason = "Approved by CAB"
-        draft_change.save(update_fields=["freeze_exception_reference", "freeze_exception_reason"])
+        draft_change.save(
+            update_fields=["freeze_exception_reference", "freeze_exception_reason"]
+        )
         draft_change.refresh_from_db()
         assert draft_change.freeze_exception_reference == "CHG-FREEZE-001"
         assert draft_change.freeze_exception_reason == "Approved by CAB"

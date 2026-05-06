@@ -8,7 +8,6 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes.models import ChangeRecord
 
-
 RUNNER_ID = "verification-api-runner"
 
 

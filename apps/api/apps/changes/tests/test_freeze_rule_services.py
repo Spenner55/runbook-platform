@@ -122,7 +122,9 @@ class TestCreateFreezeRule:
     def test_target_identifier_scope_without_identifier_raises(self, org):
         from apps.common.exceptions import DomainValidationError
 
-        with pytest.raises(DomainValidationError, match="target_identifier is required"):
+        with pytest.raises(
+            DomainValidationError, match="target_identifier is required"
+        ):
             services.create_freeze_rule(
                 **_freeze_kwargs(
                     org,
@@ -408,9 +410,7 @@ def _admin_client(org):
     user = User.objects.create_user(
         email=f"admin-{uuid4()}@example.com", password="pass"
     )
-    Membership.objects.create(
-        organization=org, user=user, role=MembershipRole.ADMIN
-    )
+    Membership.objects.create(organization=org, user=user, role=MembershipRole.ADMIN)
     client = APIClient()
     client.force_authenticate(user=user)
     client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org.id)
@@ -427,9 +427,7 @@ def _viewer_client(org):
     user = User.objects.create_user(
         email=f"viewer-{uuid4()}@example.com", password="pass"
     )
-    Membership.objects.create(
-        organization=org, user=user, role=MembershipRole.VIEWER
-    )
+    Membership.objects.create(organization=org, user=user, role=MembershipRole.VIEWER)
     client = APIClient()
     client.force_authenticate(user=user)
     client.defaults["HTTP_X_ORGANIZATION_ID"] = str(org.id)
@@ -528,9 +526,7 @@ class TestFreezeRuleDetailAPI:
     def test_viewer_cannot_patch(self, org):
         rule = services.create_freeze_rule(**_freeze_kwargs(org))
         client = _viewer_client(org)
-        resp = client.patch(
-            f"{BASE_URL}{rule.id}/", data={"name": "X"}, format="json"
-        )
+        resp = client.patch(f"{BASE_URL}{rule.id}/", data={"name": "X"}, format="json")
         assert resp.status_code == http_status.HTTP_403_FORBIDDEN
 
 

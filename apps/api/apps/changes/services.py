@@ -1863,12 +1863,9 @@ def record_runner_verification_result(
         },
         submitted_at=submitted_at,
     )
-    result = (
-        VerificationResult.objects.select_related(
-            "verification_check", "plan", "change_record"
-        )
-        .get(pk=result.pk)
-    )
+    result = VerificationResult.objects.select_related(
+        "verification_check", "plan", "change_record"
+    ).get(pk=result.pk)
     return {
         "result_id": str(result.id),
         "check_id": str(result.verification_check_id),
@@ -4142,7 +4139,6 @@ def run_dispatch_preflight(
     All checks run regardless of prior failures so the caller gets a full picture.
     The result is PASSED only when every individual check passes.
     """
-    from django.db.models import Q
 
     now = timezone.now()
 

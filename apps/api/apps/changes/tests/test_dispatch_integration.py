@@ -33,7 +33,6 @@ from apps.changes.models import (
 )
 from apps.common.exceptions import DomainConflictError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -50,7 +49,9 @@ def _approved_change(draft_change):
     actor = _system_actor()
     change = change_services.submit_change_record(change=draft_change, actor=actor)
     if change.approval_request_id:
-        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(status="approved")
+        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(
+            status="approved"
+        )
     ChangeRecord.objects.filter(pk=change.pk).update(
         status=ChangeRecord.Status.APPROVED, approved_at=timezone.now()
     )
@@ -112,7 +113,9 @@ def test_make_dispatchable_runs_preflight_if_none_exists(approved_change):
 
     approved_change.refresh_from_db()
     assert approved_change.status == ChangeRecord.Status.DISPATCHABLE
-    check = DispatchEligibilityCheck.objects.filter(change_record=approved_change).first()
+    check = DispatchEligibilityCheck.objects.filter(
+        change_record=approved_change
+    ).first()
     assert check is not None
     assert check.result == DispatchEligibilityCheck.Result.PASSED
 
@@ -124,11 +127,15 @@ def test_make_dispatchable_reuses_fresh_passed_preflight(approved_change):
     # Phase 11.3: preflight now checks for a verification plan. Ensure one
     # exists before running the manual preflight so it passes.
     change_services.ensure_verification_plan(change=approved_change, actor=actor)
-    existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
+    existing = change_services.run_dispatch_preflight(
+        change=approved_change, actor=actor
+    )
 
     change_services.make_dispatchable(change=approved_change, actor=actor)
 
-    checks = list(DispatchEligibilityCheck.objects.filter(change_record=approved_change))
+    checks = list(
+        DispatchEligibilityCheck.objects.filter(change_record=approved_change)
+    )
     assert len(checks) == 1
     assert checks[0].pk == existing.pk
 
@@ -137,7 +144,9 @@ def test_make_dispatchable_reuses_fresh_passed_preflight(approved_change):
 def test_make_dispatchable_reruns_expired_preflight(approved_change):
     """Stale (expired) PASSED check is not reused — a fresh one is run."""
     actor = _system_actor()
-    existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
+    existing = change_services.run_dispatch_preflight(
+        change=approved_change, actor=actor
+    )
     # Expire the check
     DispatchEligibilityCheck.objects.filter(pk=existing.pk).update(
         expires_at=timezone.now() - timedelta(seconds=1)
@@ -145,7 +154,9 @@ def test_make_dispatchable_reruns_expired_preflight(approved_change):
 
     change_services.make_dispatchable(change=approved_change, actor=actor)
 
-    checks = list(DispatchEligibilityCheck.objects.filter(change_record=approved_change))
+    checks = list(
+        DispatchEligibilityCheck.objects.filter(change_record=approved_change)
+    )
     assert len(checks) == 2
     fresh = max(checks, key=lambda c: c.checked_at)
     assert fresh.result == DispatchEligibilityCheck.Result.PASSED
@@ -333,9 +344,12 @@ def test_submit_without_approval_dispatches_with_locks(
     change.refresh_from_db()
 
     assert change.status == ChangeRecord.Status.DISPATCHABLE
-    assert TargetLock.objects.filter(
-        change_record=change, status=TargetLock.Status.ACTIVE
-    ).count() == 1
+    assert (
+        TargetLock.objects.filter(
+            change_record=change, status=TargetLock.Status.ACTIVE
+        ).count()
+        == 1
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +375,9 @@ def test_make_dispatchable_blocked_when_window_scheduled(approved_change, org):
     assert exc_info.value.code == "dispatch_preflight_failed"
     approved_change.refresh_from_db()
     assert approved_change.status == ChangeRecord.Status.APPROVED
-    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+    assert not ChangeExecutionBinding.objects.filter(
+        change_record=approved_change
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -382,7 +398,9 @@ def test_make_dispatchable_blocked_when_window_expired(approved_change, org):
     assert exc_info.value.code == "dispatch_preflight_failed"
     approved_change.refresh_from_db()
     assert approved_change.status == ChangeRecord.Status.APPROVED
-    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+    assert not ChangeExecutionBinding.objects.filter(
+        change_record=approved_change
+    ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +437,9 @@ def test_schedule_or_make_dispatchable_goes_to_scheduled_with_future_scheduled_f
     )
     change = change_services.submit_change_record(change=change, actor=actor)
     if change.approval_request_id:
-        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(status="approved")
+        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(
+            status="approved"
+        )
     ChangeRecord.objects.filter(pk=change.pk).update(
         status=ChangeRecord.Status.APPROVED, approved_at=now
     )
@@ -449,7 +469,9 @@ def test_stale_passed_preflight_reruns_when_conditions_change_and_fails(
     change_services.ensure_verification_plan(change=approved_change, actor=actor)
 
     # 1. Run preflight — passes.
-    existing = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
+    existing = change_services.run_dispatch_preflight(
+        change=approved_change, actor=actor
+    )
     assert existing.result == DispatchEligibilityCheck.Result.PASSED
 
     # 2. Expire the check so make_dispatchable must re-run it.
@@ -482,7 +504,9 @@ def test_stale_passed_preflight_reruns_when_conditions_change_and_fails(
     # Change is still APPROVED — the expired PASSED preflight did not bypass the gate.
     assert approved_change.status == ChangeRecord.Status.APPROVED
     # No binding or locks were created (transaction rolled back cleanly).
-    assert not ChangeExecutionBinding.objects.filter(change_record=approved_change).exists()
+    assert not ChangeExecutionBinding.objects.filter(
+        change_record=approved_change
+    ).exists()
     assert not TargetLock.objects.filter(change_record=approved_change).exists()
 
     # Verify the stale check was not used by confirming that running a fresh preflight

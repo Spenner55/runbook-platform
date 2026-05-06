@@ -21,7 +21,6 @@ from apps.executions.models import Execution
 from apps.organizations.models import Membership, MembershipRole
 from apps.users.models import User
 
-
 RUNNER_ID = "verification-runner"
 
 
@@ -231,7 +230,9 @@ def test_artifact_from_another_execution_rejected(draft_change, operation_profil
     assert result.validation_status == VerificationResult.ValidationStatus.REJECTED
     assert result.validation_errors[0]["code"] == "artifact_execution_mismatch"
     change.verification_plan.checks.get().refresh_from_db()
-    assert change.verification_plan.checks.get().status == VerificationCheck.Status.PENDING
+    assert (
+        change.verification_plan.checks.get().status == VerificationCheck.Status.PENDING
+    )
 
 
 @pytest.mark.django_db

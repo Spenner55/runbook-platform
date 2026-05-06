@@ -84,7 +84,9 @@ def test_internal_verification_callback_rejects_user_jwt(draft_change, org_user)
 
 
 @pytest.mark.django_db
-def test_internal_verification_callback_rejects_wrong_runner(draft_change, runner_client):
+def test_internal_verification_callback_rejects_wrong_runner(
+    draft_change, runner_client
+):
     change, binding, claim_token = _prepare_running_change(draft_change)
 
     response = runner_client.post(
