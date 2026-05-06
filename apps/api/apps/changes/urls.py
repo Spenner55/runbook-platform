@@ -2,6 +2,9 @@ from django.urls import path
 
 from apps.changes.views import (
     BindChangeExecutionView,
+    ChangeBreakglassActivateView,
+    ChangeBreakglassEndView,
+    ChangeBreakglassHeartbeatView,
     ChangeCloseView,
     ChangeExceptionApproveView,
     ChangeExceptionListCreateView,
@@ -98,6 +101,16 @@ public_urlpatterns = [
         ChangeExceptionResolveView.as_view(),
         name="change-exception-resolve",
     ),
+    path(
+        "<uuid:change_id>/breakglass/activate/",
+        ChangeBreakglassActivateView.as_view(),
+        name="change-breakglass-activate",
+    ),
+    path(
+        "<uuid:change_id>/breakglass/end/",
+        ChangeBreakglassEndView.as_view(),
+        name="change-breakglass-end",
+    ),
 ]
 
 freeze_rule_urlpatterns = [
@@ -143,5 +156,10 @@ internal_urlpatterns = [
         "<uuid:change_id>/verification-results/",
         InternalRunnerVerificationResultView.as_view(),
         name="internal-change-verification-result-create",
+    ),
+    path(
+        "<uuid:change_id>/breakglass-heartbeat/",
+        ChangeBreakglassHeartbeatView.as_view(),
+        name="internal-change-breakglass-heartbeat",
     ),
 ]

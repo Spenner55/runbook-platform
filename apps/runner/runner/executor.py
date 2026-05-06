@@ -82,6 +82,17 @@ class Executor:
             len(execution.steps),
         )
 
+        if execution.breakglass is not None:
+            bg = execution.breakglass
+            logger.info(
+                "Breakglass session active for execution %s: session=%s scope=%s expires_at=%s. "
+                "Django remains authoritative — runner will call step-start gates as normal.",
+                execution_id,
+                bg.breakglass_session_id,
+                bg.scope_summary,
+                bg.expires_at,
+            )
+
         # For change-bound executions, bind before entering the step loop.
         # A bind failure is fatal — refuse to execute and abort early.
         if execution.is_change_bound:

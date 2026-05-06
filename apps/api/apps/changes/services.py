@@ -5056,3 +5056,463 @@ def find_applicable_exception(
         .order_by("-approved_at")
         .first()
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 3: Breakglass Session services
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAX_BREAKGLASS_SECONDS = 14_400  # 4 hours
+_DEFAULT_RETRO_REVIEW_SLA_SECONDS = 86_400  # 24 hours
+
+_BREAKGLASS_SCOPE_REQUIRED_KEYS = frozenset({"allowed_actions", "target_ids", "gate_types"})
+_BREAKGLASS_SCOPE_FORBIDDEN_KEYS = frozenset({
+    "api_key", "apikey", "auth", "bearer", "bearer_token",
+    "cloud_role", "host_credentials", "iam_role", "iam_policy",
+    "kubeconfig", "password", "private_key", "secret", "ssh_key", "token",
+})
+
+_BREAKGLASS_ACTIVATABLE_STATUSES = frozenset({
+    ChangeRecord.Status.APPROVED,
+    ChangeRecord.Status.DISPATCHABLE,
+    ChangeRecord.Status.RUNNING,
+    ChangeRecord.Status.VERIFICATION_PENDING,
+    ChangeRecord.Status.VERIFICATION_FAILED,
+    ChangeRecord.Status.VERIFIED,
+})
+
+
+def _validate_breakglass_scope(scope_json: dict) -> None:
+    if not isinstance(scope_json, dict):
+        raise DomainValidationError(
+            code="breakglass_scope_invalid",
+            detail="scope_json must be a JSON object.",
+        )
+    missing = _BREAKGLASS_SCOPE_REQUIRED_KEYS - set(scope_json)
+    if missing:
+        raise DomainValidationError(
+            code="breakglass_scope_missing_keys",
+            detail=f"scope_json is missing required keys: {sorted(missing)}.",
+        )
+    for key in ("allowed_actions", "target_ids", "gate_types"):
+        if not isinstance(scope_json[key], list) or len(scope_json[key]) == 0:
+            raise DomainValidationError(
+                code="breakglass_scope_empty_list",
+                detail=f"scope_json.{key} must be a non-empty list.",
+            )
+    for key in scope_json:
+        if key.lower() in _BREAKGLASS_SCOPE_FORBIDDEN_KEYS:
+            raise DomainValidationError(
+                code="breakglass_scope_forbidden_key",
+                detail=(
+                    f"scope_json must not contain credential or privilege material: {key}."
+                ),
+            )
+
+
+def _build_scope_summary(scope_json: dict) -> str:
+    """Return a sanitized, non-sensitive scope summary string for runner logging."""
+    actions = ",".join(str(a) for a in scope_json.get("allowed_actions", []))
+    gates = ",".join(str(g) for g in scope_json.get("gate_types", []))
+    target_count = len(scope_json.get("target_ids", []))
+    return f"actions={actions} gates={gates} targets={target_count}"
+
+
+@transaction.atomic
+def activate_breakglass(
+    *,
+    change: ChangeRecord,
+    actor: AuditActor,
+    scope_json: dict,
+    reason: str,
+    expires_at,
+    actor_user=None,
+) -> BreakglassSession:
+    """
+    Activate a scoped, time-bounded breakglass session for a change.
+
+    Enforces:
+    - Change must be in an activatable status.
+    - scope_json must contain allowed_actions, target_ids, gate_types.
+    - target_ids must reference ChangeTarget UUIDs on this change.
+    - expires_at must be in the future and within the profile max TTL.
+    - At most one active session per change (stale ones expired first).
+    - Creates a pending RetroReview and emits audit events.
+    """
+    change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+    now = timezone.now()
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    if change.status not in _BREAKGLASS_ACTIVATABLE_STATUSES:
+        raise DomainConflictError(
+            code="change_status_invalid_for_breakglass",
+            detail=(
+                f"Breakglass cannot be activated for a change in status '{change.status}'."
+            ),
+        )
+
+    profile = change.operation_profile
+    max_seconds = profile.max_breakglass_seconds or _DEFAULT_MAX_BREAKGLASS_SECONDS
+    retro_sla_seconds = (
+        profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS
+    )
+
+    if expires_at <= now:
+        raise DomainValidationError(
+            code="breakglass_expires_at_past",
+            detail="expires_at must be a future datetime.",
+        )
+    if (expires_at - now).total_seconds() > max_seconds:
+        raise DomainValidationError(
+            code="breakglass_ttl_exceeded",
+            detail=(
+                f"Requested breakglass duration exceeds the profile maximum of "
+                f"{max_seconds} seconds."
+            ),
+        )
+
+    _validate_breakglass_scope(scope_json)
+
+    target_ids_in_scope = {str(t) for t in scope_json["target_ids"]}
+    actual_target_ids = {
+        str(tid) for tid in change.targets.values_list("id", flat=True)
+    }
+    unknown = target_ids_in_scope - actual_target_ids
+    if unknown:
+        raise DomainValidationError(
+            code="breakglass_scope_unknown_targets",
+            detail=(
+                f"scope_json.target_ids contains IDs not belonging to this change: "
+                f"{sorted(unknown)}."
+            ),
+        )
+
+    scope_sha256 = sha256_canonical_json(scope_json)
+    review_due_at = now + timedelta(seconds=retro_sla_seconds)
+
+    session = BreakglassSession(
+        organization=change.organization,
+        change_record=change,
+        status=BreakglassSession.Status.ACTIVE,
+        scope_json=scope_json,
+        scope_sha256=scope_sha256,
+        reason=reason[:4000],
+        activated_by=actor_user,
+        started_at=now,
+        expires_at=expires_at,
+        review_due_at=review_due_at,
+        review_status=BreakglassSession.ReviewStatus.PENDING,
+    )
+    session.save()
+
+    change.retro_review_required = True
+    if change.retro_review_due_at is None or review_due_at < change.retro_review_due_at:
+        change.retro_review_due_at = review_due_at
+    change.retro_review_blocking_status = "pending"
+    change.save(
+        update_fields=[
+            "retro_review_required",
+            "retro_review_due_at",
+            "retro_review_blocking_status",
+            "updated_at",
+        ]
+    )
+
+    RetroReview.objects.create(
+        organization=change.organization,
+        change_record=change,
+        breakglass_session=session,
+        status=RetroReview.Status.PENDING,
+        due_at=review_due_at,
+    )
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="breakglass.activated",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "scope_sha256": scope_sha256,
+            "scope_action_count": len(scope_json.get("allowed_actions", [])),
+            "scope_gate_count": len(scope_json.get("gate_types", [])),
+            "scope_target_count": len(scope_json.get("target_ids", [])),
+            "expires_at": expires_at.isoformat(),
+            "review_due_at": review_due_at.isoformat(),
+            "started_at": now.isoformat(),
+        },
+    )
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label="breakglass-activation",
+        event_type="retro_review.required",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=session.retro_review.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "review_due_at": review_due_at.isoformat(),
+        },
+    )
+    return session
+
+
+def end_breakglass(
+    *,
+    session: BreakglassSession,
+    actor: AuditActor | None = None,
+    end_reason: str = "manual_end",
+    actor_user=None,
+) -> BreakglassSession:
+    """End an active breakglass session manually."""
+    if session.status != BreakglassSession.Status.ACTIVE:
+        raise InvalidStateTransitionError(
+            code="breakglass_not_active",
+            detail=(
+                f"Breakglass session is in status '{session.status}'; "
+                "only active sessions can be ended."
+            ),
+        )
+    now = timezone.now()
+    session.status = BreakglassSession.Status.ENDED
+    session.ended_at = now
+    session.end_reason = end_reason
+    session.ended_by = actor_user
+    session.save(
+        update_fields=["status", "ended_at", "end_reason", "ended_by", "updated_at"]
+    )
+    audit_actor = actor if actor is not None else system_actor()
+    AuditService.emit(
+        organization_id=session.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type="breakglass.ended",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(session.change_record_id),
+            "breakglass_session_id": str(session.id),
+            "end_reason": end_reason,
+            "ended_at": now.isoformat(),
+        },
+    )
+    return session
+
+
+def expire_breakglass_sessions(
+    *,
+    change: ChangeRecord | None = None,
+    now=None,
+) -> list:
+    """
+    Expire active breakglass sessions whose expires_at <= now.
+    Optionally scoped to a single change. Returns list of expired sessions.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = BreakglassSession.objects.filter(
+        status=BreakglassSession.Status.ACTIVE,
+        expires_at__lte=now,
+    )
+    if change is not None:
+        qs = qs.filter(change_record=change)
+
+    expired = []
+    for session in qs:
+        new_review_status = (
+            BreakglassSession.ReviewStatus.OVERDUE
+            if session.review_due_at <= now
+            else BreakglassSession.ReviewStatus.PENDING
+        )
+        session.status = BreakglassSession.Status.EXPIRED
+        session.ended_at = now
+        session.end_reason = "expired"
+        session.review_status = new_review_status
+        session.save(
+            update_fields=[
+                "status",
+                "ended_at",
+                "end_reason",
+                "review_status",
+                "updated_at",
+            ]
+        )
+        expired.append(session)
+        AuditService.emit(
+            organization_id=session.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="expiry-check",
+            event_type="breakglass.expired",
+            object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+            object_id=session.id,
+            metadata={
+                "change_record_id": str(session.change_record_id),
+                "breakglass_session_id": str(session.id),
+                "expired_at": now.isoformat(),
+                "review_status": new_review_status,
+            },
+        )
+    return expired
+
+
+def assert_breakglass_allows(
+    *,
+    change: ChangeRecord,
+    gate_type: str,
+    action: str,
+    target_ids: list,
+    now=None,
+) -> BreakglassSession:
+    """
+    Assert that an active breakglass session on this change authorizes
+    the given gate_type, action, and all target_ids.
+
+    Raises DomainValidationError if no active session or scope doesn't cover
+    the requested gate/action/targets.  Returns the active session on success.
+    """
+    if now is None:
+        now = timezone.now()
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    try:
+        session = BreakglassSession.objects.get(
+            change_record=change,
+            status=BreakglassSession.Status.ACTIVE,
+        )
+    except BreakglassSession.DoesNotExist:
+        raise DomainValidationError(
+            code="no_active_breakglass_session",
+            detail="No active breakglass session found for this change.",
+        )
+
+    scope = session.scope_json
+    allowed_gates = set(scope.get("gate_types", []))
+    allowed_actions = set(scope.get("allowed_actions", []))
+    scoped_targets = {str(t) for t in scope.get("target_ids", [])}
+
+    if gate_type not in allowed_gates:
+        raise DomainValidationError(
+            code="breakglass_gate_type_not_in_scope",
+            detail=f"Gate type '{gate_type}' is not within the breakglass session scope.",
+        )
+    if action not in allowed_actions:
+        raise DomainValidationError(
+            code="breakglass_action_not_in_scope",
+            detail=f"Action '{action}' is not within the breakglass session scope.",
+        )
+    out_of_scope = {str(t) for t in target_ids} - scoped_targets
+    if out_of_scope:
+        raise DomainValidationError(
+            code="breakglass_targets_out_of_scope",
+            detail=f"Target IDs not within breakglass scope: {sorted(out_of_scope)}.",
+        )
+
+    return session
+
+
+def record_breakglass_heartbeat(
+    *,
+    change: ChangeRecord,
+    runner_id: str,
+    claim_token: str,
+    observed_session_id: str,
+    now=None,
+) -> "BreakglassSession | None":
+    """
+    Record that the runner observed the breakglass session while executing.
+    Validates runner ownership through the bound execution.
+    Does NOT extend expiry — heartbeat is an observation fact, not authority.
+    Returns the active session or None if session is gone or ID mismatches.
+    """
+    if now is None:
+        now = timezone.now()
+
+    try:
+        binding = change.execution_binding
+        execution = binding.execution
+    except Exception:
+        raise DomainValidationError(
+            code="no_execution_binding",
+            detail="No execution is bound to this change.",
+        )
+
+    from apps.executions.services import _validate_runner_ownership  # avoid circular
+
+    _validate_runner_ownership(execution, runner_id, claim_token)
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    try:
+        session = BreakglassSession.objects.get(
+            change_record=change,
+            status=BreakglassSession.Status.ACTIVE,
+        )
+    except BreakglassSession.DoesNotExist:
+        return None
+
+    if str(session.id) != str(observed_session_id):
+        return None
+
+    session.last_heartbeat_at = now
+    session.save(update_fields=["last_heartbeat_at", "updated_at"])
+
+    AuditService.emit(
+        organization_id=session.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label=f"runner:{runner_id}",
+        event_type="breakglass.heartbeat_observed",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "runner_id": runner_id,
+            "observed_at": now.isoformat(),
+            "expires_at": session.expires_at.isoformat(),
+        },
+    )
+    return session
+
+
+def mark_breakglass_review_overdue(*, now=None) -> list:
+    """
+    Find breakglass sessions with pending review past their review_due_at.
+    Mark review_status as overdue and emit audit events.
+    Returns list of affected sessions.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = BreakglassSession.objects.filter(
+        review_status=BreakglassSession.ReviewStatus.PENDING,
+        review_due_at__lte=now,
+    )
+    overdue = []
+    for session in qs:
+        session.review_status = BreakglassSession.ReviewStatus.OVERDUE
+        session.save(update_fields=["review_status", "updated_at"])
+        overdue.append(session)
+        AuditService.emit(
+            organization_id=session.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="overdue-check",
+            event_type="retro_review.overdue",
+            object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+            object_id=session.id,
+            metadata={
+                "change_record_id": str(session.change_record_id),
+                "breakglass_session_id": str(session.id),
+                "review_due_at": session.review_due_at.isoformat(),
+                "marked_overdue_at": now.isoformat(),
+            },
+        )
+    return overdue

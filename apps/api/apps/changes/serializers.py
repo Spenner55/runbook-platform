@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.changes.models import (
+    BreakglassSession,
     ChangeClosure,
     ChangeException,
     ChangeExecutionBinding,
@@ -538,3 +539,66 @@ class ChangeExceptionDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 3: BreakglassSession serializers
+# ---------------------------------------------------------------------------
+
+
+class BreakglassActivateSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=4000)
+    scope_json = serializers.JSONField()
+    expires_at = serializers.DateTimeField()
+
+    def validate_scope_json(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("scope_json must be a JSON object.")
+        return value
+
+    def validate_expires_at(self, value):
+        if value <= timezone.now():
+            raise serializers.ValidationError("expires_at must be a future datetime.")
+        return value
+
+
+class BreakglassEndSerializer(serializers.Serializer):
+    end_reason = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default="manual_end"
+    )
+
+
+class BreakglassSessionDetailSerializer(serializers.ModelSerializer):
+    activated_by_id = serializers.UUIDField(read_only=True)
+    ended_by_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = BreakglassSession
+        fields = [
+            "id",
+            "organization_id",
+            "change_record_id",
+            "status",
+            "scope_sha256",
+            "reason",
+            "activated_by_id",
+            "started_at",
+            "expires_at",
+            "ended_at",
+            "end_reason",
+            "review_due_at",
+            "review_status",
+            "last_heartbeat_at",
+            "created_at",
+            "updated_at",
+            "ended_by_id",
+        ]
+
+
+class BreakglassHeartbeatInputSerializer(serializers.Serializer):
+    """Internal: runner -> Django breakglass heartbeat."""
+    runner_id = serializers.CharField(max_length=255)
+    claim_token = serializers.UUIDField()
+    breakglass_session_id = serializers.UUIDField()
+    scope_sha256 = serializers.CharField(max_length=64)
+    observed_at = serializers.DateTimeField(required=False, allow_null=True)

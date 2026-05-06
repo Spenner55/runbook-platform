@@ -10,9 +10,13 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
-from apps.changes.models import ChangeException, VerificationPlan
+from apps.changes.models import BreakglassSession, ChangeException, VerificationPlan
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
+    BreakglassActivateSerializer,
+    BreakglassEndSerializer,
+    BreakglassHeartbeatInputSerializer,
+    BreakglassSessionDetailSerializer,
     ChangeClosureCreateSerializer,
     ChangeClosureDetailSerializer,
     ChangeExceptionApproveRejectSerializer,
@@ -1108,3 +1112,138 @@ class ChangeExceptionResolveView(APIView):
             return _error_response(e)
 
         return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 3: Breakglass public and internal views
+# ---------------------------------------------------------------------------
+
+
+class ChangeBreakglassActivateView(APIView):
+    """POST /api/v1/changes/{change_id}/breakglass/activate/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = BreakglassActivateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            session = services.activate_breakglass(
+                change=change,
+                actor=actor,
+                scope_json=d["scope_json"],
+                reason=d["reason"],
+                expires_at=d["expires_at"],
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(
+            BreakglassSessionDetailSerializer(session).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class ChangeBreakglassEndView(APIView):
+    """POST /api/v1/changes/{change_id}/breakglass/end/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            session = BreakglassSession.objects.get(
+                change_record=change,
+                organization=org,
+                status=BreakglassSession.Status.ACTIVE,
+            )
+        except BreakglassSession.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "No active breakglass session."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = BreakglassEndSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        end_reason = serializer.validated_data.get("end_reason") or "manual_end"
+
+        actor = actor_from_request(request)
+        try:
+            session = services.end_breakglass(
+                session=session,
+                actor=actor,
+                end_reason=end_reason,
+                actor_user=request.user,
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(BreakglassSessionDetailSerializer(session).data)
+
+
+class ChangeBreakglassHeartbeatView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/breakglass-heartbeat/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        from django.shortcuts import get_object_or_404
+        from django.utils import timezone as tz
+
+        serializer = BreakglassHeartbeatInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        change = get_object_or_404(ChangeRecord, pk=change_id)
+
+        try:
+            session = services.record_breakglass_heartbeat(
+                change=change,
+                runner_id=d["runner_id"],
+                claim_token=str(d["claim_token"]),
+                observed_session_id=str(d["breakglass_session_id"]),
+                now=d.get("observed_at") or tz.now(),
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        if session is None:
+            return Response({"status": "expired", "expires_at": None, "server_time": tz.now()})
+
+        return Response(
+            {
+                "status": session.status,
+                "expires_at": session.expires_at,
+                "server_time": tz.now(),
+            }
+        )
