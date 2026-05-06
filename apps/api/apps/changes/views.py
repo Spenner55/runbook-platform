@@ -10,6 +10,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
+from apps.changes.models import VerificationPlan
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
     ChangeClosureCreateSerializer,
@@ -30,7 +31,6 @@ from apps.changes.serializers import (
     VerificationResultCreateSerializer,
     VerificationResultDetailSerializer,
 )
-from apps.changes.models import VerificationPlan
 from apps.common.authentication import RunnerBearerTokenAuthentication
 from apps.common.exceptions import (
     DomainConflictError,

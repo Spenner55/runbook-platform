@@ -21,7 +21,6 @@ from apps.changes.models import (
 )
 from apps.organizations.models import Membership, MembershipRole
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -54,7 +53,9 @@ def approved_change(draft_change):
     change = change_services.submit_change_record(change=draft_change, actor=actor)
     # Approve the ApprovalRequest directly so the preflight approval check passes.
     if change.approval_request_id:
-        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(status="approved")
+        ApprovalRequest.objects.filter(pk=change.approval_request_id).update(
+            status="approved"
+        )
     # Force the change status to APPROVED without calling make_dispatchable.
     ChangeRecord.objects.filter(pk=change.pk).update(
         status=ChangeRecord.Status.APPROVED, approved_at=_now()
@@ -72,7 +73,9 @@ def dispatchable_change(draft_change):
     actor = _system_actor()
     change = change_services.submit_change_record(change=draft_change, actor=actor)
     ar = change.approval_request
-    approval_services.decide_approval(approval_request=ar, decision="approved", actor=actor)
+    approval_services.decide_approval(
+        approval_request=ar, decision="approved", actor=actor
+    )
     change.refresh_from_db()
     return change
 
@@ -313,7 +316,10 @@ def test_preflight_fails_when_allow_with_exception_no_reference(approved_change,
     )
     assert check.freeze_conflicts_ok is False
     freeze_conflicts = [c for c in check.conflicts if c["type"] == "freeze_rule"]
-    assert any(c["behavior"] == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION for c in freeze_conflicts)
+    assert any(
+        c["behavior"] == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION
+        for c in freeze_conflicts
+    )
 
 
 @pytest.mark.django_db
@@ -333,7 +339,11 @@ def test_preflight_passes_when_exception_reference_provided(approved_change, org
     approved_change.freeze_exception_reference = "CAB-2024-001"
     approved_change.freeze_exception_reason = "Emergency maintenance"
     approved_change.save(
-        update_fields=["freeze_exception_reference", "freeze_exception_reason", "updated_at"]
+        update_fields=[
+            "freeze_exception_reference",
+            "freeze_exception_reason",
+            "updated_at",
+        ]
     )
 
     check = change_services.run_dispatch_preflight(
@@ -386,7 +396,9 @@ def test_preflight_freeze_scoped_to_different_target_type_does_not_conflict(
 
 
 @pytest.mark.django_db
-def test_preflight_freeze_scoped_to_matching_target_type_conflicts(approved_change, org):
+def test_preflight_freeze_scoped_to_matching_target_type_conflicts(
+    approved_change, org
+):
     now = _now()
     FreezeRule.objects.create(
         organization=org,
@@ -436,7 +448,11 @@ def test_block_freeze_wins_over_allow_with_exception_freeze(approved_change, org
     approved_change.freeze_exception_reference = "CAB-2024-999"
     approved_change.freeze_exception_reason = "Approved emergency"
     approved_change.save(
-        update_fields=["freeze_exception_reference", "freeze_exception_reason", "updated_at"]
+        update_fields=[
+            "freeze_exception_reference",
+            "freeze_exception_reason",
+            "updated_at",
+        ]
     )
 
     check = change_services.run_dispatch_preflight(
@@ -447,7 +463,8 @@ def test_block_freeze_wins_over_allow_with_exception_freeze(approved_change, org
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     # The BLOCK freeze must appear in conflicts.
     block_conflicts = [
-        c for c in check.conflicts
+        c
+        for c in check.conflicts
         if c["type"] == "freeze_rule" and c["behavior"] == FreezeRule.Behavior.BLOCK
     ]
     assert len(block_conflicts) == 1
@@ -488,8 +505,10 @@ def test_preflight_passes_when_no_active_locks(approved_change):
 
 
 @pytest.mark.django_db
-def test_preflight_fails_when_conflicting_active_lock(approved_change, org, org_factory):
-    other_org = org_factory("other-org-lock")
+def test_preflight_fails_when_conflicting_active_lock(
+    approved_change, org, org_factory
+):
+    org_factory("other-org-lock")
     # Create a second change record in the same org (for another change)
     second_change = ChangeRecord.objects.create(
         organization=org,
@@ -622,7 +641,7 @@ def test_preflight_stale_when_expires_at_in_past(approved_change):
 @pytest.mark.django_db
 def test_latest_preflight_returns_most_recent(approved_change):
     actor = _user_actor()
-    first = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
+    change_services.run_dispatch_preflight(change=approved_change, actor=actor)
     second = change_services.run_dispatch_preflight(change=approved_change, actor=actor)
 
     from apps.changes import selectors
@@ -705,7 +724,10 @@ def test_api_preflight_run_returns_201(approved_change, api_client, org, org_use
 
     url = f"/api/v1/changes/{approved_change.id}/preflight/"
     response = api_client.post(
-        url, data={}, content_type="application/json", HTTP_X_ORGANIZATION_ID=str(org.id)
+        url,
+        data={},
+        content_type="application/json",
+        HTTP_X_ORGANIZATION_ID=str(org.id),
     )
     assert response.status_code == 201
     data = response.json()
@@ -719,7 +741,9 @@ def test_api_preflight_run_returns_201(approved_change, api_client, org, org_use
 
 
 @pytest.mark.django_db
-def test_api_preflight_run_requires_operator_role(approved_change, api_client, org, org_user):
+def test_api_preflight_run_requires_operator_role(
+    approved_change, api_client, org, org_user
+):
     Membership.objects.create(
         organization=org, user=org_user, role=MembershipRole.VIEWER
     )
@@ -727,7 +751,10 @@ def test_api_preflight_run_requires_operator_role(approved_change, api_client, o
 
     url = f"/api/v1/changes/{approved_change.id}/preflight/"
     response = api_client.post(
-        url, data={}, content_type="application/json", HTTP_X_ORGANIZATION_ID=str(org.id)
+        url,
+        data={},
+        content_type="application/json",
+        HTTP_X_ORGANIZATION_ID=str(org.id),
     )
     assert response.status_code == 403
 
@@ -743,7 +770,10 @@ def test_api_preflight_run_404_for_unknown_change(api_client, org, org_user):
 
     url = f"/api/v1/changes/{uuid.uuid4()}/preflight/"
     response = api_client.post(
-        url, data={}, content_type="application/json", HTTP_X_ORGANIZATION_ID=str(org.id)
+        url,
+        data={},
+        content_type="application/json",
+        HTTP_X_ORGANIZATION_ID=str(org.id),
     )
     assert response.status_code == 404
 
@@ -754,7 +784,9 @@ def test_api_preflight_run_404_for_unknown_change(api_client, org, org_user):
 
 
 @pytest.mark.django_db
-def test_api_preflight_latest_returns_most_recent(approved_change, api_client, org, org_user):
+def test_api_preflight_latest_returns_most_recent(
+    approved_change, api_client, org, org_user
+):
     Membership.objects.create(
         organization=org, user=org_user, role=MembershipRole.VIEWER
     )
@@ -772,7 +804,9 @@ def test_api_preflight_latest_returns_most_recent(approved_change, api_client, o
 
 
 @pytest.mark.django_db
-def test_api_preflight_latest_404_when_none_exist(approved_change, api_client, org, org_user):
+def test_api_preflight_latest_404_when_none_exist(
+    approved_change, api_client, org, org_user
+):
     Membership.objects.create(
         organization=org, user=org_user, role=MembershipRole.VIEWER
     )
@@ -801,7 +835,9 @@ def test_api_preflight_latest_requires_org_member(approved_change, api_client, o
 
 
 @pytest.mark.django_db
-def test_conflicts_include_freeze_rule_and_target_lock(approved_change, org, org_factory):
+def test_conflicts_include_freeze_rule_and_target_lock(
+    approved_change, org, org_factory
+):
     now = _now()
     FreezeRule.objects.create(
         organization=org,

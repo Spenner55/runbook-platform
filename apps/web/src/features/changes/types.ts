@@ -145,12 +145,7 @@ export type VerificationCheckStatus = 'pending' | 'passed' | 'failed' | 'not_app
 
 export type VerificationPlanStatus = 'generated' | 'active' | 'satisfied' | 'failed' | 'canceled'
 
-export type ClosureOutcome =
-  | 'success'
-  | 'rolled_back'
-  | 'partial_success'
-  | 'failed'
-  | 'canceled'
+export type ClosureOutcome = 'success' | 'rolled_back' | 'partial_success' | 'failed' | 'canceled'
 
 export interface VerificationResultSummary {
   id: string

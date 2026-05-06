@@ -19,8 +19,7 @@ function formatDateTime(value: string) {
 function scopeLabel(rule: FreezeRule): string {
   if (rule.scope_type === 'all_production') return 'All production'
   if (rule.scope_type === 'target_type') return rule.target_type || 'Target type'
-  if (rule.scope_type === 'target_identifier')
-    return rule.target_identifier || 'Target identifier'
+  if (rule.scope_type === 'target_identifier') return rule.target_identifier || 'Target identifier'
   return rule.scope_type
 }
 
@@ -54,8 +53,8 @@ function FreezeRuleRow({ rule, isAdmin, onUpdated }: FreezeRuleRowProps) {
           <strong>{rule.name}</strong>
           {rule.description ? <p className="muted">{rule.description}</p> : null}
           <p className="muted">
-            {behaviorLabel(rule.behavior)} · {scopeLabel(rule)} ·{' '}
-            {formatDateTime(rule.starts_at)} – {formatDateTime(rule.ends_at)}
+            {behaviorLabel(rule.behavior)} · {scopeLabel(rule)} · {formatDateTime(rule.starts_at)} –{' '}
+            {formatDateTime(rule.ends_at)}
           </p>
           {rule.requires_exception_reference ? (
             <p className="muted">Exception reference required</p>
@@ -266,8 +265,7 @@ export function FreezeRulesPage() {
   const [showCreateForm, setShowCreateForm] = useState(false)
 
   const activeMembership = user?.memberships.find((m) => m.organization.id === activeOrganizationId)
-  const isAdmin =
-    activeMembership?.role === 'owner' || activeMembership?.role === 'admin'
+  const isAdmin = activeMembership?.role === 'owner' || activeMembership?.role === 'admin'
 
   const query = useFreezeRules(activeOrganizationId, isActiveFilter)
 

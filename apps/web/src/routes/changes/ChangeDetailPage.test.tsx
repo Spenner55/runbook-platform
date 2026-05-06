@@ -432,7 +432,9 @@ describe('ChangeDetailPage', () => {
     await waitFor(() => screen.getByRole('button', { name: /^attest$/i }))
     await userEvent.click(screen.getByRole('button', { name: /^attest$/i }))
 
-    expect(screen.getByRole('dialog', { name: /attest: operator attestation/i })).toBeInTheDocument()
+    expect(
+      screen.getByRole('dialog', { name: /attest: operator attestation/i })
+    ).toBeInTheDocument()
     expect(screen.getByLabelText(/attestation statement/i)).toBeInTheDocument()
   })
 
@@ -491,16 +493,11 @@ describe('ChangeDetailPage', () => {
 
     await waitFor(() => screen.getByRole('button', { name: /^attest$/i }))
     await userEvent.click(screen.getByRole('button', { name: /^attest$/i }))
-    await userEvent.type(
-      screen.getByLabelText(/attestation statement/i),
-      'I did the review.'
-    )
+    await userEvent.type(screen.getByLabelText(/attestation statement/i), 'I did the review.')
     await userEvent.click(screen.getByRole('button', { name: /submit attestation/i }))
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/self-review is not allowed/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/self-review is not allowed/i)).toBeInTheDocument()
     })
   })
 
@@ -579,20 +576,12 @@ describe('ChangeDetailPage', () => {
     await waitFor(() => screen.getByRole('button', { name: /^close change$/i }))
     await userEvent.click(screen.getByRole('button', { name: /^close change$/i }))
 
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: /outcome/i }),
-      'success'
-    )
-    await userEvent.type(
-      screen.getByLabelText(/summary/i),
-      'Change completed successfully.'
-    )
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /outcome/i }), 'success')
+    await userEvent.type(screen.getByLabelText(/summary/i), 'Change completed successfully.')
     await userEvent.click(screen.getByRole('button', { name: /confirm closure/i }))
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/independent reviewer is required/i)
-      ).toBeInTheDocument()
+      expect(screen.getByText(/independent reviewer is required/i)).toBeInTheDocument()
     })
   })
 

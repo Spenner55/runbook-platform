@@ -1,9 +1,5 @@
 import { apiRequest } from '../../../shared/api/client'
-import type {
-  CreateFreezeRuleInput,
-  FreezeRule,
-  UpdateFreezeRuleInput,
-} from '../types'
+import type { CreateFreezeRuleInput, FreezeRule, UpdateFreezeRuleInput } from '../types'
 
 export interface ListFreezeRulesParams {
   organization_id: string
@@ -23,13 +19,10 @@ function withOrganization(path: string, organizationId: string) {
 
 export function createFreezeRule(input: CreateFreezeRuleInput) {
   const { organization_id, ...body } = input
-  return apiRequest<FreezeRule>(
-    withOrganization('/api/v1/freeze-rules/', organization_id),
-    {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }
-  )
+  return apiRequest<FreezeRule>(withOrganization('/api/v1/freeze-rules/', organization_id), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export function updateFreezeRule(

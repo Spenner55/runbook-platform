@@ -8,8 +8,7 @@ export function useSubmitVerificationResult(changeId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (input: SubmitVerificationResultInput) =>
-      submitVerificationResult(changeId, input),
+    mutationFn: (input: SubmitVerificationResultInput) => submitVerificationResult(changeId, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.changeVerificationPlan(changeId) })
       queryClient.invalidateQueries({ queryKey: queryKeys.change(changeId) })

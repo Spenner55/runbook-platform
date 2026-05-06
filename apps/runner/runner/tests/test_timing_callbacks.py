@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import httpx
@@ -23,7 +23,6 @@ from runner.schemas import (
     StepStartResponse,
     StepUpdateResponse,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -159,12 +158,13 @@ class TestExecutionStartedCallback:
         client = _mock_client_for_change_execution(execution)
 
         call_order = []
-        client.execution_started.side_effect = lambda *a, **kw: call_order.append(
-            "started"
-        ) or _started_ok(execution.change_record_id, execution.id)
-        client.start_step.side_effect = lambda *a, **kw: call_order.append(
-            "step"
-        ) or _step_start_run(execution.id, step.id)
+        client.execution_started.side_effect = lambda *a, **kw: (
+            call_order.append("started")
+            or _started_ok(execution.change_record_id, execution.id)
+        )
+        client.start_step.side_effect = lambda *a, **kw: (
+            call_order.append("step") or _step_start_run(execution.id, step.id)
+        )
 
         Executor(client).run(execution, claim_token)
 
@@ -257,12 +257,13 @@ class TestExecutionFinishedCallback:
         client = _mock_client_for_change_execution(execution)
 
         call_order = []
-        client.complete_execution.side_effect = lambda *a, **kw: call_order.append(
-            "complete"
-        ) or _complete_ok(execution.id)
-        client.execution_finished.side_effect = lambda *a, **kw: call_order.append(
-            "finished"
-        ) or _finished_ok(execution.change_record_id, execution.id)
+        client.complete_execution.side_effect = lambda *a, **kw: (
+            call_order.append("complete") or _complete_ok(execution.id)
+        )
+        client.execution_finished.side_effect = lambda *a, **kw: (
+            call_order.append("finished")
+            or _finished_ok(execution.change_record_id, execution.id)
+        )
 
         Executor(client).run(execution, claim_token)
 
@@ -406,7 +407,10 @@ class TestClientExecutionStarted:
         observed = datetime(2026, 1, 1, tzinfo=UTC)
         resp = client.execution_started(change_id, execution_id, observed_at=observed)
 
-        assert captured["path"] == f"/api/v1/internal/changes/{change_id}/execution-started/"
+        assert (
+            captured["path"]
+            == f"/api/v1/internal/changes/{change_id}/execution-started/"
+        )
         assert captured["body"]["runner_id"] == "test-runner"
         assert captured["body"]["execution_id"] == str(execution_id)
         assert resp.change_record_id == change_id
@@ -415,7 +419,9 @@ class TestClientExecutionStarted:
     def test_execution_started_4xx_raises_http_status_error(self):
         change_id = uuid4()
         execution_id = uuid4()
-        transport = _make_transport(409, {"errors": [{"code": "runner_ownership_mismatch"}]})
+        transport = _make_transport(
+            409, {"errors": [{"code": "runner_ownership_mismatch"}]}
+        )
         client = _make_client(transport)
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
@@ -469,7 +475,10 @@ class TestClientExecutionFinished:
         observed = datetime(2026, 1, 1, 1, tzinfo=UTC)
         resp = client.execution_finished(change_id, execution_id, observed_at=observed)
 
-        assert captured["path"] == f"/api/v1/internal/changes/{change_id}/execution-finished/"
+        assert (
+            captured["path"]
+            == f"/api/v1/internal/changes/{change_id}/execution-finished/"
+        )
         assert captured["body"]["runner_id"] == "test-runner"
         assert captured["body"]["execution_id"] == str(execution_id)
         assert resp.change_record_id == change_id
@@ -478,7 +487,9 @@ class TestClientExecutionFinished:
     def test_execution_finished_4xx_raises_http_status_error(self):
         change_id = uuid4()
         execution_id = uuid4()
-        transport = _make_transport(410, {"errors": [{"code": "dispatch_token_expired"}]})
+        transport = _make_transport(
+            410, {"errors": [{"code": "dispatch_token_expired"}]}
+        )
         client = _make_client(transport)
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:

@@ -305,8 +305,7 @@ function UnmetChecksBlockingDisplay({ checks }: { checks: UnmetCheckSummary[] })
       <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
         {checks.map((c) => (
           <li key={c.id}>
-            {c.name}{' '}
-            <span className="pill">{c.check_type.replace(/_/g, ' ')}</span>
+            {c.name} <span className="pill">{c.check_type.replace(/_/g, ' ')}</span>
           </li>
         ))}
       </ul>
@@ -374,11 +373,7 @@ function ManualAttestationModal({ changeId, check, onClose }: ManualAttestationM
         </div>
         {errorMsg && <p className="banner banner--error">{errorMsg}</p>}
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button
-            className="btn btn--primary"
-            type="submit"
-            disabled={submitMutation.isPending}
-          >
+          <button className="btn btn--primary" type="submit" disabled={submitMutation.isPending}>
             {submitMutation.isPending ? 'Submitting…' : 'Submit attestation'}
           </button>
           <button className="btn" type="button" onClick={onClose}>
@@ -409,12 +404,7 @@ function VerificationCheckItem({ check, onAttest }: VerificationCheckItemProps) 
         {!check.required && <span className="pill pill--info">optional</span>}
         <strong>{check.name}</strong>
         {canAttest && (
-          <button
-            className="btn"
-            style={{ marginLeft: 'auto' }}
-            type="button"
-            onClick={onAttest}
-          >
+          <button className="btn" style={{ marginLeft: 'auto' }} type="button" onClick={onAttest}>
             Attest
           </button>
         )}
@@ -422,7 +412,11 @@ function VerificationCheckItem({ check, onAttest }: VerificationCheckItemProps) 
       {check.last_result && (
         <div className="muted" style={{ fontSize: '0.85em', marginTop: '0.25rem' }}>
           Last result:{' '}
-          <span className={check.last_result.outcome === 'passed' ? 'pill pill--success' : 'pill pill--danger'}>
+          <span
+            className={
+              check.last_result.outcome === 'passed' ? 'pill pill--success' : 'pill pill--danger'
+            }
+          >
             {check.last_result.outcome}
           </span>{' '}
           by {check.last_result.source} at {formatDateTime(check.last_result.validated_at)}
@@ -491,10 +485,7 @@ const VERIFICATION_VISIBLE_STATUSES = new Set([
 ])
 
 function VerificationSection({ change }: { change: ChangeRecord }) {
-  const planQuery = useVerificationPlan(
-    change.id,
-    VERIFICATION_VISIBLE_STATUSES.has(change.status)
-  )
+  const planQuery = useVerificationPlan(change.id, VERIFICATION_VISIBLE_STATUSES.has(change.status))
 
   if (!VERIFICATION_VISIBLE_STATUSES.has(change.status)) return null
 
@@ -515,12 +506,8 @@ function VerificationSection({ change }: { change: ChangeRecord }) {
       </dl>
 
       {planQuery.isLoading && <p className="muted">Loading verification plan…</p>}
-      {planQuery.error && (
-        <p className="banner banner--error">Could not load verification plan.</p>
-      )}
-      {planQuery.data && (
-        <VerificationChecklistPanel change={change} plan={planQuery.data} />
-      )}
+      {planQuery.error && <p className="banner banner--error">Could not load verification plan.</p>}
+      {planQuery.data && <VerificationChecklistPanel change={change} plan={planQuery.data} />}
     </section>
   )
 }
@@ -943,34 +930,23 @@ function PreflightCard({ change }: { change: ChangeRecord }) {
   const isPassed = check?.result === 'passed'
   const isFresh = check ? !check.is_stale : false
   const canDispatch =
-    DISPATCH_FROM_STATUSES.has(change.status) &&
-    isPassed &&
-    isFresh &&
-    !dispatchMutation.isPending
+    DISPATCH_FROM_STATUSES.has(change.status) && isPassed && isFresh && !dispatchMutation.isPending
 
   return (
     <section className="stack-md">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <h4 style={{ margin: 0 }}>Dispatch Preflight</h4>
         {check && (
-          <span
-            className={
-              isPassed ? 'pill pill--success' : 'pill pill--danger'
-            }
-          >
+          <span className={isPassed ? 'pill pill--success' : 'pill pill--danger'}>
             {isPassed ? 'eligible' : 'ineligible'}
           </span>
         )}
-        {check && check.is_stale && (
-          <span className="pill pill--warn">stale</span>
-        )}
+        {check && check.is_stale && <span className="pill pill--warn">stale</span>}
       </div>
 
       {preflightQuery.isLoading && <p className="muted">Loading preflight…</p>}
       {preflightQuery.error && (
-        <p className="banner banner--error">
-          {getApiErrorMessage(preflightQuery.error)}
-        </p>
+        <p className="banner banner--error">{getApiErrorMessage(preflightQuery.error)}</p>
       )}
 
       {check && (
@@ -1007,7 +983,11 @@ function PreflightCard({ change }: { change: ChangeRecord }) {
           disabled={runPreflightMutation.isPending}
           onClick={() => runPreflightMutation.mutate()}
         >
-          {runPreflightMutation.isPending ? 'Running…' : check ? 'Rerun preflight' : 'Run preflight'}
+          {runPreflightMutation.isPending
+            ? 'Running…'
+            : check
+              ? 'Rerun preflight'
+              : 'Run preflight'}
         </button>
 
         {DISPATCH_FROM_STATUSES.has(change.status) && (
@@ -1039,9 +1019,7 @@ function PreflightCard({ change }: { change: ChangeRecord }) {
 
       {dispatchError && <p className="banner banner--error">{dispatchError}</p>}
       {runPreflightMutation.isError && (
-        <p className="banner banner--error">
-          {getApiErrorMessage(runPreflightMutation.error)}
-        </p>
+        <p className="banner banner--error">{getApiErrorMessage(runPreflightMutation.error)}</p>
       )}
     </section>
   )
