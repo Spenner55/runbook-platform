@@ -13,6 +13,9 @@ from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpat
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
 from apps.audit.views import ExecutionAuditEventListView
 from apps.changes.urls import (
+    freeze_rule_urlpatterns as change_freeze_rule_urlpatterns,
+)
+from apps.changes.urls import (
     internal_urlpatterns as change_internal_urlpatterns,
 )
 from apps.changes.urls import (
@@ -46,6 +49,7 @@ urlpatterns = [
     path("audit/", include("apps.audit.urls")),
     path("integrations/", include("apps.integrations.urls")),
     path("changes/", include((change_public_urlpatterns, "changes"))),
+    path("freeze-rules/", include((change_freeze_rule_urlpatterns, "freeze-rules"))),
     *artifact_public_urlpatterns,
     path(
         "executions/<uuid:execution_id>/audit/",

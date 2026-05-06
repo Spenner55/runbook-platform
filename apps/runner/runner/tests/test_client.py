@@ -849,3 +849,75 @@ def test_upload_artifact_sends_multipart_shape():
     assert 'name="file"; filename="stdout.txt"' in captured["body"]
     assert "hello world" in captured["body"]
     assert response.id == artifact_id
+
+
+# ---------------------------------------------------------------------------
+# submit_verification_result
+# ---------------------------------------------------------------------------
+
+
+def test_submit_verification_result_sends_expected_payload():
+    captured = {}
+    change_id = uuid4()
+    execution_id = uuid4()
+    claim_token = uuid4()
+    result_id = uuid4()
+    check_id = uuid4()
+    artifact_id = uuid4()
+    body = {
+        "result_id": str(result_id),
+        "check_id": str(check_id),
+        "validation_status": "accepted",
+        "validation_errors": [],
+        "check_status": "passed",
+        "plan_status": "active",
+        "change_status": "verification_pending",
+        "accepted": True,
+        "artifact_ids": [str(artifact_id)],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["authorization"] = request.headers.get("Authorization")
+        captured["json"] = json.loads(request.content.decode())
+        return httpx.Response(
+            201,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    response = client.submit_verification_result(
+        change_id,
+        execution_id,
+        claim_token,
+        check_key="runner-health-check",
+        outcome="passed",
+        verification_key="postdeploy.health.ok",
+        step_key="health-check",
+        artifact_ids=[artifact_id],
+        artifact_checksums={str(artifact_id): "a" * 64},
+        observed_value={"exit_code": 0},
+        metadata={"source": "runner"},
+    )
+
+    assert captured["method"] == "POST"
+    assert (
+        captured["path"]
+        == f"/api/v1/internal/changes/{change_id}/verification-results/"
+    )
+    assert captured["authorization"] == "Bearer test-runner-token"
+    assert captured["json"]["runner_id"] == "test-runner"
+    assert captured["json"]["claim_token"] == str(claim_token)
+    assert captured["json"]["execution_id"] == str(execution_id)
+    assert captured["json"]["check_key"] == "runner-health-check"
+    assert captured["json"]["verification_key"] == "postdeploy.health.ok"
+    assert captured["json"]["outcome"] == "passed"
+    assert captured["json"]["step_key"] == "health-check"
+    assert captured["json"]["artifact_ids"] == [str(artifact_id)]
+    assert captured["json"]["artifact_checksums"][str(artifact_id)] == "a" * 64
+    assert captured["json"]["observed_value"] == {"exit_code": 0}
+    assert captured["json"]["metadata"] == {"source": "runner"}
+    assert response.accepted is True
+    assert response.validation_status == "accepted"

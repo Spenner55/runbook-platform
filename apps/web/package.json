@@ -10,6 +10,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "test": "vitest",
+    "test:ci": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {

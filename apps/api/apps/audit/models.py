@@ -40,6 +40,13 @@ class AuditEvent(BaseModel):
             "change_execution_binding",
             "Change Execution Binding",
         )
+        CHANGE_WINDOW = "change_window", "Change Window"
+        FREEZE_RULE = "freeze_rule", "Freeze Rule"
+        TARGET_LOCK = "target_lock", "Target Lock"
+        DISPATCH_ELIGIBILITY_CHECK = (
+            "dispatch_eligibility_check",
+            "Dispatch Eligibility Check",
+        )
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
@@ -113,6 +120,10 @@ class AuditEvent(BaseModel):
                         "change_record",
                         "change_target",
                         "change_execution_binding",
+                        "change_window",
+                        "freeze_rule",
+                        "target_lock",
+                        "dispatch_eligibility_check",
                     ]
                 ),
                 name="audit_object_type_valid_chk",

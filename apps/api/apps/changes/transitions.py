@@ -46,7 +46,11 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
         ChangeRecord.Status.VERIFICATION_PENDING,
         ChangeRecord.Status.CLOSED,
     },
-    ChangeRecord.Status.VERIFICATION_PENDING: {ChangeRecord.Status.VERIFIED},
+    ChangeRecord.Status.VERIFICATION_PENDING: {
+        ChangeRecord.Status.VERIFIED,
+        ChangeRecord.Status.VERIFICATION_FAILED,
+    },
+    ChangeRecord.Status.VERIFICATION_FAILED: {ChangeRecord.Status.CLOSED},
     ChangeRecord.Status.VERIFIED: {ChangeRecord.Status.CLOSED},
     # Terminal states have no outgoing transitions.
     ChangeRecord.Status.CLOSED: set(),
@@ -63,6 +67,7 @@ _STATUS_TIMESTAMP_FIELDS: dict[str, str | None] = {
     ChangeRecord.Status.DISPATCHABLE: "dispatchable_at",
     ChangeRecord.Status.RUNNING: "running_at",
     ChangeRecord.Status.VERIFICATION_PENDING: "verification_pending_at",
+    ChangeRecord.Status.VERIFICATION_FAILED: "verification_failed_at",
     ChangeRecord.Status.VERIFIED: "verified_at",
     ChangeRecord.Status.CLOSED: "closed_at",
     ChangeRecord.Status.REJECTED: "rejected_at",

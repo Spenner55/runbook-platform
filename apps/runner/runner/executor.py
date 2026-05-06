@@ -12,7 +12,7 @@ import httpx
 
 from runner.artifact_uploader import ArtifactUploader
 from runner.client import ApiClient
-from runner.schemas import ClaimedExecution, ClaimedStep
+from runner.schemas import ArtifactUploadResponse, ClaimedExecution, ClaimedStep
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ class Executor:
                         "Failed to mark execution %s failed: %s", execution_id, exc
                     )
                 return
+            self._notify_execution_started(execution)
 
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
         heartbeat.start()
@@ -128,7 +129,7 @@ class Executor:
                     outcome = "failed"
                     break
                 step_failed = self._run_step(
-                    execution_id, claim_token, step, heartbeat, uploader
+                    execution, claim_token, step, heartbeat, uploader
                 )
                 if step_failed:
                     outcome = "failed"
@@ -154,6 +155,51 @@ class Executor:
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to mark execution %s complete: %s", execution_id, exc)
+
+        if execution.is_change_bound:
+            self._notify_execution_finished(execution)
+
+    def _notify_execution_started(self, execution: ClaimedExecution) -> None:
+        """POST execution-started to Django. Non-fatal on error."""
+        try:
+            self._client.execution_started(
+                execution.change_record_id,
+                execution.id,
+                observed_at=_utcnow(),
+            )
+            logger.info(
+                "execution-started notified for change %s / execution %s",
+                execution.change_record_id,
+                execution.id,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "execution-started callback failed for change %s / execution %s: %s",
+                execution.change_record_id,
+                execution.id,
+                exc,
+            )
+
+    def _notify_execution_finished(self, execution: ClaimedExecution) -> None:
+        """POST execution-finished to Django. Non-fatal on error."""
+        try:
+            self._client.execution_finished(
+                execution.change_record_id,
+                execution.id,
+                observed_at=_utcnow(),
+            )
+            logger.info(
+                "execution-finished notified for change %s / execution %s",
+                execution.change_record_id,
+                execution.id,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "execution-finished callback failed for change %s / execution %s: %s",
+                execution.change_record_id,
+                execution.id,
+                exc,
+            )
 
     def _bind_change_execution(
         self, execution: ClaimedExecution, claim_token: UUID
@@ -204,7 +250,7 @@ class Executor:
 
     def _run_step(
         self,
-        execution_id: UUID,
+        execution: ClaimedExecution,
         claim_token: UUID,
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
@@ -221,7 +267,7 @@ class Executor:
         logger.info("Step %d/%s '%s': starting", step.position, step.id, step.name)
 
         try:
-            start_resp = self._client.start_step(execution_id, step.id, claim_token)
+            start_resp = self._client.start_step(execution.id, step.id, claim_token)
         except httpx.HTTPError as exc:
             logger.error("Failed to start step %s: %s", step.id, exc)
             return True
@@ -232,13 +278,13 @@ class Executor:
             )
             heartbeat.set_observed_status("running")
             return self._execute_command(
-                execution_id, claim_token, step, heartbeat, uploader
+                execution, claim_token, step, heartbeat, uploader
             )
 
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
             return self._wait_for_approval(
-                execution_id, claim_token, step, heartbeat, start_resp, uploader
+                execution, claim_token, step, heartbeat, start_resp, uploader
             )
 
         # runner_action == "blocked" or unexpected
@@ -252,7 +298,7 @@ class Executor:
 
     def _wait_for_approval(
         self,
-        execution_id: UUID,
+        execution: ClaimedExecution,
         claim_token: UUID,
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
@@ -271,7 +317,7 @@ class Executor:
 
             try:
                 status_resp = self._client.get_step_approval_status(
-                    execution_id, step.id, claim_token
+                    execution.id, step.id, claim_token
                 )
             except httpx.HTTPError as exc:
                 logger.warning(
@@ -301,7 +347,7 @@ class Executor:
                 )
                 heartbeat.set_observed_status("running")
                 return self._execute_command(
-                    execution_id, claim_token, step, heartbeat, uploader
+                    execution, claim_token, step, heartbeat, uploader
                 )
 
             # runner_action == "fail"
@@ -315,7 +361,7 @@ class Executor:
 
     def _execute_command(
         self,
-        execution_id: UUID,
+        execution: ClaimedExecution,
         claim_token: UUID,
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
@@ -343,10 +389,12 @@ class Executor:
             stderr_content = b"Intentional failure triggered by FAIL_STEP token.\n"
             stdout_content = b""
             # Upload artifacts before reporting terminal status
-            self._upload_step_outputs(uploader, step, stdout_content, stderr_content)
+            artifacts = self._upload_step_outputs(
+                uploader, step, stdout_content, stderr_content
+            )
             try:
                 self._client.update_step(
-                    execution_id,
+                    execution.id,
                     step.id,
                     claim_token,
                     status="failed",
@@ -357,6 +405,15 @@ class Executor:
                 )
             except httpx.HTTPError as exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, exc)
+            else:
+                self._emit_step_verification_facts(
+                    execution=execution,
+                    claim_token=claim_token,
+                    step=step,
+                    outcome="failed",
+                    exit_code=1,
+                    artifacts=artifacts,
+                )
             return True
 
         # Happy path: brief placeholder work, then succeed
@@ -365,11 +422,13 @@ class Executor:
         stdout_content = f"Step '{step.name}' executed successfully.\n".encode()
         stderr_content = b""
         # Upload artifacts before reporting terminal status
-        self._upload_step_outputs(uploader, step, stdout_content, stderr_content)
+        artifacts = self._upload_step_outputs(
+            uploader, step, stdout_content, stderr_content
+        )
 
         try:
             self._client.update_step(
-                execution_id,
+                execution.id,
                 step.id,
                 claim_token,
                 status="succeeded",
@@ -382,6 +441,14 @@ class Executor:
             logger.error("Failed to mark step %s succeeded: %s", step.id, exc)
             return True
 
+        self._emit_step_verification_facts(
+            execution=execution,
+            claim_token=claim_token,
+            step=step,
+            outcome="passed",
+            exit_code=0,
+            artifacts=artifacts,
+        )
         return False
 
     def _upload_step_outputs(
@@ -390,13 +457,77 @@ class Executor:
         step: ClaimedStep,
         stdout: bytes,
         stderr: bytes,
-    ) -> None:
+    ) -> list[ArtifactUploadResponse]:
         """Upload stdout and stderr artifacts. Failures are logged but do not affect step outcome."""
+        artifacts: list[ArtifactUploadResponse] = []
         if stdout:
             result = uploader.upload_stdout(step.id, stdout)
             if result is None:
                 logger.warning("stdout artifact upload failed for step %s", step.id)
+            else:
+                artifacts.append(result)
         if stderr:
             result = uploader.upload_stderr(step.id, stderr)
             if result is None:
                 logger.warning("stderr artifact upload failed for step %s", step.id)
+            else:
+                artifacts.append(result)
+        return artifacts
+
+    def _emit_step_verification_facts(
+        self,
+        *,
+        execution: ClaimedExecution,
+        claim_token: UUID,
+        step: ClaimedStep,
+        outcome: str,
+        exit_code: int,
+        artifacts: list[ArtifactUploadResponse],
+    ) -> None:
+        if not execution.is_change_bound or execution.change_record_id is None:
+            return
+
+        matching_keys = [
+            item
+            for item in execution.verification_keys
+            if item.step_key and item.step_key == step.step_key
+        ]
+        if not matching_keys:
+            return
+
+        artifact_ids = [artifact.id for artifact in artifacts]
+        artifact_checksums = {
+            str(artifact.id): artifact.checksum_sha256 for artifact in artifacts
+        }
+        for item in matching_keys:
+            try:
+                response = self._client.submit_verification_result(
+                    execution.change_record_id,
+                    execution.id,
+                    claim_token,
+                    check_key=item.check_key,
+                    outcome=outcome,
+                    verification_key=item.verification_key,
+                    step_key=step.step_key,
+                    artifact_ids=artifact_ids,
+                    artifact_checksums=artifact_checksums,
+                    observed_value={
+                        "status": outcome,
+                        "exit_code": exit_code,
+                        "source_step_key": step.step_key,
+                    },
+                    metadata={"check_type": item.check_type},
+                )
+                logger.info(
+                    "verification fact submitted for change %s check %s: %s",
+                    execution.change_record_id,
+                    item.check_key,
+                    response.validation_status,
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "verification fact callback failed for change %s check %s: %s",
+                    execution.change_record_id,
+                    item.check_key,
+                    exc,
+                )

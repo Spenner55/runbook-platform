@@ -35,6 +35,9 @@ export function AppLayout() {
           <NavLink className={getNavClassName} to="/changes">
             Changes
           </NavLink>
+          <NavLink className={getNavClassName} to="/freeze-rules">
+            Freeze Rules
+          </NavLink>
           <NavLink className={getNavClassName} to="/policies">
             Policies
           </NavLink>

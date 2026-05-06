@@ -82,6 +82,33 @@ def test_emit_rejects_phase_11_forbidden_metadata_keys(org):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "key",
+    [
+        "attestation_text",
+        "external_access_token",
+        "manual_attestation_text",
+        "request_payload",
+        "response_body",
+        "verification_secret",
+        "api_assertion_response",
+    ],
+)
+def test_emit_scrubs_phase_113_verification_closure_keys(org, key):
+    """Phase 11.3 verification/closure sensitive keys are silently removed from metadata."""
+    event = AuditService.emit(
+        organization_id=org.id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        event_type="change.verification_result_accepted",
+        object_type=AuditEvent.ObjectType.CHANGE_RECORD,
+        object_id=org.id,
+        metadata={key: "sensitive-value", "check_id": "abc123"},
+    )
+    assert key not in event.metadata
+    assert event.metadata.get("check_id") == "abc123"
+
+
+@pytest.mark.django_db
 def test_emit_rejects_non_json_serializable_metadata(org):
     with pytest.raises(ValidationError):
         AuditService.emit(

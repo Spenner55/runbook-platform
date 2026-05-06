@@ -1,5 +1,17 @@
 import { apiRequest } from '../../../shared/api/client'
-import type { ChangeRecord, CreateChangeInput, OperationProfile } from '../types'
+import type {
+  ChangeRecord,
+  ChangeWindow,
+  CloseChangeInput,
+  ClosureResponse,
+  CreateChangeInput,
+  DispatchEligibilityCheck,
+  OperationProfile,
+  PatchWindowInput,
+  SubmitVerificationResultInput,
+  VerificationPlan,
+  VerificationResultResponse,
+} from '../types'
 
 export function listOperationProfiles() {
   return apiRequest<{ results: OperationProfile[] }>('/api/v1/changes/operation-profiles/').then(
@@ -26,5 +38,48 @@ export function submitChange(changeId: string) {
   return apiRequest<ChangeRecord>(`/api/v1/changes/${changeId}/submit/`, {
     method: 'POST',
     body: JSON.stringify({}),
+  })
+}
+
+export function patchWindow(changeId: string, input: PatchWindowInput) {
+  return apiRequest<ChangeWindow>(`/api/v1/changes/${changeId}/window/`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  })
+}
+
+export function runPreflight(changeId: string) {
+  return apiRequest<DispatchEligibilityCheck>(`/api/v1/changes/${changeId}/preflight/`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export function getLatestPreflight(changeId: string) {
+  return apiRequest<DispatchEligibilityCheck>(`/api/v1/changes/${changeId}/preflight/latest/`)
+}
+
+export function dispatchChange(changeId: string) {
+  return apiRequest<ChangeRecord>(`/api/v1/changes/${changeId}/dispatch/`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export function getVerificationPlan(changeId: string) {
+  return apiRequest<VerificationPlan>(`/api/v1/changes/${changeId}/verification-plan/`)
+}
+
+export function submitVerificationResult(changeId: string, input: SubmitVerificationResultInput) {
+  return apiRequest<VerificationResultResponse>(
+    `/api/v1/changes/${changeId}/verification-results/`,
+    { method: 'POST', body: JSON.stringify(input) }
+  )
+}
+
+export function closeChange(changeId: string, input: CloseChangeInput) {
+  return apiRequest<ClosureResponse>(`/api/v1/changes/${changeId}/close/`, {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 }

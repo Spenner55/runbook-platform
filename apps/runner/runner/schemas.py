@@ -112,6 +112,15 @@ class ClaimedStep(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class ClaimedVerificationKey(BaseModel):
+    check_key: str
+    verification_key: str = ""
+    step_key: str = ""
+    check_type: str = ""
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class ClaimedExecution(BaseModel):
     id: UUID
     status: Literal["claimed", "running"]
@@ -128,6 +137,8 @@ class ClaimedExecution(BaseModel):
     dispatch_token: SecretStr | None = None
     requested_inputs_sha256: str | None = None
     operation_profile_key: str | None = None
+    verification_plan_id: UUID | None = None
+    verification_keys: list[ClaimedVerificationKey] = []
 
     model_config = ConfigDict(extra="ignore")
 
@@ -349,6 +360,70 @@ class BindChangeExecutionResponse(BaseModel):
     change_record_id: UUID
     execution_id: UUID
     bound_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Execution timing callbacks (change-bound only)
+# ---------------------------------------------------------------------------
+
+
+class ExecutionTimingCallbackRequest(BaseModel):
+    runner_id: str
+    execution_id: UUID
+    observed_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExecutionStartedResponse(BaseModel):
+    change_record_id: UUID
+    execution_started_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ExecutionFinishedResponse(BaseModel):
+    change_record_id: UUID
+    execution_finished_at: datetime | None = None
+    locks_released: int = 0
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Verification callbacks (change-bound only)
+# ---------------------------------------------------------------------------
+
+
+class VerificationResultRequest(BaseModel):
+    runner_id: str
+    claim_token: UUID
+    execution_id: UUID
+    check_key: str
+    verification_key: str = ""
+    outcome: Literal["passed", "failed"]
+    step_key: str = ""
+    artifact_ids: list[UUID] = []
+    artifact_checksums: dict[str, str] = {}
+    observed_value: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+    sent_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class VerificationResultResponse(BaseModel):
+    result_id: UUID
+    check_id: UUID
+    validation_status: str
+    validation_errors: list[dict[str, Any]] = []
+    check_status: str
+    plan_status: str
+    change_status: str
+    accepted: bool = False
+    artifact_ids: list[UUID] = []
 
     model_config = ConfigDict(extra="ignore")
 

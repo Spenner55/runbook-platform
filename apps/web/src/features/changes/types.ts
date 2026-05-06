@@ -48,6 +48,60 @@ export interface ExecutionBindingSummary {
   requested_inputs_sha256: string
 }
 
+export interface ChangeWindow {
+  id: string
+  status: string
+  starts_at: string
+  ends_at: string
+  timezone: string
+  reason: string
+  approved_at: string | null
+  opened_at: string | null
+  expired_at: string | null
+  overrun_at: string | null
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PreflightCheckItem {
+  name: string
+  ok: boolean
+  detail: string
+}
+
+export interface PreflightConflict {
+  type: string
+  target_type: string
+  target_identifier: string
+  reason: string
+}
+
+export interface DispatchEligibilityCheck {
+  id: string
+  result: string
+  checked_at: string
+  expires_at: string
+  is_stale: boolean
+  approved_status_ok: boolean
+  policy_pass_ok: boolean
+  window_open_ok: boolean
+  freeze_conflicts_ok: boolean
+  target_locks_ok: boolean
+  actor_authorized_ok: boolean
+  checks: PreflightCheckItem[]
+  conflicts: PreflightConflict[]
+  input_snapshot_sha256: string
+  window_snapshot_sha256: string
+}
+
+export interface PatchWindowInput {
+  starts_at: string
+  ends_at: string
+  timezone?: string
+  reason?: string
+}
+
 export interface ChangeRecord {
   id: string
   status: string
@@ -75,8 +129,97 @@ export interface ChangeRecord {
   approval_request: ApprovalRequestSummary | null
   policy_decision: Record<string, unknown> | null
   execution_binding: ExecutionBindingSummary | null
+  window: ChangeWindow | null
   created_at: string
   updated_at: string
+}
+
+export type VerificationCheckType =
+  | 'runner_step'
+  | 'artifact_presence'
+  | 'manual_attestation'
+  | 'api_assertion'
+  | 'external_reference'
+
+export type VerificationCheckStatus = 'pending' | 'passed' | 'failed' | 'not_applicable'
+
+export type VerificationPlanStatus = 'generated' | 'active' | 'satisfied' | 'failed' | 'canceled'
+
+export type ClosureOutcome = 'success' | 'rolled_back' | 'partial_success' | 'failed' | 'canceled'
+
+export interface VerificationResultSummary {
+  id: string
+  outcome: 'passed' | 'failed'
+  source: 'runner' | 'user' | 'system'
+  validated_at: string
+}
+
+export interface VerificationCheck {
+  id: string
+  key: string
+  name: string
+  description: string
+  check_type: VerificationCheckType
+  required: boolean
+  status: VerificationCheckStatus
+  verification_key: string
+  last_result: VerificationResultSummary | null
+}
+
+export interface UnmetCheckSummary {
+  id: string
+  key: string
+  name: string
+  check_type: VerificationCheckType
+}
+
+export interface VerificationPlan {
+  id: string
+  change_record_id: string
+  mode: 'automated' | 'manual' | 'mixed'
+  status: VerificationPlanStatus
+  required_check_count: number
+  satisfied_required_count: number
+  failed_required_count: number
+  checks: VerificationCheck[]
+  unmet_required_checks: UnmetCheckSummary[]
+}
+
+export interface SubmitVerificationResultInput {
+  check_id: string
+  outcome: 'passed' | 'failed'
+  manual_attestation_text?: string
+  external_reference?: string
+  verification_key?: string
+  observed_value?: Record<string, unknown>
+}
+
+export interface VerificationResultResponse {
+  id: string
+  check_id: string
+  outcome: 'passed' | 'failed'
+  validation_status: 'accepted' | 'rejected'
+  change_status: string
+  plan_status: string
+  validated_at: string
+  unmet_required_checks: UnmetCheckSummary[]
+  validation_errors?: unknown[]
+}
+
+export interface CloseChangeInput {
+  outcome: ClosureOutcome
+  summary: string
+  independent_reviewer_id?: string
+}
+
+export interface ClosureResponse {
+  id: string
+  change_record_id: string
+  outcome: ClosureOutcome
+  closed_at: string
+  closed_by: { id: string; username: string }
+  independent_reviewer: { id: string; username: string } | null
+  change_status: string
 }
 
 export interface CreateChangeInput {

@@ -50,12 +50,44 @@ def operation_profile(org, published_workflow):
         risk_level="high",
         requires_approval=True,
         verification_required=True,
+        verification_plan_template={
+            "checks": [
+                {
+                    "key": "runner-health-check",
+                    "name": "Runner health check completed",
+                    "type": "runner_step",
+                    "required": True,
+                    "source_step_key": "health-check",
+                    "verification_key": "postdeploy.health.ok",
+                }
+            ]
+        },
         approval_ttl_seconds=3600,
         dispatch_ttl_seconds=900,
         allowed_target_types=["server"],
     )
     profile.allowed_workflows.add(published_workflow)
     return profile
+
+
+@pytest.fixture
+def org_factory():
+    from apps.organizations.models import Organization
+
+    def _make(slug):
+        return Organization.objects.create(name=slug, slug=slug)
+
+    return _make
+
+
+@pytest.fixture
+def org_user(org, db):
+    from apps.users.models import User
+
+    return User.objects.create_user(
+        email="org-user@example.com",
+        password="s3cr3tpass!",
+    )
 
 
 @pytest.fixture
