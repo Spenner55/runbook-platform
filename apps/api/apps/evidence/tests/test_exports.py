@@ -12,11 +12,11 @@ import zipfile
 from io import BytesIO
 
 import pytest
-from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import system_actor
+from apps.common.exceptions import DomainConflictError, DomainValidationError
 from apps.evidence.models import (
     EvidenceBundle,
     EvidenceExport,
@@ -34,7 +34,6 @@ from apps.evidence.services import (
 )
 from apps.evidence.storage import EvidenceStorage
 from apps.evidence.tests.test_materialization import _complete_closed_change
-from apps.common.exceptions import DomainConflictError, DomainValidationError
 
 
 @pytest.fixture

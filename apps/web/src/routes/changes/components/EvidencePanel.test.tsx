@@ -191,10 +191,7 @@ describe('EvidencePanel', () => {
     fetchMock.mockReset()
   })
 
-  function renderPanel(
-    changeStatus = 'closed',
-    changeId = 'change-1'
-  ) {
+  function renderPanel(changeStatus = 'closed', changeId = 'change-1') {
     renderRoute(<EvidencePanel changeId={changeId} changeStatus={changeStatus} />, {
       path: '/changes/:changeId',
       route: `/changes/${changeId}`,
@@ -205,9 +202,7 @@ describe('EvidencePanel', () => {
   // ── Empty state ────────────────────────────────────────────────────────────
 
   it('renders empty state when no bundle exists (404)', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'Not found.' }, { status: 404 })
-    )
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ detail: 'Not found.' }, { status: 404 }))
     renderPanel()
 
     await waitFor(() => {
@@ -216,15 +211,11 @@ describe('EvidencePanel', () => {
   })
 
   it('renders create bundle button when no bundle exists', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'Not found.' }, { status: 404 })
-    )
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ detail: 'Not found.' }, { status: 404 }))
     renderPanel()
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: /create evidence bundle/i })
-      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /create evidence bundle/i })).toBeInTheDocument()
     })
   })
 
@@ -322,9 +313,9 @@ describe('EvidencePanel', () => {
   it('seal action calls the seal API and refreshes bundle query', async () => {
     const sealedResult = { ...COMPLETE_BUNDLE, status: 'sealed', sealed_at: '2026-05-01T11:00:00Z' }
     fetchMock
-      .mockResolvedValueOnce(createJsonResponse(COMPLETE_BUNDLE))         // initial bundle query
+      .mockResolvedValueOnce(createJsonResponse(COMPLETE_BUNDLE)) // initial bundle query
       .mockResolvedValueOnce(createJsonResponse(sealedResult, { status: 200 })) // seal POST
-      .mockResolvedValueOnce(createJsonResponse(sealedResult))             // re-fetch after seal
+      .mockResolvedValueOnce(createJsonResponse(sealedResult)) // re-fetch after seal
 
     renderPanel()
 
@@ -470,9 +461,7 @@ describe('EvidencePanel', () => {
       expect(calls.some((url) => url.includes('/evidence-bundles/bundle-1/legal-hold/'))).toBe(true)
     })
 
-    const holdCall = fetchMock.mock.calls.find((c) =>
-      String(c[0]).includes('/legal-hold/')
-    )
+    const holdCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/legal-hold/'))
     expect(holdCall).toBeDefined()
     const body = JSON.parse(String((holdCall?.[1] as RequestInit)?.body)) as Record<string, unknown>
     expect(body.reason).toContain('MATTER-9999')
@@ -481,9 +470,7 @@ describe('EvidencePanel', () => {
   // ── No internal API calls ──────────────────────────────────────────────────
 
   it('does not call /api/v1/internal/ endpoints', async () => {
-    fetchMock.mockResolvedValueOnce(
-      createJsonResponse({ detail: 'Not found.' }, { status: 404 })
-    )
+    fetchMock.mockResolvedValueOnce(createJsonResponse({ detail: 'Not found.' }, { status: 404 }))
     renderPanel()
 
     await waitFor(() => {

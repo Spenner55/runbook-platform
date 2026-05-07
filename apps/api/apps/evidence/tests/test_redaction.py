@@ -7,8 +7,6 @@ Hard rules enforced here:
 """
 import json
 
-import pytest
-
 from apps.evidence.services import (
     _apply_json_pointer_redaction,
     _apply_ndjson_field_redaction,
@@ -17,7 +15,6 @@ from apps.evidence.services import (
     compute_redaction_policy_sha256,
     sha256_hexdigest,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_redaction_policy_sha256

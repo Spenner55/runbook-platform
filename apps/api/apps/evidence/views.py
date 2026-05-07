@@ -19,7 +19,12 @@ from apps.common.permissions import (
     assert_organization_role,
 )
 from apps.evidence import services
-from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRedactionPolicy, LegalHold
+from apps.evidence.models import (
+    EvidenceBundle,
+    EvidenceExport,
+    EvidenceRedactionPolicy,
+    LegalHold,
+)
 from apps.evidence.serializers import (
     EvidenceBundleCompletenessSerializer,
     EvidenceBundleCreateSerializer,

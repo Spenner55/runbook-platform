@@ -13,9 +13,12 @@ import pytest
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
-from apps.changes.models import ChangeRecord
 from apps.common.exceptions import DomainValidationError
-from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRetentionPolicy, LegalHold
+from apps.evidence.models import (
+    EvidenceBundle,
+    EvidenceExport,
+    EvidenceRetentionPolicy,
+)
 from apps.evidence.services import (
     cleanup_expired_bundle_storage,
     cleanup_expired_export_storage,
@@ -27,7 +30,6 @@ from apps.evidence.services import (
 )
 from apps.evidence.storage import EvidenceStorage
 from apps.evidence.tests.test_materialization import _complete_closed_change
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -254,7 +256,7 @@ def test_active_change_level_hold_blocks_bundle_cleanup(
     _make_bundle_expired(bundle)
 
     # Create a hold pointing to this bundle (and thus its change record)
-    hold = create_legal_hold(bundle, reason="Change-level hold.")
+    create_legal_hold(bundle, reason="Change-level hold.")
 
     with pytest.raises(DomainValidationError) as exc_info:
         cleanup_expired_bundle_storage(bundle)

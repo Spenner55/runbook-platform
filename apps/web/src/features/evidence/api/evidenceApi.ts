@@ -1,9 +1,6 @@
 import { apiRequest } from '../../../shared/api/client'
 import { buildApiUrl } from '../../../shared/api/env'
-import {
-  getAccessToken,
-  getActiveOrganizationId,
-} from '../../auth/authTokenStore'
+import { getAccessToken, getActiveOrganizationId } from '../../auth/authTokenStore'
 import type {
   CreateEvidenceBundleInput,
   CreateEvidenceExportInput,
@@ -14,9 +11,7 @@ import type {
 } from '../types'
 
 export function getLatestEvidenceBundle(changeId: string) {
-  return apiRequest<EvidenceBundle>(
-    `/api/v1/changes/${changeId}/evidence-bundles/latest/`
-  )
+  return apiRequest<EvidenceBundle>(`/api/v1/changes/${changeId}/evidence-bundles/latest/`)
 }
 
 export function createEvidenceBundle(changeId: string, input: CreateEvidenceBundleInput) {

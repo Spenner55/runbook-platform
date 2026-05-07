@@ -15,7 +15,12 @@ from apps.changes.models import (
     VerificationPlan,
     VerificationResult,
 )
-from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRetentionPolicy, LegalHold
+from apps.evidence.models import (
+    EvidenceBundle,
+    EvidenceExport,
+    EvidenceRetentionPolicy,
+    LegalHold,
+)
 from apps.policies.models import PolicyEvaluation
 
 

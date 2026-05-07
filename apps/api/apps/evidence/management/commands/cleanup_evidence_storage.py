@@ -10,8 +10,8 @@ from django.utils import timezone
 
 from apps.audit.services import system_actor
 from apps.common.exceptions import DomainValidationError
-from apps.evidence.models import EvidenceBundle, EvidenceExport
 from apps.evidence import services
+from apps.evidence.models import EvidenceBundle, EvidenceExport
 
 
 class Command(BaseCommand):

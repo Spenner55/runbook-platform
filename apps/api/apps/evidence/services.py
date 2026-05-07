@@ -16,7 +16,7 @@ from django.core.exceptions import (
     ValidationError,
 )
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.forms.models import model_to_dict
 from django.utils import timezone
 
@@ -27,8 +27,6 @@ from apps.changes.models import (
     ChangeRecord,
     VerificationResult,
 )
-from django.db.models import Q
-
 from apps.common.exceptions import DomainConflictError, DomainValidationError
 from apps.evidence import selectors
 from apps.evidence.models import (
@@ -2382,7 +2380,7 @@ def _apply_redaction_policy(
                     f"source_sha256: {original_sha256}\n"
                     f"redaction_policy_id: {policy.id}\n"
                     f"rule_id: {rule_id}\n"
-                ).encode("utf-8")
+                ).encode()
                 entries[path] = notice
                 transformed_paths.append({"path": path, "rule_id": rule_id, "replaced": True})
                 redaction_counts[action] = redaction_counts.get(action, 0) + 1

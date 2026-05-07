@@ -17,15 +17,10 @@ from apps.evidence.services import (
     create_legal_hold,
     release_legal_hold,
 )
-from apps.evidence.storage import EvidenceStorage
 from apps.evidence.tests.test_materialization import (
-    _close_change,
     _complete_closed_change,
-    _execution,
-    _verification,
 )
 from apps.organizations.models import Organization
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -209,7 +204,7 @@ def test_active_hold_blocks_bundle_cleanup(evidence_change, user, tmp_path, sett
     bundle.refresh_from_db()
     _make_expired_bundle(bundle)
 
-    hold = create_legal_hold(bundle, reason="Legal matter in progress.")
+    create_legal_hold(bundle, reason="Legal matter in progress.")
 
     with pytest.raises(DomainValidationError) as exc_info:
         cleanup_expired_bundle_storage(bundle)

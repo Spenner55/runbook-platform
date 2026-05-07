@@ -67,37 +67,29 @@ function normalizeCompletenessReport(
       present: Boolean(item.present),
       valid: item.valid !== false,
       missing_reason: String(item.missing_reason ?? ''),
-      validation_errors: Array.isArray(item.validation_errors)
-        ? item.validation_errors
-        : [],
+      validation_errors: Array.isArray(item.validation_errors) ? item.validation_errors : [],
     }
     const section = entry.item_type
     groups.set(section, [...(groups.get(section) ?? []), entry])
   }
 
-  const sections: CompletenessSection[] = Array.from(groups.entries()).map(
-    ([section, items]) => {
-      const requiredItems = items.filter((item) => item.required)
-      const required_count = requiredItems.length
-      const present_count = requiredItems.filter((item) => item.present).length
-      const invalid_count = items.filter((item) => !item.valid).length
-      const status: CompletenessSection['status'] =
-        invalid_count > 0
-          ? 'invalid'
-          : present_count < required_count
-            ? 'incomplete'
-            : 'complete'
+  const sections: CompletenessSection[] = Array.from(groups.entries()).map(([section, items]) => {
+    const requiredItems = items.filter((item) => item.required)
+    const required_count = requiredItems.length
+    const present_count = requiredItems.filter((item) => item.present).length
+    const invalid_count = items.filter((item) => !item.valid).length
+    const status: CompletenessSection['status'] =
+      invalid_count > 0 ? 'invalid' : present_count < required_count ? 'incomplete' : 'complete'
 
-      return {
-        section,
-        status,
-        items,
-        required_count,
-        present_count,
-        invalid_count,
-      }
+    return {
+      section,
+      status,
+      items,
+      required_count,
+      present_count,
+      invalid_count,
     }
-  )
+  })
 
   const summary = (report as { summary?: Record<string, unknown> }).summary ?? {}
   const required_total = sections.reduce((count, section) => count + section.required_count, 0)
@@ -129,9 +121,7 @@ function SectionRow({ section }: { section: CompletenessSection }) {
   return (
     <li className="step-list__item">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <span className={getCompletenessStatusPillClass(section.status)}>
-          {section.status}
-        </span>
+        <span className={getCompletenessStatusPillClass(section.status)}>{section.status}</span>
         <strong>{section.section.replace(/_/g, ' ')}</strong>
         <span className="muted" style={{ fontSize: '0.85em' }}>
           {section.present_count}/{section.required_count} required
@@ -179,11 +169,11 @@ function CompletenessChecklist({ report }: { report: CompletenessReport }) {
   return (
     <div className="stack-md">
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85em' }}>
-        <span>{report.present_total ?? 0}/{report.required_total ?? 0} required present</span>
+        <span>
+          {report.present_total ?? 0}/{report.required_total ?? 0} required present
+        </span>
         {(report.invalid_total ?? 0) > 0 && (
-          <span style={{ color: 'var(--color-danger, #d00)' }}>
-            {report.invalid_total} invalid
-          </span>
+          <span style={{ color: 'var(--color-danger, #d00)' }}>{report.invalid_total} invalid</span>
         )}
         {(report.missing_total ?? 0) > 0 && (
           <span className="muted">{report.missing_total} missing</span>
@@ -209,9 +199,7 @@ function ManifestViewer({ bundle }: { bundle: EvidenceBundle }) {
   const rawManifest = (bundle as unknown as Record<string, unknown>).manifest as
     | Record<string, unknown>
     | undefined
-  const entries = Array.isArray(
-    (rawManifest as Record<string, unknown> | undefined)?.entries
-  )
+  const entries = Array.isArray((rawManifest as Record<string, unknown> | undefined)?.entries)
     ? ((rawManifest as Record<string, unknown>).entries as unknown[])
     : []
 
@@ -262,9 +250,7 @@ function ManifestViewer({ bundle }: { bundle: EvidenceBundle }) {
 
           {entries.length > 0 && (
             <>
-              <h6 style={{ margin: '0.75rem 0 0.25rem' }}>
-                Entries ({entries.length})
-              </h6>
+              <h6 style={{ margin: '0.75rem 0 0.25rem' }}>Entries ({entries.length})</h6>
               <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '0.82em' }}>
                 {(entries as Array<Record<string, unknown>>).map((e, i) => (
                   <li
@@ -277,7 +263,14 @@ function ManifestViewer({ bundle }: { bundle: EvidenceBundle }) {
                       alignItems: 'baseline',
                     }}
                   >
-                    <code style={{ flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <code
+                      style={{
+                        flex: '1 1 auto',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {String(e.path ?? '')}
                     </code>
                     <span className="muted">{formatBytes(Number(e.size_bytes ?? 0))}</span>
@@ -301,8 +294,7 @@ function SealAction({ bundle, changeId }: { bundle: EvidenceBundle; changeId: st
   const sealMutation = useSealEvidenceBundle(changeId)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const canSeal =
-    bundle.status === 'compiling' && bundle.completeness_status === 'complete'
+  const canSeal = bundle.status === 'compiling' && bundle.completeness_status === 'complete'
 
   if (bundle.status !== 'compiling') return null
 
@@ -545,11 +537,8 @@ function LegalHoldControl({ bundle, changeId }: LegalHoldControlProps) {
 
       {bundle.retention_expires_at && !bundle.storage_deleted_at && (
         <p className="muted" style={{ fontSize: '0.85em' }}>
-          Retention expires:{' '}
-          <strong>{formatDateTime(bundle.retention_expires_at)}</strong>
-          {bundle.legal_hold_active && (
-            <span> (hold overrides cleanup until released)</span>
-          )}
+          Retention expires: <strong>{formatDateTime(bundle.retention_expires_at)}</strong>
+          {bundle.legal_hold_active && <span> (hold overrides cleanup until released)</span>}
         </p>
       )}
 
@@ -625,8 +614,7 @@ function BundleCard({ bundle, changeId }: { bundle: EvidenceBundle; changeId: st
       ? normalizeCompletenessReport(bundle.completeness_report)
       : null
 
-  const canExport =
-    bundle.status === 'sealed' && !bundle.storage_deleted_at
+  const canExport = bundle.status === 'sealed' && !bundle.storage_deleted_at
 
   return (
     <div className="stack-md">
@@ -637,9 +625,7 @@ function BundleCard({ bundle, changeId }: { bundle: EvidenceBundle; changeId: st
           {bundle.completeness_status}
         </span>
         <span className="muted">v{bundle.version}</span>
-        {!bundle.is_current && (
-          <span className="pill pill--warn">not current</span>
-        )}
+        {!bundle.is_current && <span className="pill pill--warn">not current</span>}
       </div>
 
       {/* Core metadata */}
@@ -758,9 +744,7 @@ export function EvidencePanel({ changeId, changeStatus }: EvidencePanelProps) {
       </div>
 
       {bundleQuery.isLoading && <p className="muted">Loading evidence bundle…</p>}
-      {bundleQuery.error && (
-        <p className="banner banner--error">Could not load evidence bundle.</p>
-      )}
+      {bundleQuery.error && <p className="banner banner--error">Could not load evidence bundle.</p>}
       {createError && <p className="banner banner--error">{createError}</p>}
 
       {!bundleQuery.isLoading && !bundleQuery.error && !bundleQuery.data && (
@@ -770,9 +754,7 @@ export function EvidencePanel({ changeId, changeStatus }: EvidencePanelProps) {
         </p>
       )}
 
-      {bundleQuery.data && (
-        <BundleCard bundle={bundleQuery.data} changeId={changeId} />
-      )}
+      {bundleQuery.data && <BundleCard bundle={bundleQuery.data} changeId={changeId} />}
     </section>
   )
 }
