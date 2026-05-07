@@ -118,9 +118,9 @@ export function ChangeEmergencyCreatePage() {
           </Link>
         </div>
         <div className="banner banner--warning" role="alert">
-          <strong>Emergency mode:</strong> This change will be flagged as emergency and will
-          require a mandatory retro-review after completion. Ensure the emergency reason is
-          accurate and specific.
+          <strong>Emergency mode:</strong> This change will be flagged as emergency and will require
+          a mandatory retro-review after completion. Ensure the emergency reason is accurate and
+          specific.
         </div>
       </div>
 
@@ -358,7 +358,10 @@ export function ChangeEmergencyCreatePage() {
             className="btn btn--primary"
             type="submit"
             disabled={createMutation.isPending}
-            style={{ background: 'var(--color-danger, #d00)', borderColor: 'var(--color-danger, #d00)' }}
+            style={{
+              background: 'var(--color-danger, #d00)',
+              borderColor: 'var(--color-danger, #d00)',
+            }}
           >
             {createMutation.isPending ? 'Creating…' : 'Create Emergency Change'}
           </button>

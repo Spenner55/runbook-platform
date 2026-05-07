@@ -76,7 +76,14 @@ export function BreakglassStatusPanel({ session }: BreakglassStatusPanelProps) {
         )}
       </div>
 
-      <dl style={{ display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: '0.25rem', marginTop: '0.75rem' }}>
+      <dl
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '180px 1fr',
+          rowGap: '0.25rem',
+          marginTop: '0.75rem',
+        }}
+      >
         <dt className="muted">Started</dt>
         <dd data-testid="breakglass-started-at">{formatDateTime(session.started_at)}</dd>
         <dt className="muted">Expires</dt>
@@ -97,7 +104,10 @@ export function BreakglassStatusPanel({ session }: BreakglassStatusPanelProps) {
         <dd data-testid="breakglass-review-due-at">{formatDateTime(session.review_due_at)}</dd>
         <dt className="muted">Review status</dt>
         <dd>
-          <span className={getReviewStatusClass(session.review_status)} data-testid="breakglass-review-status">
+          <span
+            className={getReviewStatusClass(session.review_status)}
+            data-testid="breakglass-review-status"
+          >
             {session.review_status}
           </span>
         </dd>

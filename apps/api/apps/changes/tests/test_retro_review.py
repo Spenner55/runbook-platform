@@ -253,12 +253,21 @@ def test_ensure_retro_review_for_exception_idempotent(
     approved_policy_override_exception,
 ):
     """Calling ensure_retro_review_for_exception twice returns the same review."""
-    r1 = change_services.ensure_retro_review_for_exception(approved_policy_override_exception)
-    r2 = change_services.ensure_retro_review_for_exception(approved_policy_override_exception)
+    r1 = change_services.ensure_retro_review_for_exception(
+        approved_policy_override_exception
+    )
+    r2 = change_services.ensure_retro_review_for_exception(
+        approved_policy_override_exception
+    )
     assert r1 is not None
     assert r2 is not None
     assert r1.pk == r2.pk
-    assert RetroReview.objects.filter(change_exception=approved_policy_override_exception).count() == 1
+    assert (
+        RetroReview.objects.filter(
+            change_exception=approved_policy_override_exception
+        ).count()
+        == 1
+    )
 
 
 @pytest.mark.django_db
@@ -266,9 +275,13 @@ def test_ensure_retro_review_for_nonqualifying_exception(
     approved_freeze_override_exception,
 ):
     """freeze_override exception returns None — not a qualifying type."""
-    result = change_services.ensure_retro_review_for_exception(approved_freeze_override_exception)
+    result = change_services.ensure_retro_review_for_exception(
+        approved_freeze_override_exception
+    )
     assert result is None
-    assert not RetroReview.objects.filter(change_exception=approved_freeze_override_exception).exists()
+    assert not RetroReview.objects.filter(
+        change_exception=approved_freeze_override_exception
+    ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +368,9 @@ def test_submit_retro_review_self_review_breakglass_rejected(
     draft_change.status = ChangeRecord.Status.RUNNING
     draft_change.save(update_fields=["status", "updated_at"])
 
-    target_ids = list(str(tid) for tid in draft_change.targets.values_list("id", flat=True))
+    target_ids = list(
+        str(tid) for tid in draft_change.targets.values_list("id", flat=True)
+    )
     session = change_services.activate_breakglass(
         change=draft_change,
         actor=_user_actor(operator_user),

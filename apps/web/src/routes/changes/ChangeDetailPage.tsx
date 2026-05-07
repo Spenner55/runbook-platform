@@ -1069,20 +1069,31 @@ function ExceptionsSection({ changeId }: { changeId: string }) {
         <ul className="step-list">
           {exceptions.map((exc) => (
             <li key={exc.id} className="step-list__item">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span className={
-                  exc.status === 'approved' ? 'pill pill--success' :
-                  exc.status === 'pending_approval' ? 'pill pill--warn' :
-                  exc.status === 'expired' || exc.status === 'rejected' ? 'pill pill--danger' :
-                  'pill'
-                }>{exc.status.replace(/_/g, ' ')}</span>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
+              >
+                <span
+                  className={
+                    exc.status === 'approved'
+                      ? 'pill pill--success'
+                      : exc.status === 'pending_approval'
+                        ? 'pill pill--warn'
+                        : exc.status === 'expired' || exc.status === 'rejected'
+                          ? 'pill pill--danger'
+                          : 'pill'
+                  }
+                >
+                  {exc.status.replace(/_/g, ' ')}
+                </span>
                 <span className="pill">{exc.exception_type.replace(/_/g, ' ')}</span>
                 <span className="muted" style={{ fontSize: '0.85em' }}>
                   Expires: {formatDateTime(exc.expires_at)}
                 </span>
               </div>
               {exc.reason && (
-                <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.85em' }}>{exc.reason}</p>
+                <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.85em' }}>
+                  {exc.reason}
+                </p>
               )}
             </li>
           ))}
@@ -1109,11 +1120,7 @@ function BreakglassSection({ change }: { change: ChangeRecord }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <h4 style={{ margin: 0 }}>Breakglass</h4>
         {!session && !showModal && (
-          <button
-            className="btn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => setShowModal(true)}
-          >
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowModal(true)}>
             Activate Breakglass
           </button>
         )}
@@ -1147,21 +1154,18 @@ function ChangeViolationSection({ change }: { change: ChangeRecord }) {
   const { data: reviews } = useRetroReviews(change.id)
   const { data: exceptions } = useExceptions(change.id)
 
-  const overdueReviews = reviews?.filter(
-    (r) => r.status === 'pending' && new Date(r.due_at) < new Date()
-  ) ?? []
-  const missingArtifactExceptions = exceptions?.filter(
-    (e) => e.exception_type === 'missing_artifact' && e.status === 'approved'
-  ) ?? []
-  const controlFailureReviews = reviews?.filter(
-    (r) => r.disposition === 'control_failure'
-  ) ?? []
+  const overdueReviews =
+    reviews?.filter((r) => r.status === 'pending' && new Date(r.due_at) < new Date()) ?? []
+  const missingArtifactExceptions =
+    exceptions?.filter((e) => e.exception_type === 'missing_artifact' && e.status === 'approved') ??
+    []
+  const controlFailureReviews = reviews?.filter((r) => r.disposition === 'control_failure') ?? []
 
   const hasViolations =
     overdueReviews.length > 0 ||
     missingArtifactExceptions.length > 0 ||
     controlFailureReviews.length > 0 ||
-    (change.active_breakglass_session?.review_status === 'overdue')
+    change.active_breakglass_session?.review_status === 'overdue'
 
   if (!hasViolations) return null
 

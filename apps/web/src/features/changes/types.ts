@@ -150,12 +150,7 @@ export type ExceptionType =
   | 'policy_override'
   | 'missing_artifact'
 
-export type ExceptionStatus =
-  | 'pending_approval'
-  | 'approved'
-  | 'rejected'
-  | 'resolved'
-  | 'expired'
+export type ExceptionStatus = 'pending_approval' | 'approved' | 'rejected' | 'resolved' | 'expired'
 
 export interface ChangeException {
   id: string

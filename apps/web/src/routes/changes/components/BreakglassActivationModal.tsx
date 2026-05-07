@@ -201,7 +201,10 @@ export function BreakglassActivationModal({
             className="btn btn--primary"
             type="submit"
             disabled={activateMutation.isPending || !confirmed}
-            style={{ background: 'var(--color-danger, #d00)', borderColor: 'var(--color-danger, #d00)' }}
+            style={{
+              background: 'var(--color-danger, #d00)',
+              borderColor: 'var(--color-danger, #d00)',
+            }}
           >
             {activateMutation.isPending ? 'Activating…' : 'Activate Breakglass'}
           </button>

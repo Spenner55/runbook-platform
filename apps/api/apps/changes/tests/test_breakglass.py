@@ -60,9 +60,7 @@ def _user_actor(user):
 
 
 def _make_scope(change, *, actions=None, gates=None, target_ids=None):
-    actual_ids = list(
-        str(tid) for tid in change.targets.values_list("id", flat=True)
-    )
+    actual_ids = list(str(tid) for tid in change.targets.values_list("id", flat=True))
     return {
         "allowed_actions": actions or ["dispatch", "continue_running"],
         "gate_types": gates or ["window_overrun"],
@@ -170,7 +168,9 @@ def test_activate_breakglass_creates_retro_review(running_change, operator_user,
 
 
 @pytest.mark.django_db
-def test_activate_breakglass_sets_change_retro_review_required(running_change, operator_user, db):
+def test_activate_breakglass_sets_change_retro_review_required(
+    running_change, operator_user, db
+):
     scope = _make_scope(running_change)
     change_services.activate_breakglass(
         change=running_change,
@@ -327,6 +327,7 @@ def test_activate_breakglass_forbidden_scope_key(running_change, operator_user, 
 @pytest.mark.django_db
 def test_activate_breakglass_unknown_target_ids(running_change, operator_user, db):
     import uuid
+
     scope = _make_scope(running_change, target_ids=[str(uuid.uuid4())])
     with pytest.raises(DomainValidationError) as exc_info:
         change_services.activate_breakglass(
@@ -453,7 +454,9 @@ def test_assert_breakglass_allows_no_session(running_change, db):
 
 
 @pytest.mark.django_db
-def test_assert_breakglass_allows_gate_type_not_in_scope(running_change, operator_user, db):
+def test_assert_breakglass_allows_gate_type_not_in_scope(
+    running_change, operator_user, db
+):
     scope = _make_scope(running_change, gates=["window_overrun"])
     target_ids = scope["target_ids"]
     change_services.activate_breakglass(
@@ -475,7 +478,9 @@ def test_assert_breakglass_allows_gate_type_not_in_scope(running_change, operato
 
 
 @pytest.mark.django_db
-def test_assert_breakglass_allows_action_not_in_scope(running_change, operator_user, db):
+def test_assert_breakglass_allows_action_not_in_scope(
+    running_change, operator_user, db
+):
     scope = _make_scope(running_change, actions=["dispatch"])
     target_ids = scope["target_ids"]
     change_services.activate_breakglass(
@@ -497,7 +502,9 @@ def test_assert_breakglass_allows_action_not_in_scope(running_change, operator_u
 
 
 @pytest.mark.django_db
-def test_assert_breakglass_allows_expired_session_fails(running_change, operator_user, db):
+def test_assert_breakglass_allows_expired_session_fails(
+    running_change, operator_user, db
+):
     scope = _make_scope(running_change)
     change_services.activate_breakglass(
         change=running_change,
@@ -721,9 +728,7 @@ def test_mark_breakglass_review_overdue(running_change, operator_user, db):
 
 
 @pytest.mark.django_db
-def test_api_activate_breakglass(
-    api_client_operator, running_change, db
-):
+def test_api_activate_breakglass(api_client_operator, running_change, db):
     scope = _make_scope(running_change)
     response = api_client_operator.post(
         f"/api/v1/changes/{running_change.id}/breakglass/activate/",
@@ -756,7 +761,9 @@ def test_api_activate_breakglass_invalid_status(api_client_operator, draft_chang
 
 
 @pytest.mark.django_db
-def test_api_activate_breakglass_missing_scope_keys(api_client_operator, running_change, db):
+def test_api_activate_breakglass_missing_scope_keys(
+    api_client_operator, running_change, db
+):
     response = api_client_operator.post(
         f"/api/v1/changes/{running_change.id}/breakglass/activate/",
         {

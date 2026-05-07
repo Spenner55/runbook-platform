@@ -122,7 +122,7 @@ class Executor:
                 except httpx.HTTPError as exc:
                     logger.error(
                         "Failed to mark execution %s failed: %s", execution_id, exc
-                )
+                    )
                 return
             self._notify_execution_started(execution)
             self._observe_breakglass(execution, claim_token)

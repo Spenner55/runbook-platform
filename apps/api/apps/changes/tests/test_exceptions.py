@@ -330,9 +330,7 @@ def test_central_approval_decision_rejects_exception_self_approval(
 
 
 @pytest.mark.django_db
-def test_policy_override_central_approval_requires_admin(
-    change, approver_user
-):
+def test_policy_override_central_approval_requires_admin(change, approver_user):
     from apps.approvals.models import ApprovalRequest
 
     now = _now()
@@ -374,7 +372,9 @@ def test_policy_override_central_approval_requires_admin(
 
 @pytest.mark.django_db
 class TestRequestException:
-    def test_creates_pending_exception_with_approval_request(self, change, operator_user):
+    def test_creates_pending_exception_with_approval_request(
+        self, change, operator_user
+    ):
         exc = change_services.request_exception(
             change=change,
             actor=_user_actor(operator_user),
@@ -534,8 +534,7 @@ class TestRequestException:
                 scope_json={
                     "freeze_rule_id": str(freeze_rule_block.id),
                     "target_ids": [
-                        str(tid)
-                        for tid in change.targets.values_list("id", flat=True)
+                        str(tid) for tid in change.targets.values_list("id", flat=True)
                     ],
                 },
                 expires_at=_future(),
@@ -566,7 +565,9 @@ class TestRequestException:
             starts_at=_future(7200),
             ends_at=_future(14400),
         )
-        with pytest.raises(DomainValidationError, match="before the change window opens"):
+        with pytest.raises(
+            DomainValidationError, match="before the change window opens"
+        ):
             change_services.request_exception(
                 change=change,
                 actor=_user_actor(operator_user),
@@ -583,11 +584,21 @@ class TestRequestException:
     def test_all_exception_types_can_be_created(self, change, operator_user):
         """All valid types with valid scope produce a pending exception."""
         valid_scopes = {
-            ChangeException.ExceptionType.FREEZE_OVERRIDE: _make_valid_freeze_scope(change),
-            ChangeException.ExceptionType.WINDOW_OVERRUN: _make_valid_window_scope(change),
-            ChangeException.ExceptionType.LATE_VERIFICATION: _make_valid_verification_scope(change),
-            ChangeException.ExceptionType.POLICY_OVERRIDE: _make_valid_policy_scope(change),
-            ChangeException.ExceptionType.MISSING_ARTIFACT: _make_valid_missing_artifact_scope(change),
+            ChangeException.ExceptionType.FREEZE_OVERRIDE: _make_valid_freeze_scope(
+                change
+            ),
+            ChangeException.ExceptionType.WINDOW_OVERRUN: _make_valid_window_scope(
+                change
+            ),
+            ChangeException.ExceptionType.LATE_VERIFICATION: _make_valid_verification_scope(
+                change
+            ),
+            ChangeException.ExceptionType.POLICY_OVERRIDE: _make_valid_policy_scope(
+                change
+            ),
+            ChangeException.ExceptionType.MISSING_ARTIFACT: _make_valid_missing_artifact_scope(
+                change
+            ),
         }
         for exc_type, scope in valid_scopes.items():
             exc = change_services.request_exception(
@@ -632,7 +643,9 @@ class TestApproveException:
         assert exc.approved_by == approver_user
         assert exc.approved_at is not None
 
-    def test_approve_resolves_approval_request(self, change, operator_user, approver_user):
+    def test_approve_resolves_approval_request(
+        self, change, operator_user, approver_user
+    ):
         from apps.approvals.models import ApprovalRequest
 
         exc = self._pending_exception(change, operator_user)
@@ -774,7 +787,9 @@ class TestRejectException:
         assert exc.status == ChangeException.Status.REJECTED
         assert exc.rejected_at is not None
 
-    def test_reject_resolves_approval_request(self, change, operator_user, approver_user):
+    def test_reject_resolves_approval_request(
+        self, change, operator_user, approver_user
+    ):
         from apps.approvals.models import ApprovalRequest
 
         exc = self._pending_exception(change, operator_user)
@@ -918,7 +933,9 @@ class TestFindApplicableException:
         )
         assert found is None
 
-    def test_returns_none_for_expired_exception(self, change, operator_user, approver_user):
+    def test_returns_none_for_expired_exception(
+        self, change, operator_user, approver_user
+    ):
         expires_at = _future(3600)
         exc = change_services.request_exception(
             change=change,
@@ -943,7 +960,9 @@ class TestFindApplicableException:
         )
         assert found is None
 
-    def test_expired_is_enforced_before_find(self, change, operator_user, approver_user):
+    def test_expired_is_enforced_before_find(
+        self, change, operator_user, approver_user
+    ):
         """find_applicable_exception expires stale records before querying."""
         expires_at = _future(3600)
         exc = change_services.request_exception(
@@ -1066,7 +1085,9 @@ class TestChangeExceptionAPI:
 
         other_org = org_factory("other-org-exc")
         u2 = User.objects.create_user(email="other@test.com", password="pass")
-        Membership.objects.create(user=u2, organization=other_org, role=MembershipRole.OPERATOR)
+        Membership.objects.create(
+            user=u2, organization=other_org, role=MembershipRole.OPERATOR
+        )
         client = APIClient()
         tokens = RefreshToken.for_user(u2)
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens.access_token}")

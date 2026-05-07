@@ -4,23 +4,89 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('audit', '0008_update_object_type_constraint_phase112'),
+        ("audit", "0008_update_object_type_constraint_phase112"),
     ]
 
     operations = [
         migrations.RemoveConstraint(
-            model_name='auditevent',
-            name='audit_object_type_valid_chk',
+            model_name="auditevent",
+            name="audit_object_type_valid_chk",
         ),
         migrations.AlterField(
-            model_name='auditevent',
-            name='object_type',
-            field=models.CharField(choices=[('organization', 'Organization'), ('runbook', 'Runbook'), ('workflow', 'Workflow'), ('execution', 'Execution'), ('execution_step', 'Execution Step'), ('approval_request', 'Approval Request'), ('approval_decision', 'Approval Decision'), ('policy', 'Policy'), ('policy_rule', 'Policy Rule'), ('policy_evaluation', 'Policy Evaluation'), ('artifact', 'Artifact'), ('integration_connection', 'Integration Connection'), ('operation_profile', 'Operation Profile'), ('change_record', 'Change Record'), ('change_target', 'Change Target'), ('change_execution_binding', 'Change Execution Binding'), ('change_window', 'Change Window'), ('freeze_rule', 'Freeze Rule'), ('target_lock', 'Target Lock'), ('dispatch_eligibility_check', 'Dispatch Eligibility Check'), ('verification_plan', 'Verification Plan'), ('verification_check', 'Verification Check'), ('verification_result', 'Verification Result'), ('change_closure', 'Change Closure'), ('change_exception', 'Change Exception'), ('breakglass_session', 'Breakglass Session'), ('retro_review', 'Retro Review')], max_length=64),
+            model_name="auditevent",
+            name="object_type",
+            field=models.CharField(
+                choices=[
+                    ("organization", "Organization"),
+                    ("runbook", "Runbook"),
+                    ("workflow", "Workflow"),
+                    ("execution", "Execution"),
+                    ("execution_step", "Execution Step"),
+                    ("approval_request", "Approval Request"),
+                    ("approval_decision", "Approval Decision"),
+                    ("policy", "Policy"),
+                    ("policy_rule", "Policy Rule"),
+                    ("policy_evaluation", "Policy Evaluation"),
+                    ("artifact", "Artifact"),
+                    ("integration_connection", "Integration Connection"),
+                    ("operation_profile", "Operation Profile"),
+                    ("change_record", "Change Record"),
+                    ("change_target", "Change Target"),
+                    ("change_execution_binding", "Change Execution Binding"),
+                    ("change_window", "Change Window"),
+                    ("freeze_rule", "Freeze Rule"),
+                    ("target_lock", "Target Lock"),
+                    ("dispatch_eligibility_check", "Dispatch Eligibility Check"),
+                    ("verification_plan", "Verification Plan"),
+                    ("verification_check", "Verification Check"),
+                    ("verification_result", "Verification Result"),
+                    ("change_closure", "Change Closure"),
+                    ("change_exception", "Change Exception"),
+                    ("breakglass_session", "Breakglass Session"),
+                    ("retro_review", "Retro Review"),
+                ],
+                max_length=64,
+            ),
         ),
         migrations.AddConstraint(
-            model_name='auditevent',
-            constraint=models.CheckConstraint(condition=models.Q(('object_type__in', ['organization', 'runbook', 'workflow', 'execution', 'execution_step', 'approval_request', 'approval_decision', 'policy', 'policy_rule', 'policy_evaluation', 'artifact', 'integration_connection', 'operation_profile', 'change_record', 'change_target', 'change_execution_binding', 'change_window', 'freeze_rule', 'target_lock', 'dispatch_eligibility_check', 'verification_plan', 'verification_check', 'verification_result', 'change_closure', 'change_exception', 'breakglass_session', 'retro_review'])), name='audit_object_type_valid_chk'),
+            model_name="auditevent",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "object_type__in",
+                        [
+                            "organization",
+                            "runbook",
+                            "workflow",
+                            "execution",
+                            "execution_step",
+                            "approval_request",
+                            "approval_decision",
+                            "policy",
+                            "policy_rule",
+                            "policy_evaluation",
+                            "artifact",
+                            "integration_connection",
+                            "operation_profile",
+                            "change_record",
+                            "change_target",
+                            "change_execution_binding",
+                            "change_window",
+                            "freeze_rule",
+                            "target_lock",
+                            "dispatch_eligibility_check",
+                            "verification_plan",
+                            "verification_check",
+                            "verification_result",
+                            "change_closure",
+                            "change_exception",
+                            "breakglass_session",
+                            "retro_review",
+                        ],
+                    )
+                ),
+                name="audit_object_type_valid_chk",
+            ),
         ),
     ]

@@ -195,7 +195,9 @@ class CreateChangeRecordSerializer(serializers.Serializer):
     )
     targets = ChangeTargetSerializer(many=True, required=False, default=list)
     is_emergency = serializers.BooleanField(default=False)
-    emergency_reason = serializers.CharField(max_length=4000, allow_blank=True, default="")
+    emergency_reason = serializers.CharField(
+        max_length=4000, allow_blank=True, default=""
+    )
 
 
 class SubmitChangeRecordSerializer(serializers.Serializer):
@@ -523,11 +525,14 @@ class ChangeExceptionCreateSerializer(serializers.Serializer):
 
 class ChangeExceptionApproveRejectSerializer(serializers.Serializer):
     """Body is empty for approve/reject; actor comes from the JWT."""
+
     pass
 
 
 class ChangeExceptionResolveSerializer(serializers.Serializer):
-    resolution_note = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
+    resolution_note = serializers.CharField(
+        max_length=2000, required=False, allow_blank=True, default=""
+    )
 
 
 class ChangeExceptionDetailSerializer(serializers.ModelSerializer):
@@ -614,6 +619,7 @@ class BreakglassSessionDetailSerializer(serializers.ModelSerializer):
 
 class BreakglassHeartbeatInputSerializer(serializers.Serializer):
     """Internal: runner -> Django breakglass heartbeat."""
+
     runner_id = serializers.CharField(max_length=255)
     claim_token = serializers.UUIDField()
     breakglass_session_id = serializers.UUIDField()

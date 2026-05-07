@@ -2,7 +2,11 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { ViolationBanner } from './ViolationBanner'
-import type { BreakglassSession, ChangeException, RetroReview } from '../../../features/changes/types'
+import type {
+  BreakglassSession,
+  ChangeException,
+  RetroReview,
+} from '../../../features/changes/types'
 
 function makeReview(overrides: Partial<RetroReview> = {}): RetroReview {
   return {
@@ -76,11 +80,7 @@ describe('ViolationBanner', () => {
   })
 
   it('renders overdue breakglass review banner', () => {
-    render(
-      <ViolationBanner
-        activeBreakglass={makeBreakglass({ review_status: 'overdue' })}
-      />
-    )
+    render(<ViolationBanner activeBreakglass={makeBreakglass({ review_status: 'overdue' })} />)
     expect(screen.getByTestId('violation-overdue-breakglass-review')).toBeInTheDocument()
     expect(screen.getByText(/overdue breakglass review/i)).toBeInTheDocument()
   })

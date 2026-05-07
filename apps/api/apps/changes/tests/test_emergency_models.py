@@ -3,6 +3,7 @@ Tests for Phase 11.4 Batch 1: emergency fields and new model foundation.
 Covers ChangeRecord emergency fields, ChangeException, BreakglassSession,
 RetroReview constraints, indexes, and tenant invariants.
 """
+
 from datetime import timedelta
 
 import pytest
@@ -22,6 +23,7 @@ from apps.organizations.models import Organization
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _now():
     return timezone.now()
 
@@ -37,6 +39,7 @@ def _past(seconds=60):
 # ---------------------------------------------------------------------------
 # Additional fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def change_record(draft_change):
@@ -89,6 +92,7 @@ def second_change_record(org, operation_profile, published_workflow):
 # ChangeRecord emergency fields
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestChangeRecordEmergencyFields:
     def test_defaults_are_safe(self, change_record):
@@ -124,7 +128,9 @@ class TestChangeRecordEmergencyFields:
         with pytest.raises(ValidationError, match="immutable after submit"):
             cr.save()
 
-    def test_retro_review_fields_are_mutable_after_submit(self, submitted_change_record):
+    def test_retro_review_fields_are_mutable_after_submit(
+        self, submitted_change_record
+    ):
         """retro_review_* fields can be updated after submit (service-managed)."""
         cr = submitted_change_record
         cr.retro_review_required = True
@@ -140,6 +146,7 @@ class TestChangeRecordEmergencyFields:
 # ---------------------------------------------------------------------------
 # OperationProfile emergency config fields
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestOperationProfileEmergencyConfig:
@@ -163,6 +170,7 @@ class TestOperationProfileEmergencyConfig:
 # ---------------------------------------------------------------------------
 # ChangeException
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestChangeExceptionModel:
@@ -217,7 +225,7 @@ class TestChangeExceptionModel:
                     scope_json={},
                     requested_by=user,
                     requested_at=_future(100),  # in the future
-                    expires_at=_past(10),       # before requested_at
+                    expires_at=_past(10),  # before requested_at
                 )
                 exc.save()
 
@@ -256,6 +264,7 @@ class TestChangeExceptionModel:
 # BreakglassSession
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestBreakglassSessionModel:
     def _make_session(self, change_record, user, **kwargs):
@@ -292,7 +301,8 @@ class TestBreakglassSessionModel:
         with pytest.raises((ValidationError, IntegrityError)):
             with transaction.atomic():
                 self._make_session(
-                    change_record, user,
+                    change_record,
+                    user,
                     started_at=_future(200),
                     expires_at=_future(100),  # before started_at
                     review_due_at=_future(300),
@@ -304,7 +314,8 @@ class TestBreakglassSessionModel:
         with pytest.raises((ValidationError, IntegrityError)):
             with transaction.atomic():
                 self._make_session(
-                    change_record, user,
+                    change_record,
+                    user,
                     started_at=_future(100),
                     expires_at=_future(200),
                     review_due_at=_past(10),  # before started_at
@@ -347,7 +358,8 @@ class TestBreakglassSessionModel:
         with pytest.raises((ValidationError, IntegrityError)):
             with transaction.atomic():
                 self._make_session(
-                    change_record, user,
+                    change_record,
+                    user,
                     status=BreakglassSession.Status.ENDED,
                     review_status="not_a_status",
                 )
@@ -396,6 +408,7 @@ class TestBreakglassSessionModel:
 # ---------------------------------------------------------------------------
 # RetroReview
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestRetroReviewModel:

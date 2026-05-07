@@ -20,7 +20,9 @@ function ReviewRow({ review }: { review: RetroReview }) {
     <li
       className="step-list__item"
       data-testid={`inbox-review-${review.id}`}
-      style={overdue ? { borderLeft: '3px solid var(--color-danger, #d00)', paddingLeft: '0.5rem' } : {}}
+      style={
+        overdue ? { borderLeft: '3px solid var(--color-danger, #d00)', paddingLeft: '0.5rem' } : {}
+      }
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
         <span
@@ -60,15 +62,11 @@ export function RetroReviewInboxPage() {
       {isLoading && <p>Loading…</p>}
       {error && <p className="banner banner--error">{getApiErrorMessage(error)}</p>}
 
-      {reviews && reviews.length === 0 && (
-        <p className="muted">No pending retro-reviews.</p>
-      )}
+      {reviews && reviews.length === 0 && <p className="muted">No pending retro-reviews.</p>}
 
       {overdueReviews.length > 0 && (
         <section>
-          <h3 style={{ color: 'var(--color-danger, #d00)' }}>
-            Overdue ({overdueReviews.length})
-          </h3>
+          <h3 style={{ color: 'var(--color-danger, #d00)' }}>Overdue ({overdueReviews.length})</h3>
           <ul className="step-list" data-testid="overdue-reviews-list">
             {overdueReviews.map((review) => (
               <ReviewRow key={review.id} review={review} />

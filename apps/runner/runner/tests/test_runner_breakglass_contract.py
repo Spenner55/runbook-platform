@@ -114,8 +114,15 @@ def test_breakglass_session_facts_no_credential_fields():
 
     field_names = set(BreakglassSessionFacts.model_fields.keys())
     credential_like = {
-        "ssh_key", "api_key", "token", "password", "secret",
-        "iam_role", "cloud_role", "kubeconfig", "dispatch_token",
+        "ssh_key",
+        "api_key",
+        "token",
+        "password",
+        "secret",
+        "iam_role",
+        "cloud_role",
+        "kubeconfig",
+        "dispatch_token",
     }
     overlap = field_names & credential_like
     assert not overlap, f"BreakglassSessionFacts has credential-like fields: {overlap}"

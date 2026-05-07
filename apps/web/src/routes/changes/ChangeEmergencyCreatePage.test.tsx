@@ -135,7 +135,10 @@ describe('ChangeEmergencyCreatePage', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     const [, createCall] = fetchMock.mock.calls
-    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<string, unknown>
+    const body = JSON.parse((createCall[1] as RequestInit).body as string) as Record<
+      string,
+      unknown
+    >
     expect(body.is_emergency).toBe(true)
     expect(body.emergency_reason).toBe('Production incident')
   })

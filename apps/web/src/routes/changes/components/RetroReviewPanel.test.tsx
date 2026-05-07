@@ -72,7 +72,11 @@ describe('RetroReviewPanel', () => {
   })
 
   it('submits retro review with correct payload', async () => {
-    const submittedReview = makeReview({ status: 'submitted', disposition: 'accepted', summary: 'All clear' })
+    const submittedReview = makeReview({
+      status: 'submitted',
+      disposition: 'accepted',
+      summary: 'All clear',
+    })
     fetchMock.mockResolvedValueOnce(createJsonResponse(submittedReview))
 
     renderPanel([makeReview()])
@@ -85,7 +89,10 @@ describe('RetroReviewPanel', () => {
     await userEvent.click(screen.getAllByRole('button', { name: /submit review/i })[0])
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const [, call] = [fetchMock.mock.calls[0][0], fetchMock.mock.calls[0][1]] as [string, RequestInit]
+    const [, call] = [fetchMock.mock.calls[0][0], fetchMock.mock.calls[0][1]] as [
+      string,
+      RequestInit,
+    ]
     const body = JSON.parse(call.body as string) as Record<string, unknown>
     expect(body.disposition).toBe('accepted')
     expect(body.summary).toBe('All clear')
@@ -95,7 +102,11 @@ describe('RetroReviewPanel', () => {
   it('displays self-review rejection error from API', async () => {
     fetchMock.mockResolvedValueOnce(
       createJsonResponse(
-        { errors: [{ code: 'self_review_rejected', detail: 'Self-review is not allowed for this review.' }] },
+        {
+          errors: [
+            { code: 'self_review_rejected', detail: 'Self-review is not allowed for this review.' },
+          ],
+        },
         { status: 403 }
       )
     )

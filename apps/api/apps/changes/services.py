@@ -4383,7 +4383,9 @@ def _breakglass_allows_preflight(
         return None
 
 
-def _preflight_check_policy_gate(change: ChangeRecord, checks: list, now, targets: list) -> bool:
+def _preflight_check_policy_gate(
+    change: ChangeRecord, checks: list, now, targets: list
+) -> bool:
     pe = change.policy_evaluation
     if pe is None:
         checks.append(
@@ -4406,11 +4408,14 @@ def _preflight_check_policy_gate(change: ChangeRecord, checks: list, now, target
         change=change,
         exception_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
         now=now,
-        predicate=lambda scope: str(scope.get("policy_evaluation_id")) == str(pe.id)
-        and scope.get("overridden_outcome") == effective
-        and (
-            not getattr(pe, "rule_id", None)
-            or str(pe.rule_id) in {str(rid) for rid in scope.get("policy_rule_ids", [])}
+        predicate=lambda scope: (
+            str(scope.get("policy_evaluation_id")) == str(pe.id)
+            and scope.get("overridden_outcome") == effective
+            and (
+                not getattr(pe, "rule_id", None)
+                or str(pe.rule_id)
+                in {str(rid) for rid in scope.get("policy_rule_ids", [])}
+            )
         ),
     )
     if policy_exception is not None:
@@ -4562,10 +4567,11 @@ def _preflight_check_freeze_conflicts(
                 change=change,
                 exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
                 now=now,
-                predicate=lambda scope, rule=rule: str(scope.get("freeze_rule_id"))
-                == str(rule.id)
-                and target_id_set.issubset(
-                    {str(tid) for tid in scope.get("target_ids", [])}
+                predicate=lambda scope, rule=rule: (
+                    str(scope.get("freeze_rule_id")) == str(rule.id)
+                    and target_id_set.issubset(
+                        {str(tid) for tid in scope.get("target_ids", [])}
+                    )
                 ),
             )
             if exception is None:
@@ -4875,7 +4881,9 @@ def _validate_exception_freeze_override(
     """freeze_override must reference a same-org allow_with_exception rule and same-change targets."""
     freeze_rule_id = scope_json.get("freeze_rule_id", "")
     try:
-        rule = FreezeRule.objects.get(pk=freeze_rule_id, organization=change.organization)
+        rule = FreezeRule.objects.get(
+            pk=freeze_rule_id, organization=change.organization
+        )
     except (FreezeRule.DoesNotExist, DjangoValidationError, ValueError, TypeError):
         raise DomainValidationError(
             code="freeze_rule_not_found",
@@ -4936,7 +4944,12 @@ def _validate_exception_late_verification(
             change_record=change,
             organization=change.organization,
         )
-    except (VerificationPlan.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+    except (
+        VerificationPlan.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
         raise DomainValidationError(
             code="verification_plan_not_found",
             detail="late_verification scope must reference this change's verification plan.",
@@ -4965,7 +4978,12 @@ def _validate_exception_policy_override(
             pk=scope_json.get("policy_evaluation_id"),
             organization=change.organization,
         )
-    except (PolicyEvaluation.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+    except (
+        PolicyEvaluation.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
         raise DomainValidationError(
             code="policy_evaluation_not_found",
             detail="policy_override scope must reference a same-organization policy evaluation.",
@@ -5010,7 +5028,12 @@ def _validate_exception_missing_artifact(
             change_record=change,
             organization=change.organization,
         )
-    except (VerificationCheck.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+    except (
+        VerificationCheck.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
         raise DomainValidationError(
             code="verification_check_not_found",
             detail="missing_artifact scope must reference a verification check on this change.",
@@ -5266,9 +5289,7 @@ def reject_exception(
         now = timezone.now()
         change_exception.status = ChangeException.Status.REJECTED
         change_exception.rejected_at = now
-        change_exception.save(
-            update_fields=["status", "rejected_at", "updated_at"]
-        )
+        change_exception.save(update_fields=["status", "rejected_at", "updated_at"])
 
         if change_exception.approval_request_id:
             approval_request = ApprovalRequest.objects.select_for_update().get(
@@ -5416,7 +5437,7 @@ def resolve_exception(
     now = timezone.now()
     change_exception.status = ChangeException.Status.RESOLVED
     change_exception.resolved_at = now
-    change_exception.resolution_note = (resolution_note or "")[: 2000]
+    change_exception.resolution_note = (resolution_note or "")[:2000]
     change_exception.save(
         update_fields=["status", "resolved_at", "resolution_note", "updated_at"]
     )
@@ -5516,21 +5537,39 @@ def find_applicable_exception(
 _DEFAULT_MAX_BREAKGLASS_SECONDS = 14_400  # 4 hours
 _DEFAULT_RETRO_REVIEW_SLA_SECONDS = 86_400  # 24 hours
 
-_BREAKGLASS_SCOPE_REQUIRED_KEYS = frozenset({"allowed_actions", "target_ids", "gate_types"})
-_BREAKGLASS_SCOPE_FORBIDDEN_KEYS = frozenset({
-    "api_key", "apikey", "auth", "bearer", "bearer_token",
-    "cloud_role", "host_credentials", "iam_role", "iam_policy",
-    "kubeconfig", "password", "private_key", "secret", "ssh_key", "token",
-})
+_BREAKGLASS_SCOPE_REQUIRED_KEYS = frozenset(
+    {"allowed_actions", "target_ids", "gate_types"}
+)
+_BREAKGLASS_SCOPE_FORBIDDEN_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "auth",
+        "bearer",
+        "bearer_token",
+        "cloud_role",
+        "host_credentials",
+        "iam_role",
+        "iam_policy",
+        "kubeconfig",
+        "password",
+        "private_key",
+        "secret",
+        "ssh_key",
+        "token",
+    }
+)
 
-_BREAKGLASS_ACTIVATABLE_STATUSES = frozenset({
-    ChangeRecord.Status.APPROVED,
-    ChangeRecord.Status.DISPATCHABLE,
-    ChangeRecord.Status.RUNNING,
-    ChangeRecord.Status.VERIFICATION_PENDING,
-    ChangeRecord.Status.VERIFICATION_FAILED,
-    ChangeRecord.Status.VERIFIED,
-})
+_BREAKGLASS_ACTIVATABLE_STATUSES = frozenset(
+    {
+        ChangeRecord.Status.APPROVED,
+        ChangeRecord.Status.DISPATCHABLE,
+        ChangeRecord.Status.RUNNING,
+        ChangeRecord.Status.VERIFICATION_PENDING,
+        ChangeRecord.Status.VERIFICATION_FAILED,
+        ChangeRecord.Status.VERIFIED,
+    }
+)
 
 
 def _validate_breakglass_scope(scope_json: dict) -> None:
@@ -6050,7 +6089,9 @@ def ensure_retro_review_for_exception(change_exception) -> "RetroReview | None":
     if existing is not None:
         return existing
 
-    change = ChangeRecord.objects.select_for_update().get(pk=change_exception.change_record_id)
+    change = ChangeRecord.objects.select_for_update().get(
+        pk=change_exception.change_record_id
+    )
     profile = change.operation_profile
     retro_sla_seconds = (
         profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS
@@ -6175,7 +6216,10 @@ def submit_retro_review(
                 detail="The exception requester cannot review their own exception.",
             )
 
-    if disposition == RetroReview.Disposition.NEEDS_REMEDIATION and not remediation_reference.strip():
+    if (
+        disposition == RetroReview.Disposition.NEEDS_REMEDIATION
+        and not remediation_reference.strip()
+    ):
         raise DomainValidationError(
             code="retro_review_remediation_reference_required",
             detail="A remediation reference is required for 'needs_remediation' disposition.",
@@ -6221,7 +6265,9 @@ def submit_retro_review(
             RetroReview.Disposition.CONTROL_FAILURE,
         )
         review.remediation_reference = remediation_reference
-        review.control_failure_category = evidence_json.get("control_failure_category", "")
+        review.control_failure_category = evidence_json.get(
+            "control_failure_category", ""
+        )
         review.save(
             update_fields=[
                 "status",
@@ -6245,7 +6291,9 @@ def submit_retro_review(
             )
 
         # Recompute change blocking status
-        change = ChangeRecord.objects.select_for_update().get(pk=review.change_record_id)
+        change = ChangeRecord.objects.select_for_update().get(
+            pk=review.change_record_id
+        )
         _recompute_change_retro_review_status(change)
 
     AuditService.emit(
@@ -6322,9 +6370,13 @@ def assert_retro_reviews_allow_closure(change: ChangeRecord) -> None:
     for review in reviews:
         if review.status == RetroReview.Status.PENDING:
             if review.due_at <= now:
-                blockers.append({"review_id": str(review.id), "reason": "retro_review_overdue"})
+                blockers.append(
+                    {"review_id": str(review.id), "reason": "retro_review_overdue"}
+                )
             else:
-                blockers.append({"review_id": str(review.id), "reason": "retro_review_pending"})
+                blockers.append(
+                    {"review_id": str(review.id), "reason": "retro_review_pending"}
+                )
         elif review.status == RetroReview.Status.SUBMITTED:
             if (
                 review.disposition

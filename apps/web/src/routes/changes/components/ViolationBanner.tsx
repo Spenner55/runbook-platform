@@ -1,4 +1,8 @@
-import type { BreakglassSession, ChangeException, RetroReview } from '../../../features/changes/types'
+import type {
+  BreakglassSession,
+  ChangeException,
+  RetroReview,
+} from '../../../features/changes/types'
 
 interface ViolationBannerProps {
   overdueReviews?: RetroReview[]
@@ -35,8 +39,8 @@ export function ViolationBanner({
 
       {overdueReviews.length > 0 && (
         <div className="banner banner--error" data-testid="violation-overdue-retro-review">
-          <strong>Overdue retro-review ({overdueReviews.length}):</strong> The following reviews
-          are past their due date:
+          <strong>Overdue retro-review ({overdueReviews.length}):</strong> The following reviews are
+          past their due date:
           <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
             {overdueReviews.map((r) => (
               <li key={r.id}>Review due {new Date(r.due_at).toLocaleString()}</li>

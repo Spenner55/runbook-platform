@@ -932,7 +932,11 @@ class ChangeExceptionListCreateView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -949,6 +953,7 @@ class ChangeExceptionListCreateView(APIView):
             qs = qs.filter(exception_type=type_filter)
         if request.query_params.get("active") in ("true", "1"):
             from django.utils import timezone as tz
+
             qs = qs.filter(
                 status=ChangeException.Status.APPROVED,
                 expires_at__gt=tz.now(),
@@ -968,7 +973,11 @@ class ChangeExceptionListCreateView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -987,7 +996,11 @@ class ChangeExceptionListCreateView(APIView):
                 expires_at=d["expires_at"],
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(
@@ -1012,12 +1025,18 @@ class ChangeExceptionApproveView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
         except ChangeException.DoesNotExist:
             return Response(
                 {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
@@ -1031,7 +1050,11 @@ class ChangeExceptionApproveView(APIView):
                 actor=actor,
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(ChangeExceptionDetailSerializer(exc).data)
@@ -1053,12 +1076,18 @@ class ChangeExceptionRejectView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
         except ChangeException.DoesNotExist:
             return Response(
                 {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
@@ -1072,7 +1101,11 @@ class ChangeExceptionRejectView(APIView):
                 actor=actor,
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(ChangeExceptionDetailSerializer(exc).data)
@@ -1094,12 +1127,18 @@ class ChangeExceptionResolveView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            exc = ChangeException.objects.get(pk=exception_id, change_record=change, organization=org)
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
         except ChangeException.DoesNotExist:
             return Response(
                 {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
@@ -1117,7 +1156,11 @@ class ChangeExceptionResolveView(APIView):
                 resolution_note=serializer.validated_data.get("resolution_note", ""),
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(ChangeExceptionDetailSerializer(exc).data)
@@ -1143,7 +1186,11 @@ class ChangeBreakglassActivateView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -1161,7 +1208,11 @@ class ChangeBreakglassActivateView(APIView):
                 expires_at=d["expires_at"],
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(
@@ -1185,7 +1236,11 @@ class ChangeBreakglassEndView(APIView):
         change = selectors.get_change_record(change_id=change_id, organization=org)
         if change is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Change record not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -1197,7 +1252,11 @@ class ChangeBreakglassEndView(APIView):
             )
         except BreakglassSession.DoesNotExist:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "No active breakglass session."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "No active breakglass session."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -1213,7 +1272,11 @@ class ChangeBreakglassEndView(APIView):
                 end_reason=end_reason,
                 actor_user=request.user,
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(BreakglassSessionDetailSerializer(session).data)
@@ -1243,11 +1306,17 @@ class ChangeBreakglassHeartbeatView(APIView):
                 observed_session_id=str(d["breakglass_session_id"]),
                 now=d.get("observed_at") or tz.now(),
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         if session is None:
-            return Response({"status": "expired", "expires_at": None, "server_time": tz.now()})
+            return Response(
+                {"status": "expired", "expires_at": None, "server_time": tz.now()}
+            )
 
         return Response(
             {
@@ -1272,7 +1341,9 @@ class ChangeRetroReviewListView(APIView):
         reviews = selectors.list_retro_reviews_for_change(
             change_id=change_id, organization=org
         )
-        return Response({"results": RetroReviewDetailSerializer(reviews, many=True).data})
+        return Response(
+            {"results": RetroReviewDetailSerializer(reviews, many=True).data}
+        )
 
 
 class ChangeRetroReviewSubmitView(APIView):
@@ -1294,7 +1365,11 @@ class ChangeRetroReviewSubmitView(APIView):
         )
         if review is None:
             return Response(
-                {"errors": [{"code": "not_found", "detail": "Retro-review not found."}]},
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Retro-review not found."}
+                    ]
+                },
                 status=http_status.HTTP_404_NOT_FOUND,
             )
 
@@ -1313,6 +1388,7 @@ class ChangeRetroReviewSubmitView(APIView):
             )
 
         from apps.audit.services import actor_from_request
+
         actor = actor_from_request(request)
 
         try:
@@ -1325,7 +1401,11 @@ class ChangeRetroReviewSubmitView(APIView):
                 evidence_json=d.get("evidence_json", {}),
                 remediation_reference=d.get("remediation_reference", ""),
             )
-        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
             return _error_response(e)
 
         return Response(RetroReviewDetailSerializer(review).data)
@@ -1347,4 +1427,6 @@ class RetroReviewInboxView(APIView):
         org = Organization.objects.get(pk=organization_id)
 
         reviews = selectors.list_retro_review_inbox(organization=org)
-        return Response({"results": RetroReviewDetailSerializer(reviews, many=True).data})
+        return Response(
+            {"results": RetroReviewDetailSerializer(reviews, many=True).data}
+        )

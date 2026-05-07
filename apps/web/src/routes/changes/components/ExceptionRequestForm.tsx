@@ -12,7 +12,10 @@ const EXCEPTION_TYPES: { value: ExceptionType; label: string }[] = [
   { value: 'missing_artifact', label: 'Missing Artifact' },
 ]
 
-const SCOPE_FIELDS: Record<ExceptionType, Array<{ key: string; label: string; required: boolean }>> = {
+const SCOPE_FIELDS: Record<
+  ExceptionType,
+  Array<{ key: string; label: string; required: boolean }>
+> = {
   freeze_override: [
     { key: 'freeze_rule_id', label: 'Freeze Rule ID', required: true },
     { key: 'target_ids', label: 'Target IDs (comma-separated)', required: true },
@@ -23,7 +26,11 @@ const SCOPE_FIELDS: Record<ExceptionType, Array<{ key: string; label: string; re
   ],
   late_verification: [
     { key: 'verification_plan_id', label: 'Verification Plan ID', required: true },
-    { key: 'verification_check_ids', label: 'Verification Check IDs (comma-separated)', required: true },
+    {
+      key: 'verification_check_ids',
+      label: 'Verification Check IDs (comma-separated)',
+      required: true,
+    },
     { key: 'due_at', label: 'Due At (ISO datetime)', required: true },
   ],
   policy_override: [

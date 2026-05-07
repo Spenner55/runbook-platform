@@ -84,22 +84,31 @@ function RetroReviewItem({ changeId, review }: RetroReviewItemProps) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
         <strong>Review</strong>
         <span className={getStatusPillClass(review.status)}>{review.status}</span>
-        {review.breakglass_session_id && (
-          <span className="pill pill--info">Breakglass</span>
-        )}
-        {review.change_exception_id && (
-          <span className="pill">Exception</span>
-        )}
+        {review.breakglass_session_id && <span className="pill pill--info">Breakglass</span>}
+        {review.change_exception_id && <span className="pill">Exception</span>}
         <span className="muted" style={{ marginLeft: 'auto', fontSize: '0.85em' }}>
           Due: {formatDateTime(review.due_at)}
         </span>
       </div>
 
       {review.status === 'submitted' && (
-        <dl style={{ display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: '0.25rem', marginTop: '0.75rem' }}>
+        <dl
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '180px 1fr',
+            rowGap: '0.25rem',
+            marginTop: '0.75rem',
+          }}
+        >
           <dt className="muted">Disposition</dt>
           <dd>
-            <span className={review.disposition === 'control_failure' ? 'pill pill--danger' : 'pill pill--success'}>
+            <span
+              className={
+                review.disposition === 'control_failure'
+                  ? 'pill pill--danger'
+                  : 'pill pill--success'
+              }
+            >
               {review.disposition?.replace(/_/g, ' ')}
             </span>
           </dd>
@@ -184,7 +193,9 @@ function RetroReviewItem({ changeId, review }: RetroReviewItemProps) {
           )}
 
           {errorMsg && (
-            <p className="banner banner--error" data-testid="retro-review-error">{errorMsg}</p>
+            <p className="banner banner--error" data-testid="retro-review-error">
+              {errorMsg}
+            </p>
           )}
 
           <div style={{ display: 'flex', gap: '0.5rem' }}>

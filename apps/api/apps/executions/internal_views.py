@@ -91,9 +91,7 @@ def _breakglass_execution_gate_decision(
     try:
         from apps.changes import services as change_services
 
-        target_ids = [
-            str(tid) for tid in change.targets.values_list("id", flat=True)
-        ]
+        target_ids = [str(tid) for tid in change.targets.values_list("id", flat=True)]
         change_services.assert_breakglass_allows(
             change=change,
             gate_type=gate_type,
@@ -330,10 +328,12 @@ class ExecutionStepStartView(RunnerInternalAPIView):
             if effective_outcome == "approval_required":
                 change = _get_change_for_execution(execution)
                 if _change_has_active_breakglass(change):
-                    breakglass_allowed, breakglass_guard = _breakglass_execution_gate_decision(
-                        execution=execution,
-                        gate_type="policy_override",
-                        action="continue_running",
+                    breakglass_allowed, breakglass_guard = (
+                        _breakglass_execution_gate_decision(
+                            execution=execution,
+                            gate_type="policy_override",
+                            action="continue_running",
+                        )
                     )
                     if breakglass_guard is not None:
                         return breakglass_guard
@@ -377,10 +377,12 @@ class ExecutionStepStartView(RunnerInternalAPIView):
             if effective_outcome == "block":
                 change = _get_change_for_execution(execution)
                 if _change_has_active_breakglass(change):
-                    breakglass_allowed, breakglass_guard = _breakglass_execution_gate_decision(
-                        execution=execution,
-                        gate_type="policy_override",
-                        action="continue_running",
+                    breakglass_allowed, breakglass_guard = (
+                        _breakglass_execution_gate_decision(
+                            execution=execution,
+                            gate_type="policy_override",
+                            action="continue_running",
+                        )
                     )
                     if breakglass_guard is not None:
                         return breakglass_guard

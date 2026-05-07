@@ -131,7 +131,10 @@ describe('BreakglassActivationModal', () => {
     await userEvent.click(screen.getByRole('button', { name: /activate breakglass/i }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const [, call] = [fetchMock.mock.calls[0][0], fetchMock.mock.calls[0][1]] as [string, RequestInit]
+    const [, call] = [fetchMock.mock.calls[0][0], fetchMock.mock.calls[0][1]] as [
+      string,
+      RequestInit,
+    ]
     const body = JSON.parse(call.body as string) as Record<string, unknown>
     expect(body.reason).toBe('Production incident')
     expect((body.scope_json as Record<string, unknown>).allowed_actions).toContain('dispatch')

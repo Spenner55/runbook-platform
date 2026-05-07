@@ -324,7 +324,9 @@ def test_preflight_fails_when_allow_with_exception_no_reference(approved_change,
 
 
 @pytest.mark.django_db
-def test_preflight_fails_when_only_legacy_exception_reference_provided(approved_change, org):
+def test_preflight_fails_when_only_legacy_exception_reference_provided(
+    approved_change, org
+):
     now = _now()
     FreezeRule.objects.create(
         organization=org,
@@ -377,8 +379,7 @@ def test_preflight_passes_when_approved_freeze_override_exception_matches_scope(
         scope_json={
             "freeze_rule_id": str(rule.id),
             "target_ids": [
-                str(tid)
-                for tid in approved_change.targets.values_list("id", flat=True)
+                str(tid) for tid in approved_change.targets.values_list("id", flat=True)
             ],
         },
         requested_at=now - timedelta(minutes=5),

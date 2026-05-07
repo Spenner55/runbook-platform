@@ -1654,7 +1654,11 @@ class BreakglassSession(BaseModel):
             )
         if self.started_at and self.expires_at and self.expires_at <= self.started_at:
             raise ValidationError("expires_at must be after started_at.")
-        if self.started_at and self.review_due_at and self.review_due_at < self.started_at:
+        if (
+            self.started_at
+            and self.review_due_at
+            and self.review_due_at < self.started_at
+        ):
             raise ValidationError("review_due_at must not be before started_at.")
 
     def save(self, *args, **kwargs):
@@ -1721,9 +1725,7 @@ class RetroReview(BaseModel):
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(
-                    status__in=["pending", "submitted", "superseded"]
-                ),
+                condition=models.Q(status__in=["pending", "submitted", "superseded"]),
                 name="retrorev_status_valid_chk",
             ),
             # Disposition must be blank or one of the required values.

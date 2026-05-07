@@ -93,9 +93,9 @@ export function closeChange(changeId: string, input: CloseChangeInput) {
 // ----- Exception APIs -----
 
 export function listExceptions(changeId: string) {
-  return apiRequest<{ results: ChangeException[] }>(
-    `/api/v1/changes/${changeId}/exceptions/`
-  ).then((r) => r.results)
+  return apiRequest<{ results: ChangeException[] }>(`/api/v1/changes/${changeId}/exceptions/`).then(
+    (r) => r.results
+  )
 }
 
 export function createException(changeId: string, input: CreateExceptionInput) {
@@ -124,16 +124,20 @@ export function endBreakglass(changeId: string, endReason = 'manual_end') {
 // ----- Retro-review APIs -----
 
 export function listRetroReviews(changeId: string) {
-  return apiRequest<{ results: RetroReview[] }>(
-    `/api/v1/changes/${changeId}/retro-reviews/`
-  ).then((r) => r.results)
+  return apiRequest<{ results: RetroReview[] }>(`/api/v1/changes/${changeId}/retro-reviews/`).then(
+    (r) => r.results
+  )
 }
 
-export function submitRetroReview(changeId: string, reviewId: string, input: SubmitRetroReviewInput) {
-  return apiRequest<RetroReview>(
-    `/api/v1/changes/${changeId}/retro-reviews/${reviewId}/submit/`,
-    { method: 'POST', body: JSON.stringify(input) }
-  )
+export function submitRetroReview(
+  changeId: string,
+  reviewId: string,
+  input: SubmitRetroReviewInput
+) {
+  return apiRequest<RetroReview>(`/api/v1/changes/${changeId}/retro-reviews/${reviewId}/submit/`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }
 
 export function listRetroReviewInbox() {
