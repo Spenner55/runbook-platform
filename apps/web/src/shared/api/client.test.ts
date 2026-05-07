@@ -64,4 +64,11 @@ describe('apiRequest', () => {
     )
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('blocks legacy internal route drift endpoints', async () => {
+    await expect(apiRequest('/internal/v1/executions/claim-next/')).rejects.toThrow(
+      'Browser requests to internal API endpoints are not allowed.'
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })

@@ -13,6 +13,7 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes import services as change_services
 from apps.changes.models import (
+    ChangeException,
     ChangeRecord,
     ChangeWindow,
     DispatchEligibilityCheck,
@@ -323,7 +324,9 @@ def test_preflight_fails_when_allow_with_exception_no_reference(approved_change,
 
 
 @pytest.mark.django_db
-def test_preflight_passes_when_exception_reference_provided(approved_change, org):
+def test_preflight_fails_when_only_legacy_exception_reference_provided(
+    approved_change, org
+):
     now = _now()
     FreezeRule.objects.create(
         organization=org,
@@ -344,6 +347,44 @@ def test_preflight_passes_when_exception_reference_provided(approved_change, org
             "freeze_exception_reason",
             "updated_at",
         ]
+    )
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+    assert check.freeze_conflicts_ok is False
+
+
+@pytest.mark.django_db
+def test_preflight_passes_when_approved_freeze_override_exception_matches_scope(
+    approved_change, org
+):
+    now = _now()
+    rule = FreezeRule.objects.create(
+        organization=org,
+        name="Exception Freeze",
+        behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+        starts_at=now - timedelta(hours=1),
+        ends_at=now + timedelta(hours=2),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=True,
+        is_active=True,
+    )
+    ChangeException.objects.create(
+        organization=org,
+        change_record=approved_change,
+        exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
+        status=ChangeException.Status.APPROVED,
+        reason="Approved emergency freeze override",
+        scope_json={
+            "freeze_rule_id": str(rule.id),
+            "target_ids": [
+                str(tid) for tid in approved_change.targets.values_list("id", flat=True)
+            ],
+        },
+        requested_at=now - timedelta(minutes=5),
+        approved_at=now - timedelta(minutes=1),
+        expires_at=now + timedelta(hours=1),
     )
 
     check = change_services.run_dispatch_preflight(

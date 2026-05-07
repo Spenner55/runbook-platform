@@ -72,6 +72,18 @@ class Executor:
     def _make_uploader(self, execution_id: UUID, claim_token: UUID) -> ArtifactUploader:
         return ArtifactUploader(self._client, execution_id, claim_token)
 
+    def _observe_breakglass(
+        self, execution: ClaimedExecution, claim_token: UUID
+    ) -> None:
+        if execution.breakglass is None or execution.change_record_id is None:
+            return
+        self._client.breakglass_heartbeat(
+            execution.change_record_id,
+            claim_token,
+            execution.breakglass.breakglass_session_id,
+            execution.breakglass.scope_sha256,
+        )
+
     def run(self, execution: ClaimedExecution, claim_token: UUID) -> None:
         """Execute all steps of a claimed execution sequentially."""
         execution_id = execution.id
@@ -81,6 +93,17 @@ class Executor:
             execution_id,
             len(execution.steps),
         )
+
+        if execution.breakglass is not None:
+            bg = execution.breakglass
+            logger.info(
+                "Breakglass session active for execution %s: session=%s scope=%s expires_at=%s. "
+                "Django remains authoritative — runner will call step-start gates as normal.",
+                execution_id,
+                bg.breakglass_session_id,
+                bg.scope_summary,
+                bg.expires_at,
+            )
 
         # For change-bound executions, bind before entering the step loop.
         # A bind failure is fatal — refuse to execute and abort early.
@@ -102,6 +125,7 @@ class Executor:
                     )
                 return
             self._notify_execution_started(execution)
+            self._observe_breakglass(execution, claim_token)
 
         heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
         heartbeat.start()

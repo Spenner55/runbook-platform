@@ -38,6 +38,55 @@ class TestCreateChangeRecord:
         assert change.status == ChangeRecord.Status.DRAFT
         assert change.targets.count() == 1
 
+    def test_emergency_create_requires_profile_allowance(
+        self, org, operation_profile, published_workflow
+    ):
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Emergency Change",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                    }
+                ],
+                is_emergency=True,
+                emergency_reason="Incident mitigation",
+            )
+
+        assert exc_info.value.code == "emergency_changes_not_allowed"
+
+    def test_emergency_create_requires_reason(
+        self, org, operation_profile, published_workflow
+    ):
+        operation_profile.allow_emergency_changes = True
+        operation_profile.save(update_fields=["allow_emergency_changes", "updated_at"])
+
+        with pytest.raises(DomainValidationError) as exc_info:
+            change_services.create_change_record(
+                organization=org,
+                operation_profile_key="prod-maintenance",
+                workflow_id=str(published_workflow.id),
+                title="Emergency Change",
+                justification="Needed",
+                targets=[
+                    {
+                        "target_type": "server",
+                        "target_identifier": "prod-01",
+                        "environment": "production",
+                    }
+                ],
+                is_emergency=True,
+                emergency_reason=" ",
+            )
+
+        assert exc_info.value.code == "emergency_reason_required"
+
     def test_invalid_profile_key_rejected(self, org, published_workflow):
         with pytest.raises(DomainValidationError) as exc_info:
             change_services.create_change_record(

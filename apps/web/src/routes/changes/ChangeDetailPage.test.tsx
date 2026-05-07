@@ -188,6 +188,11 @@ const mockSatisfiedPlan = {
   unmet_required_checks: [],
 }
 
+// Helper: after a change loads, ChangeViolationSection fires useRetroReviews then useExceptions.
+// For verification changes, VerificationSection fires useVerificationPlan after those two.
+// Use these helpers to set up mocks in the correct fetch order.
+const emptyResults = () => createJsonResponse({ results: [] })
+
 describe('ChangeDetailPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
 
@@ -212,7 +217,10 @@ describe('ChangeDetailPage', () => {
   // ---- Existing baseline tests ----
 
   it('renders change title and status for a draft change', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults()) // retro-reviews
+      .mockResolvedValueOnce(emptyResults()) // exceptions
     renderPage()
 
     await waitFor(() => {
@@ -222,7 +230,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('renders targets section', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => {
@@ -232,7 +243,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('shows submit button for draft changes', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => {
@@ -241,7 +255,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('does not show submit button for non-draft changes', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('pending approval'))
@@ -249,7 +266,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('shows approval request section when present', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Approval Request'))
@@ -287,8 +307,10 @@ describe('ChangeDetailPage', () => {
     }
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
-      .mockResolvedValueOnce(createJsonResponse(submittedChange))
-      .mockResolvedValueOnce(createJsonResponse(submittedChange))
+      .mockResolvedValueOnce(emptyResults()) // retro-reviews
+      .mockResolvedValueOnce(emptyResults()) // exceptions
+      .mockResolvedValueOnce(createJsonResponse(submittedChange)) // POST submit
+      .mockResolvedValueOnce(createJsonResponse(submittedChange)) // re-fetch
 
     renderPage()
     await waitFor(() => screen.getByRole('button', { name: /submit for approval/i }))
@@ -296,14 +318,20 @@ describe('ChangeDetailPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /submit for approval/i }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2)
+      const postCall = fetchMock.mock.calls.find(
+        (c) => c[1] !== undefined && (c[1] as RequestInit).method === 'POST'
+      )
+      expect(postCall).toBeTruthy()
     })
   })
 
   // ---- New: Hash rendering ----
 
   it('renders requested inputs hash when present', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText(/inputs hash/i))
@@ -312,7 +340,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('renders request snapshot hash when present', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText(/snapshot hash/i))
@@ -320,7 +351,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('does not render hash rows when hashes are empty strings', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))
@@ -331,7 +365,10 @@ describe('ChangeDetailPage', () => {
   // ---- New: Policy decision rendering ----
 
   it('renders policy decision section when present', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Policy Decision'))
@@ -343,7 +380,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('does not render policy decision section when absent', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))
@@ -355,6 +395,8 @@ describe('ChangeDetailPage', () => {
   it('renders verification section when status is verification_pending', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults()) // retro-reviews
+      .mockResolvedValueOnce(emptyResults()) // exceptions
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -365,7 +407,10 @@ describe('ChangeDetailPage', () => {
   })
 
   it('does not render verification section for draft or running', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))
@@ -377,6 +422,8 @@ describe('ChangeDetailPage', () => {
   it('renders passed, pending, and failed checks in the checklist', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -394,6 +441,8 @@ describe('ChangeDetailPage', () => {
   it('renders plan mode and progress summary in the checklist', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -404,6 +453,8 @@ describe('ChangeDetailPage', () => {
   it('renders unmet required checks blocking display', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -414,6 +465,8 @@ describe('ChangeDetailPage', () => {
   it('shows Attest button only for pending manual_attestation checks', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -426,6 +479,8 @@ describe('ChangeDetailPage', () => {
   it('opens attestation form when Attest button is clicked', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -451,6 +506,8 @@ describe('ChangeDetailPage', () => {
     }
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults()) // retro-reviews
+      .mockResolvedValueOnce(emptyResults()) // exceptions
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
       .mockResolvedValueOnce(createJsonResponse(resultResponse, { status: 201 }))
       // re-fetches after mutation
@@ -482,6 +539,8 @@ describe('ChangeDetailPage', () => {
   it('displays self-review and API rejection errors from the attestation form', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
       .mockResolvedValueOnce(
         createJsonResponse(
@@ -506,6 +565,8 @@ describe('ChangeDetailPage', () => {
   it('does not show close button for verification_pending change', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -516,6 +577,8 @@ describe('ChangeDetailPage', () => {
   it('shows close button when change is verified', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
     renderPage()
 
@@ -526,6 +589,8 @@ describe('ChangeDetailPage', () => {
   it('shows close button for verification_failed change', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationFailedChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -536,6 +601,8 @@ describe('ChangeDetailPage', () => {
   it('opens closure dialog on close button click and shows outcome options for verified change', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
     renderPage()
 
@@ -550,6 +617,8 @@ describe('ChangeDetailPage', () => {
   it('closure confirm button is disabled until outcome and summary are filled', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
     renderPage()
 
@@ -564,6 +633,8 @@ describe('ChangeDetailPage', () => {
   it('server closure rejection displays correctly even after form is filled', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerifiedChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockSatisfiedPlan))
       .mockResolvedValueOnce(
         createJsonResponse(
@@ -590,6 +661,8 @@ describe('ChangeDetailPage', () => {
   it('does not call /api/v1/internal/ endpoints during verification flow', async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
       .mockResolvedValueOnce(createJsonResponse(mockVerificationPlan))
     renderPage()
 
@@ -601,7 +674,10 @@ describe('ChangeDetailPage', () => {
   // ---- New: Approval detail link ----
 
   it('renders a link to the approvals inbox in the approval section', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockPendingChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Approval Request'))
@@ -613,7 +689,10 @@ describe('ChangeDetailPage', () => {
   // ---- New: Execution detail link ----
 
   it('renders a link to the execution detail page in the binding section', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockRunningChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Execution Binding'))
@@ -625,7 +704,10 @@ describe('ChangeDetailPage', () => {
   // ---- New: All changes link ----
 
   it('renders a link back to the changes list', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))
@@ -636,7 +718,10 @@ describe('ChangeDetailPage', () => {
   // ---- New: No internal API calls ----
 
   it('does not call /api/v1/internal/ endpoints', async () => {
-    fetchMock.mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse(mockDraftChange))
+      .mockResolvedValueOnce(emptyResults())
+      .mockResolvedValueOnce(emptyResults())
     renderPage()
 
     await waitFor(() => screen.getByText('Restart nginx on prod-01'))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ import pytest
 from runner.executor import Executor
 from runner.schemas import (
     ApprovalStatusResponse,
+    BreakglassSessionFacts,
     ClaimedExecution,
     ClaimedStep,
     StepStartResponse,
@@ -72,6 +74,20 @@ def make_change_execution(steps: list[ClaimedStep]) -> ClaimedExecution:
             }
         ],
     )
+
+
+def make_breakglass_change_execution(steps: list[ClaimedStep]) -> ClaimedExecution:
+    execution = make_change_execution(steps)
+    now = datetime.now(tz=UTC)
+    execution.breakglass = BreakglassSessionFacts(
+        breakglass_session_id=uuid4(),
+        scope_sha256="a" * 64,
+        scope_summary="actions=continue_running gates=policy_override targets=1",
+        started_at=now,
+        expires_at=now + timedelta(minutes=30),
+        review_due_at=now + timedelta(hours=24),
+    )
+    return execution
 
 
 def _run_response(execution_id=None, step_id=None) -> StepStartResponse:
@@ -528,6 +544,22 @@ def test_executor_emits_verification_fact_when_step_metadata_exists():
     assert call.kwargs["verification_key"] == "postdeploy.health.ok"
     assert call.kwargs["step_key"] == "step-1"
     assert call.kwargs["observed_value"]["exit_code"] == 0
+
+
+def test_executor_observes_breakglass_session_for_change_execution():
+    client = make_client()
+    executor = Executor(client)
+    execution = make_breakglass_change_execution([make_step(1)])
+    claim_token = uuid4()
+
+    executor.run(execution, claim_token)
+
+    client.breakglass_heartbeat.assert_called_once_with(
+        execution.change_record_id,
+        claim_token,
+        execution.breakglass.breakglass_session_id,
+        execution.breakglass.scope_sha256,
+    )
 
 
 def test_executor_skips_verification_callback_without_metadata():

@@ -3,7 +3,9 @@ from django.contrib import admin, messages
 from apps.audit.services import actor_from_request
 from apps.changes import services as change_services
 from apps.changes.models import (
+    BreakglassSession,
     ChangeClosure,
+    ChangeException,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -11,6 +13,7 @@ from apps.changes.models import (
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    RetroReview,
     TargetLock,
     VerificationCheck,
     VerificationPlan,
@@ -78,6 +81,13 @@ _CHANGE_RECORD_ALWAYS_READONLY = [
     "rejected_at",
     "canceled_at",
     "expired_at",
+    # Emergency / retro-review derived fields
+    "is_emergency",
+    "emergency_declared_by",
+    "emergency_declared_at",
+    "retro_review_required",
+    "retro_review_due_at",
+    "retro_review_blocking_status",
     "created_at",
     "updated_at",
 ]
@@ -363,6 +373,143 @@ class VerificationResultAdmin(admin.ModelAdmin):
         "validation_errors",
         "submitted_at",
         "validated_at",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChangeException)
+class ChangeExceptionAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "exception_type",
+        "status",
+        "organization",
+        "requested_at",
+        "expires_at",
+    ]
+    list_filter = ["exception_type", "status"]
+    search_fields = ["id", "change_record__id", "reason"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "exception_type",
+        "status",
+        "reason",
+        "scope_json",
+        "requested_by",
+        "requested_at",
+        "approval_request",
+        "approved_by",
+        "approved_at",
+        "rejected_at",
+        "expires_at",
+        "resolved_at",
+        "resolution_note",
+        "policy_evaluation",
+        "verification_check",
+        "artifact",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BreakglassSession)
+class BreakglassSessionAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "organization",
+        "status",
+        "review_status",
+        "started_at",
+        "expires_at",
+        "review_due_at",
+    ]
+    list_filter = ["status", "review_status"]
+    search_fields = ["id", "change_record__id"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "status",
+        "scope_json",
+        "scope_sha256",
+        "reason",
+        "activated_by",
+        "started_at",
+        "expires_at",
+        "ended_at",
+        "ended_by",
+        "end_reason",
+        "review_due_at",
+        "review_status",
+        "last_heartbeat_at",
+        "activation_ip_hash",
+        "activation_user_agent",
+        "created_at",
+        "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RetroReview)
+class RetroReviewAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "change_record",
+        "organization",
+        "status",
+        "disposition",
+        "due_at",
+        "reviewed_at",
+    ]
+    list_filter = ["status", "disposition", "remediation_required"]
+    search_fields = ["id", "change_record__id", "summary"]
+    readonly_fields = [
+        "id",
+        "organization",
+        "change_record",
+        "breakglass_session",
+        "change_exception",
+        "status",
+        "disposition",
+        "reviewed_by",
+        "reviewed_at",
+        "due_at",
+        "summary",
+        "remediation_required",
+        "remediation_reference",
+        "control_failure_category",
+        "evidence_json",
         "created_at",
         "updated_at",
     ]

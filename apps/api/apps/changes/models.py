@@ -11,6 +11,11 @@ class OperationProfile(BaseModel):
         MANUAL = "manual", "Manual"
         MIXED = "mixed", "Mixed"
 
+    # Emergency / breakglass policy config
+    allow_emergency_changes = models.BooleanField(default=False)
+    max_breakglass_seconds = models.PositiveIntegerField(null=True, blank=True)
+    retro_review_sla_seconds = models.PositiveIntegerField(null=True, blank=True)
+
     organization = models.ForeignKey(
         "organizations.Organization",
         on_delete=models.CASCADE,
@@ -173,6 +178,23 @@ class ChangeRecord(BaseModel):
     expired_at = models.DateTimeField(null=True, blank=True)
     terminal_reason = models.CharField(max_length=64, blank=True)
 
+    # Emergency change fields — added in Phase 11.4.
+    # Emergency changes remain normal ChangeRecord rows; these fields just mark them.
+    is_emergency = models.BooleanField(default=False)
+    emergency_reason = models.TextField(blank=True)
+    emergency_declared_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="declared_emergency_changes",
+    )
+    emergency_declared_at = models.DateTimeField(null=True, blank=True)
+    # Retro-review tracking — derived by services, not from user input.
+    retro_review_required = models.BooleanField(default=False)
+    retro_review_due_at = models.DateTimeField(null=True, blank=True)
+    retro_review_blocking_status = models.CharField(max_length=32, blank=True)
+
     # Freeze exception fields — support for allow_with_exception freeze rules only.
     # These are NOT breakglass; they satisfy freeze exception requirements but do not
     # bypass approval, policy, window, target lock, or authorization checks.
@@ -266,6 +288,11 @@ class ChangeRecord(BaseModel):
         "request_snapshot_sha256",
         "operation_profile_key_snapshot",
         "workflow_version_snapshot",
+        # Emergency declaration is frozen at submit; append-only records carry further state.
+        "is_emergency",
+        "emergency_reason",
+        "emergency_declared_by_id",
+        "emergency_declared_at",
     )
 
     def save(self, *args, **kwargs):
@@ -1339,4 +1366,434 @@ class DispatchEligibilityCheck(BaseModel):
             raise ValidationError(
                 "DispatchEligibilityCheck is immutable after creation."
             )
+        return super().save(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 models: ChangeException, BreakglassSession, RetroReview
+# ---------------------------------------------------------------------------
+
+
+class ChangeException(BaseModel):
+    class ExceptionType(models.TextChoices):
+        FREEZE_OVERRIDE = "freeze_override", "Freeze Override"
+        WINDOW_OVERRUN = "window_overrun", "Window Overrun"
+        LATE_VERIFICATION = "late_verification", "Late Verification"
+        POLICY_OVERRIDE = "policy_override", "Policy Override"
+        MISSING_ARTIFACT = "missing_artifact", "Missing Artifact"
+
+    class Status(models.TextChoices):
+        PENDING_APPROVAL = "pending_approval", "Pending Approval"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+        RESOLVED = "resolved", "Resolved"
+        EXPIRED = "expired", "Expired"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.PROTECT,
+        related_name="change_exceptions",
+    )
+    change_record = models.ForeignKey(
+        ChangeRecord,
+        on_delete=models.PROTECT,
+        related_name="exceptions",
+    )
+    exception_type = models.CharField(max_length=32, choices=ExceptionType.choices)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.PENDING_APPROVAL,
+    )
+    reason = models.TextField()
+    scope_json = models.JSONField(default=dict)
+    requested_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="requested_change_exceptions",
+    )
+    requested_at = models.DateTimeField()
+    approval_request = models.ForeignKey(
+        "approvals.ApprovalRequest",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="change_exceptions",
+    )
+    approved_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_change_exceptions",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField()
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_note = models.TextField(blank=True)
+    policy_evaluation = models.ForeignKey(
+        "policies.PolicyEvaluation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="change_exceptions",
+    )
+    verification_check = models.ForeignKey(
+        VerificationCheck,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="change_exceptions",
+    )
+    artifact = models.ForeignKey(
+        "artifacts.Artifact",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="change_exceptions",
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    exception_type__in=[
+                        "freeze_override",
+                        "window_overrun",
+                        "late_verification",
+                        "policy_override",
+                        "missing_artifact",
+                    ]
+                ),
+                name="chgexc_exception_type_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=[
+                        "pending_approval",
+                        "approved",
+                        "rejected",
+                        "resolved",
+                        "expired",
+                    ]
+                ),
+                name="chgexc_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("requested_at")),
+                name="chgexc_expires_after_requested_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "expires_at"],
+                name="chgexc_org_status_exp_idx",
+            ),
+            models.Index(
+                fields=["change_record", "exception_type", "status"],
+                name="chgexc_change_type_status_idx",
+            ),
+            models.Index(
+                fields=["approval_request"],
+                name="chgexc_approval_req_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"ChangeException {self.exception_type} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "ChangeException organization must match the change organization."
+            )
+        if (
+            self.verification_check_id
+            and self.change_record_id
+            and self.verification_check.change_record_id != self.change_record_id
+        ):
+            raise ValidationError(
+                "ChangeException verification check must belong to the same change."
+            )
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
+
+
+class BreakglassSession(BaseModel):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        ENDED = "ended", "Ended"
+        EXPIRED = "expired", "Expired"
+        REVOKED = "revoked", "Revoked"
+
+    class ReviewStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SUBMITTED = "submitted", "Submitted"
+        ACCEPTED = "accepted", "Accepted"
+        OVERDUE = "overdue", "Overdue"
+        BLOCKED = "blocked", "Blocked"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.PROTECT,
+        related_name="breakglass_sessions",
+    )
+    change_record = models.ForeignKey(
+        ChangeRecord,
+        on_delete=models.PROTECT,
+        related_name="breakglass_sessions",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    scope_json = models.JSONField()
+    scope_sha256 = models.CharField(max_length=64)
+    reason = models.TextField()
+    activated_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="activated_breakglass_sessions",
+    )
+    started_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="ended_breakglass_sessions",
+    )
+    end_reason = models.CharField(max_length=64, blank=True)
+    review_due_at = models.DateTimeField()
+    review_status = models.CharField(
+        max_length=24,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.PENDING,
+    )
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    activation_ip_hash = models.CharField(max_length=64, blank=True)
+    activation_user_agent = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    status__in=["active", "ended", "expired", "revoked"]
+                ),
+                name="bglsess_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    review_status__in=[
+                        "pending",
+                        "submitted",
+                        "accepted",
+                        "overdue",
+                        "blocked",
+                    ]
+                ),
+                name="bglsess_review_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("started_at")),
+                name="bglsess_expires_after_started_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(review_due_at__gte=models.F("started_at")),
+                name="bglsess_review_due_gte_started_chk",
+            ),
+            # At most one active breakglass session per change at any time.
+            models.UniqueConstraint(
+                fields=["change_record"],
+                condition=models.Q(status="active"),
+                name="bglsess_one_active_per_change",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "expires_at"],
+                name="bglsess_org_status_exp_idx",
+            ),
+            models.Index(
+                fields=["organization", "review_status", "review_due_at"],
+                name="bglsess_org_revstat_due_idx",
+            ),
+            models.Index(
+                fields=["change_record", "status"],
+                name="bglsess_change_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"BreakglassSession {self.id} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "BreakglassSession organization must match the change organization."
+            )
+        if self.started_at and self.expires_at and self.expires_at <= self.started_at:
+            raise ValidationError("expires_at must be after started_at.")
+        if (
+            self.started_at
+            and self.review_due_at
+            and self.review_due_at < self.started_at
+        ):
+            raise ValidationError("review_due_at must not be before started_at.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        return super().save(*args, **kwargs)
+
+
+class RetroReview(BaseModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SUBMITTED = "submitted", "Submitted"
+        SUPERSEDED = "superseded", "Superseded"
+
+    class Disposition(models.TextChoices):
+        ACCEPTED = "accepted", "Accepted"
+        NEEDS_REMEDIATION = "needs_remediation", "Needs Remediation"
+        CONTROL_FAILURE = "control_failure", "Control Failure"
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.PROTECT,
+        related_name="retro_reviews",
+    )
+    change_record = models.ForeignKey(
+        ChangeRecord,
+        on_delete=models.PROTECT,
+        related_name="retro_reviews",
+    )
+    breakglass_session = models.OneToOneField(
+        BreakglassSession,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="retro_review",
+    )
+    change_exception = models.ForeignKey(
+        ChangeException,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="retro_reviews",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    disposition = models.CharField(max_length=32, blank=True)
+    reviewed_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="retro_reviews",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    due_at = models.DateTimeField()
+    summary = models.TextField(blank=True)
+    remediation_required = models.BooleanField(default=False)
+    remediation_reference = models.CharField(max_length=255, blank=True)
+    control_failure_category = models.CharField(max_length=64, blank=True)
+    evidence_json = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["pending", "submitted", "superseded"]),
+                name="retrorev_status_valid_chk",
+            ),
+            # Disposition must be blank or one of the required values.
+            models.CheckConstraint(
+                condition=models.Q(disposition="")
+                | models.Q(
+                    disposition__in=["accepted", "needs_remediation", "control_failure"]
+                ),
+                name="retrorev_disposition_valid_chk",
+            ),
+            # Submitted reviews must have a nonblank disposition.
+            models.CheckConstraint(
+                condition=~models.Q(status="submitted") | ~models.Q(disposition=""),
+                name="retrorev_submitted_needs_disposition_chk",
+            ),
+            # At least one of breakglass_session or change_exception must be set.
+            models.CheckConstraint(
+                condition=models.Q(breakglass_session_id__isnull=False)
+                | models.Q(change_exception_id__isnull=False),
+                name="retrorev_source_required_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status", "due_at"],
+                name="retrorev_org_status_due_idx",
+            ),
+            models.Index(
+                fields=["change_record", "status"],
+                name="retrorev_change_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"RetroReview {self.id} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.change_record_id
+            and self.organization_id
+            and self.change_record.organization_id != self.organization_id
+        ):
+            raise ValidationError(
+                "RetroReview organization must match the change organization."
+            )
+        if self.breakglass_session_id is None and self.change_exception_id is None:
+            raise ValidationError(
+                "RetroReview must reference at least one breakglass session or change exception.",
+                code="retrorev_source_required",
+            )
+        if (
+            self.breakglass_session_id
+            and self.change_record_id
+            and self.breakglass_session.change_record_id != self.change_record_id
+        ):
+            raise ValidationError(
+                "RetroReview breakglass session must belong to the same change."
+            )
+        if (
+            self.change_exception_id
+            and self.change_record_id
+            and self.change_exception.change_record_id != self.change_record_id
+        ):
+            raise ValidationError(
+                "RetroReview change exception must belong to the same change."
+            )
+
+    def save(self, *args, **kwargs):
+        self.clean()
         return super().save(*args, **kwargs)

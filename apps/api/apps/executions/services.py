@@ -733,6 +733,13 @@ def heartbeat_execution(
             detail=f"Cannot heartbeat execution with status '{execution.status}'.",
         )
     _validate_runner_ownership(execution, runner_id, claim_token)
+    try:
+        from apps.changes import services as change_services  # avoid circular
+
+        change_services.enforce_emergency_expiry_for_execution(execution)
+    except Exception:
+        logger.exception("Failed to enforce change emergency expiry during heartbeat")
+        raise
     execution.last_heartbeat_at = timezone.now()
     execution.save(update_fields=["last_heartbeat_at", "updated_at"])
     return execution

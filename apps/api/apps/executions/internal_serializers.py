@@ -47,6 +47,7 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
     operation_profile_key = serializers.SerializerMethodField()
     verification_plan_id = serializers.SerializerMethodField()
     verification_keys = serializers.SerializerMethodField()
+    breakglass = serializers.SerializerMethodField()
 
     class Meta:
         model = Execution
@@ -67,6 +68,7 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             "operation_profile_key",
             "verification_plan_id",
             "verification_keys",
+            "breakglass",
         ]
 
     def _get_binding(self, obj):
@@ -161,6 +163,34 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             }
             for check in checks.order_by("position")
         ]
+
+    def get_breakglass(self, obj):
+        """Return sanitized breakglass session facts if an active session exists."""
+        binding = self._get_binding(obj)
+        if binding is None:
+            return None
+        try:
+            from apps.changes.models import BreakglassSession
+            from apps.changes.services import (
+                _build_scope_summary,
+                enforce_emergency_expiry_for_change,
+            )
+
+            enforce_emergency_expiry_for_change(binding.change_record)
+            session = BreakglassSession.objects.get(
+                change_record=binding.change_record,
+                status=BreakglassSession.Status.ACTIVE,
+            )
+        except Exception:
+            return None
+        return {
+            "breakglass_session_id": str(session.id),
+            "scope_sha256": session.scope_sha256,
+            "scope_summary": _build_scope_summary(session.scope_json),
+            "started_at": session.started_at,
+            "expires_at": session.expires_at,
+            "review_due_at": session.review_due_at,
+        }
 
 
 class HeartbeatSerializer(serializers.Serializer):

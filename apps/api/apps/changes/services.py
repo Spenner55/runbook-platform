@@ -10,13 +10,17 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor, AuditService, system_actor
 from apps.changes.models import (
+    BreakglassSession,
     ChangeClosure,
+    ChangeException,
     ChangeExecutionBinding,
     ChangeRecord,
     ChangeTarget,
@@ -24,6 +28,7 @@ from apps.changes.models import (
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    RetroReview,
     TargetLock,
     VerificationCheck,
     VerificationPlan,
@@ -597,7 +602,26 @@ def assert_execution_change_binding_ready(
             detail="Claim token is invalid.",
         )
 
+    enforce_emergency_expiry_for_change(binding.change_record)
     validate_request_integrity(binding.change_record)
+
+
+def enforce_emergency_expiry_for_change(change: ChangeRecord, now=None) -> None:
+    """Synchronously expire emergency exception and breakglass records for a change."""
+    now = now or timezone.now()
+    expire_exceptions(change=change, now=now)
+    expire_breakglass_sessions(change=change, now=now)
+
+
+def enforce_emergency_expiry_for_execution(execution, now=None) -> None:
+    """Expire emergency state for a change-bound execution, if one exists."""
+    try:
+        binding = ChangeExecutionBinding.objects.select_related("change_record").get(
+            execution=execution
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        return
+    enforce_emergency_expiry_for_change(binding.change_record, now=now)
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +650,8 @@ def create_change_record(
     scheduled_for=None,
     targets: list[dict] | None = None,
     actor: AuditActor | None = None,
+    is_emergency: bool = False,
+    emergency_reason: str = "",
 ) -> ChangeRecord:
     """Create a draft change record from an active operation profile."""
     requested_inputs = requested_inputs or {}
@@ -654,6 +680,17 @@ def create_change_record(
             code="invalid_operation_profile",
             detail="Operation profile risk level must be 'high' or 'critical'.",
         )
+    if is_emergency:
+        if not profile.allow_emergency_changes:
+            raise DomainValidationError(
+                code="emergency_changes_not_allowed",
+                detail="Operation profile does not allow emergency changes.",
+            )
+        if not emergency_reason.strip():
+            raise DomainValidationError(
+                code="emergency_reason_required",
+                detail="Emergency reason is required for emergency changes.",
+            )
 
     try:
         workflow = Workflow.objects.get(pk=workflow_id, organization=organization)
@@ -679,19 +716,26 @@ def create_change_record(
     _validate_targets(targets, profile)
 
     with transaction.atomic():
+        actor_user_id = (
+            actor.actor_id
+            if actor and actor.actor_type == AuditEvent.ActorType.USER
+            else None
+        )
         change = ChangeRecord.objects.create(
             organization=organization,
             operation_profile=profile,
             workflow=workflow,
-            requested_by_id=actor.actor_id
-            if actor and actor.actor_type == AuditEvent.ActorType.USER
-            else None,
+            requested_by_id=actor_user_id,
             title=title,
             summary=summary,
             justification=justification,
             status=ChangeRecord.Status.DRAFT,
             requested_inputs=requested_inputs,
             scheduled_for=scheduled_for,
+            is_emergency=is_emergency,
+            emergency_reason=emergency_reason if is_emergency else "",
+            emergency_declared_by_id=actor_user_id if is_emergency else None,
+            emergency_declared_at=timezone.now() if is_emergency else None,
         )
         for position, target_data in enumerate(targets, start=1):
             normalized = normalize_target_identifier(target_data["target_identifier"])
@@ -1699,6 +1743,7 @@ def submit_verification_result(
             .select_related("operation_profile")
             .get(pk=change.pk)
         )
+        enforce_emergency_expiry_for_change(change)
         plan = (
             VerificationPlan.objects.select_for_update()
             .select_related("operation_profile")
@@ -2540,11 +2585,14 @@ def close_change(
             .select_related("operation_profile")
             .get(pk=change.pk)
         )
+        enforce_emergency_expiry_for_change(change)
         if ChangeClosure.objects.filter(change_record=change).exists():
             raise DomainConflictError(
                 code="change_already_closed",
                 detail="Change already has an immutable closure record.",
             )
+
+        assert_retro_reviews_allow_closure(change)
 
         try:
             plan = (
@@ -2612,6 +2660,7 @@ def close_change(
             "failed_required_count": plan.failed_required_count,
             "unmet_required_check_keys": unmet_required,
             "failed_required_check_keys": failed_required,
+            "retro_review_summary": summarize_retro_review_blockers(change),
         }
         execution_summary = _build_closure_execution_summary(change)
         locks_released = _release_active_target_locks(
@@ -2625,6 +2674,14 @@ def close_change(
             **execution_summary,
             "locks_released": locks_released,
         }
+        breakglass_sessions_ended = end_active_breakglass_sessions_for_change(
+            change=change,
+            end_reason="change_closed",
+            actor=audit_actor,
+        )
+        execution_summary["breakglass_sessions_ended"] = [
+            str(session.id) for session in breakglass_sessions_ended
+        ]
         closure = ChangeClosure.objects.create(
             organization=change.organization,
             change_record=change,
@@ -2711,6 +2768,7 @@ def make_dispatchable(
                 detail=f"Cannot dispatch change with status '{change.status}'.",
             )
         now = timezone.now()
+        enforce_emergency_expiry_for_change(change, now=now)
         if (
             change.status == ChangeRecord.Status.SCHEDULED
             and change.scheduled_for
@@ -3527,6 +3585,18 @@ def handle_bound_execution_completed(*, execution) -> None:
 
         profile = OperationProfile.objects.get(pk=change.operation_profile_id)
         now = timezone.now()
+        terminal_breakglass_reason = (
+            "execution_finished"
+            if execution.status == Execution.Status.SUCCEEDED
+            else "execution_cancelled"
+            if execution.status == Execution.Status.CANCELLED
+            else "execution_failed"
+        )
+        end_active_breakglass_sessions_for_change(
+            change=change,
+            end_reason=terminal_breakglass_reason,
+            actor=system_actor("Change service"),
+        )
 
         if execution.status == Execution.Status.SUCCEEDED:
             if profile.verification_required:
@@ -4151,15 +4221,16 @@ def run_dispatch_preflight(
         .prefetch_related("targets")
         .get(pk=change.pk)
     )
+    enforce_emergency_expiry_for_change(change, now=now)
 
     targets = list(change.targets.order_by("position"))
     checks: list[dict] = []
     conflicts: list[dict] = []
 
     approved_status_ok = _preflight_check_approval_status(change, checks)
-    policy_pass_ok = _preflight_check_policy_gate(change, checks)
+    policy_pass_ok = _preflight_check_policy_gate(change, checks, now, targets)
     window_open_ok, window_snapshot_sha256 = _preflight_check_window(
-        change, now, checks
+        change, now, checks, targets
     )
     freeze_conflicts_ok = _preflight_check_freeze_conflicts(
         change, targets, now, checks, conflicts
@@ -4272,7 +4343,49 @@ def _preflight_check_approval_status(change: ChangeRecord, checks: list) -> bool
     return True
 
 
-def _preflight_check_policy_gate(change: ChangeRecord, checks: list) -> bool:
+def _change_target_ids(change: ChangeRecord, targets: list | None = None) -> list[str]:
+    if targets is not None:
+        return [str(t.id) for t in targets]
+    return [str(tid) for tid in change.targets.values_list("id", flat=True)]
+
+
+def _approved_exception_for_scope(
+    *, change: ChangeRecord, exception_type: str, predicate, now
+) -> ChangeException | None:
+    expire_exceptions(change=change, now=now)
+    for exc in ChangeException.objects.filter(
+        change_record=change,
+        exception_type=exception_type,
+        status=ChangeException.Status.APPROVED,
+        expires_at__gt=now,
+    ).order_by("-approved_at"):
+        if predicate(exc.scope_json or {}):
+            return exc
+    return None
+
+
+def _breakglass_allows_preflight(
+    *,
+    change: ChangeRecord,
+    gate_type: str,
+    target_ids: list[str],
+    now,
+) -> BreakglassSession | None:
+    try:
+        return assert_breakglass_allows(
+            change=change,
+            gate_type=gate_type,
+            action="dispatch",
+            target_ids=target_ids,
+            now=now,
+        )
+    except DomainValidationError:
+        return None
+
+
+def _preflight_check_policy_gate(
+    change: ChangeRecord, checks: list, now, targets: list
+) -> bool:
     pe = change.policy_evaluation
     if pe is None:
         checks.append(
@@ -4291,6 +4404,48 @@ def _preflight_check_policy_gate(change: ChangeRecord, checks: list) -> bool:
         )
         return True
 
+    policy_exception = _approved_exception_for_scope(
+        change=change,
+        exception_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
+        now=now,
+        predicate=lambda scope: (
+            str(scope.get("policy_evaluation_id")) == str(pe.id)
+            and scope.get("overridden_outcome") == effective
+            and (
+                not getattr(pe, "rule_id", None)
+                or str(pe.rule_id)
+                in {str(rid) for rid in scope.get("policy_rule_ids", [])}
+            )
+        ),
+    )
+    if policy_exception is not None:
+        checks.append(
+            {
+                "name": "policy_pass",
+                "ok": True,
+                "detail": "Policy gate is covered by an approved policy_override exception.",
+                "change_exception_id": str(policy_exception.id),
+            }
+        )
+        return True
+
+    breakglass = _breakglass_allows_preflight(
+        change=change,
+        gate_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
+        target_ids=_change_target_ids(change, targets),
+        now=now,
+    )
+    if breakglass is not None:
+        checks.append(
+            {
+                "name": "policy_pass",
+                "ok": True,
+                "detail": "Policy gate is covered by active scoped breakglass.",
+                "breakglass_session_id": str(breakglass.id),
+            }
+        )
+        return True
+
     checks.append(
         {
             "name": "policy_pass",
@@ -4304,7 +4459,7 @@ def _preflight_check_policy_gate(change: ChangeRecord, checks: list) -> bool:
 
 
 def _preflight_check_window(
-    change: ChangeRecord, now, checks: list
+    change: ChangeRecord, now, checks: list, targets: list
 ) -> tuple[bool, str]:
     try:
         window = change.window
@@ -4333,6 +4488,23 @@ def _preflight_check_window(
     if computed_status == ChangeWindow.Status.OPEN:
         checks.append(
             {"name": "window_open", "ok": True, "detail": "Change window is open."}
+        )
+        return True, window_sha256
+
+    breakglass = _breakglass_allows_preflight(
+        change=change,
+        gate_type=ChangeException.ExceptionType.WINDOW_OVERRUN,
+        target_ids=_change_target_ids(change, targets),
+        now=now,
+    )
+    if breakglass is not None:
+        checks.append(
+            {
+                "name": "window_open",
+                "ok": True,
+                "detail": "Window gate is covered by active scoped breakglass.",
+                "breakglass_session_id": str(breakglass.id),
+            }
         )
         return True, window_sha256
 
@@ -4385,11 +4557,24 @@ def _preflight_check_freeze_conflicts(
     matching_rules = list(base_qs.filter(scope_filter).order_by("starts_at"))
 
     blocking: list[FreezeRule] = []
+    target_ids = _change_target_ids(change, targets)
+    target_id_set = set(target_ids)
     for rule in matching_rules:
         if rule.behavior == FreezeRule.Behavior.BLOCK:
             blocking.append(rule)
         elif rule.behavior == FreezeRule.Behavior.ALLOW_WITH_EXCEPTION:
-            if not change.freeze_exception_reference:
+            exception = _approved_exception_for_scope(
+                change=change,
+                exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
+                now=now,
+                predicate=lambda scope, rule=rule: (
+                    str(scope.get("freeze_rule_id")) == str(rule.id)
+                    and target_id_set.issubset(
+                        {str(tid) for tid in scope.get("target_ids", [])}
+                    )
+                ),
+            )
+            if exception is None:
                 blocking.append(rule)
 
     for rule in blocking:
@@ -4576,3 +4761,1692 @@ def _preflight_check_verification_plan(
         }
     )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 2: Exception services
+# ---------------------------------------------------------------------------
+
+_EXCEPTION_SCOPE_REQUIRED_KEYS: dict[str, frozenset] = {
+    ChangeException.ExceptionType.FREEZE_OVERRIDE: frozenset(
+        ["freeze_rule_id", "target_ids"]
+    ),
+    ChangeException.ExceptionType.WINDOW_OVERRUN: frozenset(
+        ["change_window_id", "allowed_until"]
+    ),
+    ChangeException.ExceptionType.LATE_VERIFICATION: frozenset(
+        ["verification_plan_id", "verification_check_ids", "due_at"]
+    ),
+    ChangeException.ExceptionType.POLICY_OVERRIDE: frozenset(
+        ["policy_evaluation_id", "policy_rule_ids", "overridden_outcome"]
+    ),
+    ChangeException.ExceptionType.MISSING_ARTIFACT: frozenset(
+        ["verification_check_id", "expected_artifact_kind", "replacement_evidence"]
+    ),
+}
+
+# Types that require retro-review once approved.
+_EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES = frozenset(
+    [
+        ChangeException.ExceptionType.POLICY_OVERRIDE,
+        ChangeException.ExceptionType.MISSING_ARTIFACT,
+    ]
+)
+_EXCEPTION_ADMIN_APPROVAL_REQUIRED_TYPES = frozenset(
+    [
+        ChangeException.ExceptionType.POLICY_OVERRIDE,
+        ChangeException.ExceptionType.MISSING_ARTIFACT,
+    ]
+)
+
+_MAX_EXCEPTION_REASON_LENGTH = 4000
+
+
+def _assert_exception_approver_allowed(
+    *, change_exception: ChangeException, actor: AuditActor, actor_user
+) -> None:
+    if (
+        actor_user is not None
+        and change_exception.requested_by_id is not None
+        and str(actor_user.pk) == str(change_exception.requested_by_id)
+    ):
+        AuditService.emit(
+            organization_id=change_exception.organization_id,
+            actor_type=actor.actor_type,
+            actor_id=actor.actor_id,
+            actor_label=actor.actor_label,
+            event_type="change_exception.self_approval_rejected",
+            object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+            object_id=change_exception.id,
+            metadata={
+                "change_record_id": str(change_exception.change_record_id),
+                "exception_type": change_exception.exception_type,
+                "exception_id": str(change_exception.id),
+            },
+        )
+        raise DomainValidationError(
+            code="exception_self_approval_rejected",
+            detail="The requester cannot approve their own exception.",
+        )
+    if (
+        actor_user is not None
+        and change_exception.exception_type in _EXCEPTION_ADMIN_APPROVAL_REQUIRED_TYPES
+    ):
+        from apps.organizations.models import Membership, MembershipRole
+
+        is_admin = Membership.objects.filter(
+            organization_id=change_exception.organization_id,
+            user=actor_user,
+            role__in=[MembershipRole.ADMIN, MembershipRole.OWNER],
+        ).exists()
+        if not is_admin:
+            raise DomainValidationError(
+                code="exception_admin_approval_required",
+                detail=(
+                    "policy_override and missing_artifact exceptions require admin "
+                    "or owner approval."
+                ),
+            )
+
+
+def _validate_exception_scope(
+    *, change: ChangeRecord, exception_type: str, scope_json: dict
+) -> None:
+    """Validate required keys and type-specific same-change/same-org scope."""
+    required_keys = _EXCEPTION_SCOPE_REQUIRED_KEYS.get(exception_type, frozenset())
+    missing = required_keys - scope_json.keys()
+    if missing:
+        raise DomainValidationError(
+            code="exception_scope_missing_keys",
+            detail=(
+                f"Exception type '{exception_type}' requires scope keys: "
+                f"{sorted(missing)}."
+            ),
+        )
+    if exception_type == ChangeException.ExceptionType.FREEZE_OVERRIDE:
+        _validate_exception_freeze_override(change=change, scope_json=scope_json)
+    elif exception_type == ChangeException.ExceptionType.WINDOW_OVERRUN:
+        _validate_exception_window_overrun(change=change, scope_json=scope_json)
+    elif exception_type == ChangeException.ExceptionType.LATE_VERIFICATION:
+        _validate_exception_late_verification(change=change, scope_json=scope_json)
+    elif exception_type == ChangeException.ExceptionType.POLICY_OVERRIDE:
+        _validate_exception_policy_override(change=change, scope_json=scope_json)
+    elif exception_type == ChangeException.ExceptionType.MISSING_ARTIFACT:
+        _validate_exception_missing_artifact(change=change, scope_json=scope_json)
+
+
+def _validate_exception_freeze_override(
+    *, change: ChangeRecord, scope_json: dict
+) -> None:
+    """freeze_override must reference a same-org allow_with_exception rule and same-change targets."""
+    freeze_rule_id = scope_json.get("freeze_rule_id", "")
+    try:
+        rule = FreezeRule.objects.get(
+            pk=freeze_rule_id, organization=change.organization
+        )
+    except (FreezeRule.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+        raise DomainValidationError(
+            code="freeze_rule_not_found",
+            detail="freeze_override scope must reference a freeze rule in the same organization.",
+        )
+    if rule.behavior == FreezeRule.Behavior.BLOCK:
+        raise DomainValidationError(
+            code="freeze_override_cannot_override_block",
+            detail=(
+                "freeze_override exceptions can only satisfy 'allow_with_exception' "
+                "freeze rules, not 'block' rules."
+            ),
+        )
+    target_ids = {str(tid) for tid in scope_json.get("target_ids", [])}
+    actual_ids = {str(tid) for tid in change.targets.values_list("id", flat=True)}
+    if not target_ids or target_ids - actual_ids:
+        raise DomainValidationError(
+            code="exception_scope_unknown_targets",
+            detail="freeze_override target_ids must belong to the same change.",
+        )
+
+
+def _validate_exception_window_overrun(
+    *, change: ChangeRecord, scope_json: dict
+) -> None:
+    try:
+        window = ChangeWindow.objects.get(
+            pk=scope_json.get("change_window_id"),
+            change_record=change,
+            organization=change.organization,
+        )
+    except (ChangeWindow.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+        raise DomainValidationError(
+            code="change_window_not_found",
+            detail="window_overrun scope must reference this change's window.",
+        )
+    allowed_until = scope_json.get("allowed_until")
+    if isinstance(allowed_until, str):
+        allowed_until = parse_datetime(allowed_until)
+    if allowed_until is None:
+        raise DomainValidationError(
+            code="window_overrun_allowed_until_invalid",
+            detail="window_overrun allowed_until must be a datetime.",
+        )
+    if allowed_until <= window.ends_at:
+        raise DomainValidationError(
+            code="window_overrun_allowed_until_invalid",
+            detail="window_overrun allowed_until must be after the window end.",
+        )
+
+
+def _validate_exception_late_verification(
+    *, change: ChangeRecord, scope_json: dict
+) -> None:
+    try:
+        plan = VerificationPlan.objects.get(
+            pk=scope_json.get("verification_plan_id"),
+            change_record=change,
+            organization=change.organization,
+        )
+    except (
+        VerificationPlan.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
+        raise DomainValidationError(
+            code="verification_plan_not_found",
+            detail="late_verification scope must reference this change's verification plan.",
+        )
+    check_ids = {str(cid) for cid in scope_json.get("verification_check_ids", [])}
+    actual_ids = {
+        str(cid)
+        for cid in VerificationCheck.objects.filter(
+            plan=plan, change_record=change, organization=change.organization
+        ).values_list("id", flat=True)
+    }
+    if not check_ids or check_ids - actual_ids:
+        raise DomainValidationError(
+            code="verification_check_not_found",
+            detail="late_verification verification_check_ids must belong to this change's plan.",
+        )
+
+
+def _validate_exception_policy_override(
+    *, change: ChangeRecord, scope_json: dict
+) -> None:
+    from apps.policies.models import PolicyEvaluation, PolicyRule
+
+    try:
+        evaluation = PolicyEvaluation.objects.get(
+            pk=scope_json.get("policy_evaluation_id"),
+            organization=change.organization,
+        )
+    except (
+        PolicyEvaluation.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
+        raise DomainValidationError(
+            code="policy_evaluation_not_found",
+            detail="policy_override scope must reference a same-organization policy evaluation.",
+        )
+    if not change.policy_evaluation_id or evaluation.id != change.policy_evaluation_id:
+        raise DomainValidationError(
+            code="policy_evaluation_change_mismatch",
+            detail="policy_override scope must reference the policy evaluation linked to this change.",
+        )
+    rule_ids = {str(rid) for rid in scope_json.get("policy_rule_ids", [])}
+    if rule_ids:
+        found = {
+            str(rid)
+            for rid in PolicyRule.objects.filter(
+                id__in=rule_ids, policy__organization=change.organization
+            ).values_list("id", flat=True)
+        }
+        if rule_ids - found:
+            raise DomainValidationError(
+                code="policy_rule_not_found",
+                detail="policy_override policy_rule_ids must belong to this organization.",
+            )
+        if evaluation.rule_id and str(evaluation.rule_id) not in rule_ids:
+            raise DomainValidationError(
+                code="policy_rule_scope_mismatch",
+                detail="policy_override policy_rule_ids must include the evaluated rule.",
+            )
+    overridden_outcome = scope_json.get("overridden_outcome")
+    if overridden_outcome not in ("block", "approval_required"):
+        raise DomainValidationError(
+            code="policy_override_outcome_invalid",
+            detail="policy_override can only override block or approval_required outcomes.",
+        )
+
+
+def _validate_exception_missing_artifact(
+    *, change: ChangeRecord, scope_json: dict
+) -> None:
+    try:
+        check = VerificationCheck.objects.get(
+            pk=scope_json.get("verification_check_id"),
+            change_record=change,
+            organization=change.organization,
+        )
+    except (
+        VerificationCheck.DoesNotExist,
+        DjangoValidationError,
+        ValueError,
+        TypeError,
+    ):
+        raise DomainValidationError(
+            code="verification_check_not_found",
+            detail="missing_artifact scope must reference a verification check on this change.",
+        )
+    expected_kind = str(scope_json.get("expected_artifact_kind", ""))
+    if check.artifact_kind and expected_kind != check.artifact_kind:
+        raise DomainValidationError(
+            code="missing_artifact_kind_mismatch",
+            detail="missing_artifact expected_artifact_kind must match the verification check.",
+        )
+    if not scope_json.get("replacement_evidence"):
+        raise DomainValidationError(
+            code="missing_artifact_replacement_evidence_required",
+            detail="missing_artifact requires replacement evidence summary.",
+        )
+
+
+def request_exception(
+    *,
+    change: ChangeRecord,
+    actor: AuditActor,
+    exception_type: str,
+    reason: str,
+    scope_json: dict,
+    expires_at,
+    actor_user=None,
+) -> ChangeException:
+    """Create a ChangeException in pending_approval status and link an ApprovalRequest."""
+    from apps.approvals.models import ApprovalRequest
+
+    if exception_type not in ChangeException.ExceptionType.values:
+        raise DomainValidationError(
+            code="exception_type_invalid",
+            detail=f"Invalid exception type: '{exception_type}'.",
+        )
+    if not reason or not reason.strip():
+        raise DomainValidationError(
+            code="exception_reason_required",
+            detail="Exception reason is required.",
+        )
+    if len(reason) > _MAX_EXCEPTION_REASON_LENGTH:
+        raise DomainValidationError(
+            code="exception_reason_too_long",
+            detail=f"Exception reason must be {_MAX_EXCEPTION_REASON_LENGTH} characters or fewer.",
+        )
+    if not isinstance(scope_json, dict):
+        raise DomainValidationError(
+            code="exception_scope_invalid",
+            detail="scope_json must be a JSON object.",
+        )
+
+    now = timezone.now()
+    if expires_at is None or expires_at <= now:
+        raise DomainValidationError(
+            code="exception_expires_at_required",
+            detail="expires_at must be a future datetime.",
+        )
+
+    with transaction.atomic():
+        change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+        _validate_exception_scope(
+            change=change, exception_type=exception_type, scope_json=scope_json
+        )
+
+        # window_overrun: cannot authorize dispatch before the window opens
+        if exception_type == ChangeException.ExceptionType.WINDOW_OVERRUN:
+            window = getattr(change, "window", None)
+            if window is None:
+                try:
+                    window = ChangeWindow.objects.get(change_record=change)
+                except ChangeWindow.DoesNotExist:
+                    window = None
+            if window is not None and now < window.starts_at:
+                raise DomainValidationError(
+                    code="window_overrun_before_window_opens",
+                    detail=(
+                        "window_overrun exception cannot authorize dispatch before "
+                        "the change window opens."
+                    ),
+                )
+
+        # Create the exception
+        exc = ChangeException.objects.create(
+            organization=change.organization,
+            change_record=change,
+            exception_type=exception_type,
+            status=ChangeException.Status.PENDING_APPROVAL,
+            reason=reason.strip(),
+            scope_json=scope_json,
+            requested_by=actor_user,
+            requested_at=now,
+            expires_at=expires_at,
+        )
+
+        # Create a linked ApprovalRequest
+        approval_request = ApprovalRequest.objects.create(
+            organization=change.organization,
+            subject_type=ApprovalRequest.SubjectType.CHANGE_EXCEPTION,
+            subject_id=exc.id,
+            execution=None,
+            step=None,
+            status=ApprovalRequest.Status.PENDING,
+            requested_by_runner_id="",
+            requested_at=now,
+        )
+        exc.approval_request = approval_request
+        exc.save(update_fields=["approval_request", "updated_at"])
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.requested",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=exc.id,
+        metadata={
+            "change_record_id": str(change.id),
+            "exception_type": exception_type,
+            "exception_id": str(exc.id),
+            "expires_at": expires_at.isoformat(),
+            "approval_request_id": str(approval_request.id),
+            "scope_key_count": len(scope_json),
+        },
+    )
+    return exc
+
+
+def approve_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    actor_user=None,
+) -> ChangeException:
+    """Approve a pending exception. Requester cannot approve their own exception."""
+    from apps.approvals.models import ApprovalDecision, ApprovalRequest
+
+    # Permission checks before transaction so rejection audit events are not rolled back.
+    _assert_exception_approver_allowed(
+        change_exception=change_exception, actor=actor, actor_user=actor_user
+    )
+
+    with transaction.atomic():
+        change_exception = ChangeException.objects.select_for_update().get(
+            pk=change_exception.pk
+        )
+        expire_exceptions(change=change_exception.change_record)
+        change_exception.refresh_from_db()
+
+        if change_exception.status == ChangeException.Status.EXPIRED:
+            raise InvalidStateTransitionError(
+                code="exception_expired",
+                detail="Exception has expired and cannot be approved.",
+            )
+        if change_exception.status != ChangeException.Status.PENDING_APPROVAL:
+            raise InvalidStateTransitionError(
+                code="exception_not_pending",
+                detail=(
+                    f"Exception is in status '{change_exception.status}'; "
+                    "only pending_approval exceptions can be approved."
+                ),
+            )
+
+        now = timezone.now()
+        change_exception.status = ChangeException.Status.APPROVED
+        change_exception.approved_by = actor_user
+        change_exception.approved_at = now
+        change_exception.save(
+            update_fields=["status", "approved_by", "approved_at", "updated_at"]
+        )
+
+        # Resolve the linked ApprovalRequest
+        if change_exception.approval_request_id:
+            approval_request = ApprovalRequest.objects.select_for_update().get(
+                pk=change_exception.approval_request_id
+            )
+            if approval_request.status == ApprovalRequest.Status.PENDING:
+                approval_request.status = ApprovalRequest.Status.APPROVED
+                approval_request.resolved_at = now
+                approval_request.save(
+                    update_fields=["status", "resolved_at", "updated_at"]
+                )
+                ApprovalDecision.objects.create(
+                    approval_request=approval_request,
+                    decision=ApprovalDecision.Decision.APPROVED,
+                    source_type=ApprovalDecision.SourceType.HUMAN,
+                    decided_by_user=actor_user,
+                    decided_by_label=actor.actor_label,
+                    decided_by_label_source="verified_user",
+                    decided_at=now,
+                )
+
+        # Mark retro-review required on change for severe exception types
+        if change_exception.exception_type in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+            ChangeRecord.objects.filter(pk=change_exception.change_record_id).update(
+                retro_review_required=True,
+                retro_review_blocking_status="pending",
+            )
+
+    # Create RetroReview for qualifying exception types (idempotent, outside transaction)
+    if change_exception.exception_type in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+        ensure_retro_review_for_exception(change_exception)
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.approved",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "approved_at": change_exception.approved_at.isoformat(),
+            "expires_at": change_exception.expires_at.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def reject_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    actor_user=None,
+) -> ChangeException:
+    """Reject a pending exception."""
+    from apps.approvals.models import ApprovalDecision, ApprovalRequest
+
+    with transaction.atomic():
+        change_exception = ChangeException.objects.select_for_update().get(
+            pk=change_exception.pk
+        )
+        expire_exceptions(change=change_exception.change_record)
+        change_exception.refresh_from_db()
+
+        if change_exception.status == ChangeException.Status.EXPIRED:
+            raise InvalidStateTransitionError(
+                code="exception_expired",
+                detail="Exception has expired and cannot be rejected.",
+            )
+        if change_exception.status != ChangeException.Status.PENDING_APPROVAL:
+            raise InvalidStateTransitionError(
+                code="exception_not_pending",
+                detail=(
+                    f"Exception is in status '{change_exception.status}'; "
+                    "only pending_approval exceptions can be rejected."
+                ),
+            )
+
+        now = timezone.now()
+        change_exception.status = ChangeException.Status.REJECTED
+        change_exception.rejected_at = now
+        change_exception.save(update_fields=["status", "rejected_at", "updated_at"])
+
+        if change_exception.approval_request_id:
+            approval_request = ApprovalRequest.objects.select_for_update().get(
+                pk=change_exception.approval_request_id
+            )
+            if approval_request.status == ApprovalRequest.Status.PENDING:
+                approval_request.status = ApprovalRequest.Status.REJECTED
+                approval_request.resolved_at = now
+                approval_request.save(
+                    update_fields=["status", "resolved_at", "updated_at"]
+                )
+                ApprovalDecision.objects.create(
+                    approval_request=approval_request,
+                    decision=ApprovalDecision.Decision.REJECTED,
+                    source_type=ApprovalDecision.SourceType.HUMAN,
+                    decided_by_user=actor_user,
+                    decided_by_label=actor.actor_label,
+                    decided_by_label_source="verified_user",
+                    decided_at=now,
+                )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.rejected",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "rejected_at": change_exception.rejected_at.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def apply_exception_approval_decision(
+    *,
+    approval_request,
+    decision: str,
+    actor: AuditActor,
+    actor_user=None,
+) -> ChangeException:
+    """Synchronize a central ApprovalRequest decision onto its ChangeException."""
+    try:
+        change_exception = ChangeException.objects.select_for_update().get(
+            approval_request=approval_request,
+            organization=approval_request.organization,
+        )
+    except ChangeException.DoesNotExist:
+        raise DomainValidationError(
+            code="change_exception_not_found",
+            detail="Approval request is not linked to a change exception.",
+        )
+
+    expire_exceptions(change=change_exception.change_record)
+    change_exception.refresh_from_db()
+    if change_exception.status == ChangeException.Status.EXPIRED:
+        raise InvalidStateTransitionError(
+            code="exception_expired",
+            detail="Exception has expired and cannot be decided.",
+        )
+    if change_exception.status != ChangeException.Status.PENDING_APPROVAL:
+        raise InvalidStateTransitionError(
+            code="exception_not_pending",
+            detail="Only pending_approval exceptions can be decided.",
+        )
+
+    now = timezone.now()
+    if decision == "approved":
+        _assert_exception_approver_allowed(
+            change_exception=change_exception, actor=actor, actor_user=actor_user
+        )
+        change_exception.status = ChangeException.Status.APPROVED
+        change_exception.approved_by = actor_user
+        change_exception.approved_at = now
+        change_exception.save(
+            update_fields=["status", "approved_by", "approved_at", "updated_at"]
+        )
+        if change_exception.exception_type in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+            ChangeRecord.objects.filter(pk=change_exception.change_record_id).update(
+                retro_review_required=True,
+                retro_review_blocking_status="pending",
+            )
+            transaction.on_commit(
+                lambda exc_id=change_exception.id: ensure_retro_review_for_exception(
+                    ChangeException.objects.get(pk=exc_id)
+                )
+            )
+        event_type = "change_exception.approved"
+        event_metadata = {
+            "approved_at": now.isoformat(),
+            "expires_at": change_exception.expires_at.isoformat(),
+        }
+    elif decision == "rejected":
+        change_exception.status = ChangeException.Status.REJECTED
+        change_exception.rejected_at = now
+        change_exception.save(update_fields=["status", "rejected_at", "updated_at"])
+        event_type = "change_exception.rejected"
+        event_metadata = {"rejected_at": now.isoformat()}
+    else:
+        raise DomainValidationError(
+            code="approval_decision_invalid",
+            detail="Change exception approvals only accept approved or rejected decisions.",
+        )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            **event_metadata,
+        },
+    )
+    return change_exception
+
+
+def resolve_exception(
+    *,
+    change_exception: ChangeException,
+    actor: AuditActor,
+    resolution_note: str = "",
+    actor_user=None,
+) -> ChangeException:
+    """Mark an approved exception as resolved (the underlying condition is repaired)."""
+    if change_exception.status != ChangeException.Status.APPROVED:
+        raise InvalidStateTransitionError(
+            code="exception_not_approved",
+            detail=(
+                f"Exception is in status '{change_exception.status}'; "
+                "only approved exceptions can be resolved."
+            ),
+        )
+
+    now = timezone.now()
+    change_exception.status = ChangeException.Status.RESOLVED
+    change_exception.resolved_at = now
+    change_exception.resolution_note = (resolution_note or "")[:2000]
+    change_exception.save(
+        update_fields=["status", "resolved_at", "resolution_note", "updated_at"]
+    )
+
+    AuditService.emit(
+        organization_id=change_exception.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="change_exception.resolved",
+        object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+        object_id=change_exception.id,
+        metadata={
+            "change_record_id": str(change_exception.change_record_id),
+            "exception_type": change_exception.exception_type,
+            "exception_id": str(change_exception.id),
+            "resolved_at": now.isoformat(),
+        },
+    )
+    return change_exception
+
+
+def expire_exceptions(
+    *,
+    change: ChangeRecord,
+    now=None,
+) -> list:
+    """
+    Mark all pending/approved exceptions whose expires_at <= now as expired.
+    Called synchronously before gate checks.
+    Returns list of expired ChangeException instances.
+    """
+    if now is None:
+        now = timezone.now()
+
+    expired = []
+    to_expire = list(
+        ChangeException.objects.filter(
+            change_record=change,
+            status__in=[
+                ChangeException.Status.PENDING_APPROVAL,
+                ChangeException.Status.APPROVED,
+            ],
+            expires_at__lte=now,
+        )
+    )
+    for exc in to_expire:
+        exc.status = ChangeException.Status.EXPIRED
+        exc.save(update_fields=["status", "updated_at"])
+        expired.append(exc)
+        AuditService.emit(
+            organization_id=exc.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="expiry-check",
+            event_type="change_exception.expired",
+            object_type=AuditEvent.ObjectType.CHANGE_EXCEPTION,
+            object_id=exc.id,
+            metadata={
+                "change_record_id": str(exc.change_record_id),
+                "exception_type": exc.exception_type,
+                "exception_id": str(exc.id),
+                "expired_at": now.isoformat(),
+            },
+        )
+    return expired
+
+
+def find_applicable_exception(
+    *,
+    change: ChangeRecord,
+    exception_type: str,
+    now=None,
+) -> "ChangeException | None":
+    """
+    Return the first approved, non-expired exception of the given type for this change.
+    Expires stale exceptions before querying.
+    """
+    if now is None:
+        now = timezone.now()
+    expire_exceptions(change=change, now=now)
+    return (
+        ChangeException.objects.filter(
+            change_record=change,
+            exception_type=exception_type,
+            status=ChangeException.Status.APPROVED,
+            expires_at__gt=now,
+        )
+        .order_by("-approved_at")
+        .first()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 3: Breakglass Session services
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAX_BREAKGLASS_SECONDS = 14_400  # 4 hours
+_DEFAULT_RETRO_REVIEW_SLA_SECONDS = 86_400  # 24 hours
+
+_BREAKGLASS_SCOPE_REQUIRED_KEYS = frozenset(
+    {"allowed_actions", "target_ids", "gate_types"}
+)
+_BREAKGLASS_SCOPE_FORBIDDEN_KEYS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "auth",
+        "bearer",
+        "bearer_token",
+        "cloud_role",
+        "host_credentials",
+        "iam_role",
+        "iam_policy",
+        "kubeconfig",
+        "password",
+        "private_key",
+        "secret",
+        "ssh_key",
+        "token",
+    }
+)
+
+_BREAKGLASS_ACTIVATABLE_STATUSES = frozenset(
+    {
+        ChangeRecord.Status.APPROVED,
+        ChangeRecord.Status.DISPATCHABLE,
+        ChangeRecord.Status.RUNNING,
+        ChangeRecord.Status.VERIFICATION_PENDING,
+        ChangeRecord.Status.VERIFICATION_FAILED,
+        ChangeRecord.Status.VERIFIED,
+    }
+)
+
+
+def _validate_breakglass_scope(scope_json: dict) -> None:
+    if not isinstance(scope_json, dict):
+        raise DomainValidationError(
+            code="breakglass_scope_invalid",
+            detail="scope_json must be a JSON object.",
+        )
+    missing = _BREAKGLASS_SCOPE_REQUIRED_KEYS - set(scope_json)
+    if missing:
+        raise DomainValidationError(
+            code="breakglass_scope_missing_keys",
+            detail=f"scope_json is missing required keys: {sorted(missing)}.",
+        )
+    for key in ("allowed_actions", "target_ids", "gate_types"):
+        if not isinstance(scope_json[key], list) or len(scope_json[key]) == 0:
+            raise DomainValidationError(
+                code="breakglass_scope_empty_list",
+                detail=f"scope_json.{key} must be a non-empty list.",
+            )
+    for key in scope_json:
+        if key.lower() in _BREAKGLASS_SCOPE_FORBIDDEN_KEYS:
+            raise DomainValidationError(
+                code="breakglass_scope_forbidden_key",
+                detail=(
+                    f"scope_json must not contain credential or privilege material: {key}."
+                ),
+            )
+
+
+def _build_scope_summary(scope_json: dict) -> str:
+    """Return a sanitized, non-sensitive scope summary string for runner logging."""
+    actions = ",".join(str(a) for a in scope_json.get("allowed_actions", []))
+    gates = ",".join(str(g) for g in scope_json.get("gate_types", []))
+    target_count = len(scope_json.get("target_ids", []))
+    return f"actions={actions} gates={gates} targets={target_count}"
+
+
+@transaction.atomic
+def activate_breakglass(
+    *,
+    change: ChangeRecord,
+    actor: AuditActor,
+    scope_json: dict,
+    reason: str,
+    expires_at,
+    actor_user=None,
+) -> BreakglassSession:
+    """
+    Activate a scoped, time-bounded breakglass session for a change.
+
+    Enforces:
+    - Change must be in an activatable status.
+    - scope_json must contain allowed_actions, target_ids, gate_types.
+    - target_ids must reference ChangeTarget UUIDs on this change.
+    - expires_at must be in the future and within the profile max TTL.
+    - At most one active session per change (stale ones expired first).
+    - Creates a pending RetroReview and emits audit events.
+    """
+    change = ChangeRecord.objects.select_for_update().get(pk=change.pk)
+    now = timezone.now()
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    if change.status not in _BREAKGLASS_ACTIVATABLE_STATUSES:
+        raise DomainConflictError(
+            code="change_status_invalid_for_breakglass",
+            detail=(
+                f"Breakglass cannot be activated for a change in status '{change.status}'."
+            ),
+        )
+
+    profile = change.operation_profile
+    if not profile.allow_emergency_changes:
+        raise DomainValidationError(
+            code="breakglass_not_allowed",
+            detail="Operation profile does not allow emergency changes or breakglass.",
+        )
+    max_seconds = profile.max_breakglass_seconds or _DEFAULT_MAX_BREAKGLASS_SECONDS
+    retro_sla_seconds = (
+        profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS
+    )
+
+    if expires_at <= now:
+        raise DomainValidationError(
+            code="breakglass_expires_at_past",
+            detail="expires_at must be a future datetime.",
+        )
+    if (expires_at - now).total_seconds() > max_seconds:
+        raise DomainValidationError(
+            code="breakglass_ttl_exceeded",
+            detail=(
+                f"Requested breakglass duration exceeds the profile maximum of "
+                f"{max_seconds} seconds."
+            ),
+        )
+
+    _validate_breakglass_scope(scope_json)
+
+    target_ids_in_scope = {str(t) for t in scope_json["target_ids"]}
+    actual_target_ids = {
+        str(tid) for tid in change.targets.values_list("id", flat=True)
+    }
+    unknown = target_ids_in_scope - actual_target_ids
+    if unknown:
+        raise DomainValidationError(
+            code="breakglass_scope_unknown_targets",
+            detail=(
+                f"scope_json.target_ids contains IDs not belonging to this change: "
+                f"{sorted(unknown)}."
+            ),
+        )
+
+    scope_sha256 = sha256_canonical_json(scope_json)
+    review_due_at = now + timedelta(seconds=retro_sla_seconds)
+
+    session = BreakglassSession(
+        organization=change.organization,
+        change_record=change,
+        status=BreakglassSession.Status.ACTIVE,
+        scope_json=scope_json,
+        scope_sha256=scope_sha256,
+        reason=reason[:4000],
+        activated_by=actor_user,
+        started_at=now,
+        expires_at=expires_at,
+        review_due_at=review_due_at,
+        review_status=BreakglassSession.ReviewStatus.PENDING,
+    )
+    session.save()
+
+    change.retro_review_required = True
+    if change.retro_review_due_at is None or review_due_at < change.retro_review_due_at:
+        change.retro_review_due_at = review_due_at
+    change.retro_review_blocking_status = "pending"
+    change.save(
+        update_fields=[
+            "retro_review_required",
+            "retro_review_due_at",
+            "retro_review_blocking_status",
+            "updated_at",
+        ]
+    )
+
+    RetroReview.objects.create(
+        organization=change.organization,
+        change_record=change,
+        breakglass_session=session,
+        status=RetroReview.Status.PENDING,
+        due_at=review_due_at,
+    )
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="breakglass.activated",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "scope_sha256": scope_sha256,
+            "scope_action_count": len(scope_json.get("allowed_actions", [])),
+            "scope_gate_count": len(scope_json.get("gate_types", [])),
+            "scope_target_count": len(scope_json.get("target_ids", [])),
+            "expires_at": expires_at.isoformat(),
+            "review_due_at": review_due_at.isoformat(),
+            "started_at": now.isoformat(),
+        },
+    )
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label="breakglass-activation",
+        event_type="retro_review.required",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=session.retro_review.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "review_due_at": review_due_at.isoformat(),
+        },
+    )
+    return session
+
+
+def end_breakglass(
+    *,
+    session: BreakglassSession,
+    actor: AuditActor | None = None,
+    end_reason: str = "manual_end",
+    actor_user=None,
+) -> BreakglassSession:
+    """End an active breakglass session manually."""
+    if session.status != BreakglassSession.Status.ACTIVE:
+        raise InvalidStateTransitionError(
+            code="breakglass_not_active",
+            detail=(
+                f"Breakglass session is in status '{session.status}'; "
+                "only active sessions can be ended."
+            ),
+        )
+    now = timezone.now()
+    session.status = BreakglassSession.Status.ENDED
+    session.ended_at = now
+    session.end_reason = end_reason
+    session.ended_by = actor_user
+    session.save(
+        update_fields=["status", "ended_at", "end_reason", "ended_by", "updated_at"]
+    )
+    audit_actor = actor if actor is not None else system_actor()
+    AuditService.emit(
+        organization_id=session.organization_id,
+        actor_type=audit_actor.actor_type,
+        actor_id=audit_actor.actor_id,
+        actor_label=audit_actor.actor_label,
+        event_type="breakglass.ended",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(session.change_record_id),
+            "breakglass_session_id": str(session.id),
+            "end_reason": end_reason,
+            "ended_at": now.isoformat(),
+        },
+    )
+    return session
+
+
+def end_active_breakglass_sessions_for_change(
+    *,
+    change: ChangeRecord,
+    end_reason: str,
+    actor: AuditActor | None = None,
+) -> list[BreakglassSession]:
+    """End all active breakglass sessions on a terminal change transition."""
+    ended: list[BreakglassSession] = []
+    for session in BreakglassSession.objects.filter(
+        change_record=change,
+        status=BreakglassSession.Status.ACTIVE,
+    ):
+        try:
+            ended.append(
+                end_breakglass(
+                    session=session,
+                    actor=actor or system_actor("Change service"),
+                    end_reason=end_reason,
+                )
+            )
+        except InvalidStateTransitionError:
+            continue
+    return ended
+
+
+def expire_breakglass_sessions(
+    *,
+    change: ChangeRecord | None = None,
+    now=None,
+) -> list:
+    """
+    Expire active breakglass sessions whose expires_at <= now.
+    Optionally scoped to a single change. Returns list of expired sessions.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = BreakglassSession.objects.filter(
+        status=BreakglassSession.Status.ACTIVE,
+        expires_at__lte=now,
+    )
+    if change is not None:
+        qs = qs.filter(change_record=change)
+
+    expired = []
+    for session in qs:
+        new_review_status = (
+            BreakglassSession.ReviewStatus.OVERDUE
+            if session.review_due_at <= now
+            else BreakglassSession.ReviewStatus.PENDING
+        )
+        session.status = BreakglassSession.Status.EXPIRED
+        session.ended_at = now
+        session.end_reason = "expired"
+        session.review_status = new_review_status
+        session.save(
+            update_fields=[
+                "status",
+                "ended_at",
+                "end_reason",
+                "review_status",
+                "updated_at",
+            ]
+        )
+        expired.append(session)
+        AuditService.emit(
+            organization_id=session.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="expiry-check",
+            event_type="breakglass.expired",
+            object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+            object_id=session.id,
+            metadata={
+                "change_record_id": str(session.change_record_id),
+                "breakglass_session_id": str(session.id),
+                "expired_at": now.isoformat(),
+                "review_status": new_review_status,
+            },
+        )
+    return expired
+
+
+def assert_breakglass_allows(
+    *,
+    change: ChangeRecord,
+    gate_type: str,
+    action: str,
+    target_ids: list,
+    now=None,
+) -> BreakglassSession:
+    """
+    Assert that an active breakglass session on this change authorizes
+    the given gate_type, action, and all target_ids.
+
+    Raises DomainValidationError if no active session or scope doesn't cover
+    the requested gate/action/targets.  Returns the active session on success.
+    """
+    if now is None:
+        now = timezone.now()
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    try:
+        session = BreakglassSession.objects.get(
+            change_record=change,
+            status=BreakglassSession.Status.ACTIVE,
+        )
+    except BreakglassSession.DoesNotExist:
+        raise DomainValidationError(
+            code="no_active_breakglass_session",
+            detail="No active breakglass session found for this change.",
+        )
+
+    scope = session.scope_json
+    allowed_gates = set(scope.get("gate_types", []))
+    allowed_actions = set(scope.get("allowed_actions", []))
+    scoped_targets = {str(t) for t in scope.get("target_ids", [])}
+
+    if gate_type not in allowed_gates:
+        raise DomainValidationError(
+            code="breakglass_gate_type_not_in_scope",
+            detail=f"Gate type '{gate_type}' is not within the breakglass session scope.",
+        )
+    if action not in allowed_actions:
+        raise DomainValidationError(
+            code="breakglass_action_not_in_scope",
+            detail=f"Action '{action}' is not within the breakglass session scope.",
+        )
+    out_of_scope = {str(t) for t in target_ids} - scoped_targets
+    if out_of_scope:
+        raise DomainValidationError(
+            code="breakglass_targets_out_of_scope",
+            detail=f"Target IDs not within breakglass scope: {sorted(out_of_scope)}.",
+        )
+
+    return session
+
+
+def record_breakglass_heartbeat(
+    *,
+    change: ChangeRecord,
+    runner_id: str,
+    claim_token: str,
+    observed_session_id: str,
+    now=None,
+) -> "BreakglassSession | None":
+    """
+    Record that the runner observed the breakglass session while executing.
+    Validates runner ownership through the bound execution.
+    Does NOT extend expiry — heartbeat is an observation fact, not authority.
+    Returns the active session or None if session is gone or ID mismatches.
+    """
+    if now is None:
+        now = timezone.now()
+
+    try:
+        binding = change.execution_binding
+        execution = binding.execution
+    except Exception:
+        raise DomainValidationError(
+            code="no_execution_binding",
+            detail="No execution is bound to this change.",
+        )
+
+    from apps.executions.services import _validate_runner_ownership  # avoid circular
+
+    _validate_runner_ownership(execution, runner_id, claim_token)
+
+    expire_breakglass_sessions(change=change, now=now)
+
+    try:
+        session = BreakglassSession.objects.get(
+            change_record=change,
+            status=BreakglassSession.Status.ACTIVE,
+        )
+    except BreakglassSession.DoesNotExist:
+        return None
+
+    if str(session.id) != str(observed_session_id):
+        return None
+
+    session.last_heartbeat_at = now
+    session.save(update_fields=["last_heartbeat_at", "updated_at"])
+
+    AuditService.emit(
+        organization_id=session.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label=f"runner:{runner_id}",
+        event_type="breakglass.heartbeat_observed",
+        object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+        object_id=session.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "breakglass_session_id": str(session.id),
+            "runner_id": runner_id,
+            "observed_at": now.isoformat(),
+            "expires_at": session.expires_at.isoformat(),
+        },
+    )
+    return session
+
+
+def mark_breakglass_review_overdue(*, now=None) -> list:
+    """
+    Find breakglass sessions with pending review past their review_due_at.
+    Mark review_status as overdue and emit audit events.
+    Returns list of affected sessions.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = BreakglassSession.objects.filter(
+        review_status=BreakglassSession.ReviewStatus.PENDING,
+        review_due_at__lte=now,
+    )
+    overdue = []
+    for session in qs:
+        session.review_status = BreakglassSession.ReviewStatus.OVERDUE
+        session.save(update_fields=["review_status", "updated_at"])
+        overdue.append(session)
+        AuditService.emit(
+            organization_id=session.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="overdue-check",
+            event_type="retro_review.overdue",
+            object_type=AuditEvent.ObjectType.BREAKGLASS_SESSION,
+            object_id=session.id,
+            metadata={
+                "change_record_id": str(session.change_record_id),
+                "breakglass_session_id": str(session.id),
+                "review_due_at": session.review_due_at.isoformat(),
+                "marked_overdue_at": now.isoformat(),
+            },
+        )
+    return overdue
+
+
+# ---------------------------------------------------------------------------
+# Retro-review lifecycle services (Phase 11.4 Batch 4)
+# ---------------------------------------------------------------------------
+
+
+def _recompute_change_retro_review_status(change: ChangeRecord) -> None:
+    """
+    Recompute change.retro_review_blocking_status from all RetroReview objects
+    linked to the change, and save.
+
+    Priority:
+      control_failure  (any submitted review has control_failure disposition)
+      overdue          (any pending review is past its due_at)
+      pending          (any pending review not yet overdue)
+      ""               (all reviews submitted/accepted)
+    """
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    if not reviews:
+        return
+
+    now = timezone.now()
+    new_status = ""
+    for review in reviews:
+        if review.status == RetroReview.Status.SUBMITTED:
+            if review.disposition == RetroReview.Disposition.CONTROL_FAILURE:
+                new_status = "control_failure"
+                break
+        elif review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                new_status = "overdue"
+            elif new_status not in ("overdue",):
+                new_status = "pending"
+
+    if change.retro_review_blocking_status != new_status:
+        change.retro_review_blocking_status = new_status
+        change.save(update_fields=["retro_review_blocking_status", "updated_at"])
+
+
+def ensure_retro_review_for_exception(change_exception) -> "RetroReview | None":
+    """
+    Idempotently create a RetroReview for qualifying exception types.
+    Returns None for non-qualifying types.
+    """
+    if change_exception.exception_type not in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+        return None
+
+    # Idempotent: return existing if already created
+    existing = RetroReview.objects.filter(change_exception=change_exception).first()
+    if existing is not None:
+        return existing
+
+    change = ChangeRecord.objects.select_for_update().get(
+        pk=change_exception.change_record_id
+    )
+    profile = change.operation_profile
+    retro_sla_seconds = (
+        profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS
+    )
+    now = timezone.now()
+    due_at = now + timedelta(seconds=retro_sla_seconds)
+
+    review = RetroReview.objects.create(
+        organization=change.organization,
+        change_record=change,
+        change_exception=change_exception,
+        status=RetroReview.Status.PENDING,
+        due_at=due_at,
+    )
+
+    # Update change fields
+    change.retro_review_required = True
+    if change.retro_review_due_at is None or due_at < change.retro_review_due_at:
+        change.retro_review_due_at = due_at
+    change.retro_review_blocking_status = "pending"
+    change.save(
+        update_fields=[
+            "retro_review_required",
+            "retro_review_due_at",
+            "retro_review_blocking_status",
+            "updated_at",
+        ]
+    )
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label="exception-approval",
+        event_type="retro_review.required",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=review.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "change_exception_id": str(change_exception.id),
+            "exception_type": change_exception.exception_type,
+            "review_due_at": due_at.isoformat(),
+        },
+    )
+    return review
+
+
+def submit_retro_review(
+    *,
+    review: RetroReview,
+    actor: AuditActor,
+    actor_user=None,
+    disposition: str,
+    summary: str,
+    evidence_json: dict | None = None,
+    remediation_reference: str = "",
+) -> RetroReview:
+    """
+    Submit a retro-review with a disposition.
+
+    Self-review check is done before the transaction (same pattern as approve_exception).
+    """
+    if evidence_json is None:
+        evidence_json = {}
+
+    if disposition not in RetroReview.Disposition.values:
+        raise DomainValidationError(
+            code="retro_review_disposition_invalid",
+            detail=f"Invalid disposition: '{disposition}'.",
+        )
+    if not summary or not summary.strip():
+        raise DomainValidationError(
+            code="retro_review_summary_required",
+            detail="Review summary is required.",
+        )
+
+    # Self-review check before transaction so audit event is not rolled back.
+    if actor_user is not None:
+        # Breakglass: activator cannot review
+        if (
+            review.breakglass_session_id is not None
+            and review.breakglass_session.activated_by_id is not None
+            and str(actor_user.pk) == str(review.breakglass_session.activated_by_id)
+        ):
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=actor.actor_type,
+                actor_id=actor.actor_id,
+                actor_label=actor.actor_label,
+                event_type="retro_review.self_review_rejected",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "reason": "breakglass_activator_cannot_review",
+                },
+            )
+            raise DomainValidationError(
+                code="retro_review_self_review_rejected",
+                detail="The breakglass activator cannot review their own session.",
+            )
+        # Exception: requester cannot review
+        if (
+            review.change_exception_id is not None
+            and review.change_exception.requested_by_id is not None
+            and str(actor_user.pk) == str(review.change_exception.requested_by_id)
+        ):
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=actor.actor_type,
+                actor_id=actor.actor_id,
+                actor_label=actor.actor_label,
+                event_type="retro_review.self_review_rejected",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "reason": "exception_requester_cannot_review",
+                },
+            )
+            raise DomainValidationError(
+                code="retro_review_self_review_rejected",
+                detail="The exception requester cannot review their own exception.",
+            )
+
+    if (
+        disposition == RetroReview.Disposition.NEEDS_REMEDIATION
+        and not remediation_reference.strip()
+    ):
+        raise DomainValidationError(
+            code="retro_review_remediation_reference_required",
+            detail="A remediation reference is required for 'needs_remediation' disposition.",
+        )
+    if disposition == RetroReview.Disposition.CONTROL_FAILURE:
+        if not remediation_reference.strip():
+            raise DomainValidationError(
+                code="retro_review_remediation_reference_required",
+                detail="A remediation reference is required for 'control_failure' disposition.",
+            )
+        if actor_user is not None:
+            from apps.organizations.models import Membership, MembershipRole
+
+            is_admin = Membership.objects.filter(
+                organization_id=review.organization_id,
+                user=actor_user,
+                role__in=[MembershipRole.ADMIN, MembershipRole.OWNER],
+            ).exists()
+            if not is_admin:
+                raise DomainValidationError(
+                    code="retro_review_admin_required",
+                    detail="control_failure retro-review disposition requires an admin or owner reviewer.",
+                )
+
+    with transaction.atomic():
+        review = RetroReview.objects.select_for_update().get(pk=review.pk)
+
+        if review.status != RetroReview.Status.PENDING:
+            raise InvalidStateTransitionError(
+                code="retro_review_not_pending",
+                detail=f"RetroReview is in status '{review.status}'; only pending reviews can be submitted.",
+            )
+
+        now = timezone.now()
+        review.status = RetroReview.Status.SUBMITTED
+        review.disposition = disposition
+        review.reviewed_by = actor_user
+        review.reviewed_at = now
+        review.summary = summary
+        review.evidence_json = evidence_json
+        review.remediation_required = disposition in (
+            RetroReview.Disposition.NEEDS_REMEDIATION,
+            RetroReview.Disposition.CONTROL_FAILURE,
+        )
+        review.remediation_reference = remediation_reference
+        review.control_failure_category = evidence_json.get(
+            "control_failure_category", ""
+        )
+        review.save(
+            update_fields=[
+                "status",
+                "disposition",
+                "reviewed_by",
+                "reviewed_at",
+                "summary",
+                "evidence_json",
+                "remediation_required",
+                "remediation_reference",
+                "control_failure_category",
+                "updated_at",
+            ]
+        )
+
+        # Update linked breakglass session review_status
+        if review.breakglass_session_id is not None:
+            BreakglassSession.objects.filter(pk=review.breakglass_session_id).update(
+                review_status=BreakglassSession.ReviewStatus.SUBMITTED,
+                updated_at=now,
+            )
+
+        # Recompute change blocking status
+        change = ChangeRecord.objects.select_for_update().get(
+            pk=review.change_record_id
+        )
+        _recompute_change_retro_review_status(change)
+
+    AuditService.emit(
+        organization_id=review.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="retro_review.submitted",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=review.id,
+        metadata={
+            "change_record_id": str(review.change_record_id),
+            "disposition": disposition,
+            "remediation_required": review.remediation_required,
+            "reviewed_at": now.isoformat(),
+        },
+    )
+    return review
+
+
+def mark_overdue_retro_reviews(*, now=None) -> list:
+    """
+    Find pending RetroReview objects past their due_at.
+    Update change.retro_review_blocking_status to 'overdue' if not already.
+    Emit audit events (no duplicate events if already overdue).
+    Returns list of affected reviews.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = RetroReview.objects.filter(
+        status=RetroReview.Status.PENDING,
+        due_at__lte=now,
+    ).select_related("change_record")
+
+    affected = []
+    for review in qs:
+        change = review.change_record
+        if change.retro_review_blocking_status != "overdue":
+            change.retro_review_blocking_status = "overdue"
+            change.save(update_fields=["retro_review_blocking_status", "updated_at"])
+            affected.append(review)
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=AuditEvent.ActorType.SYSTEM,
+                actor_label="overdue-check",
+                event_type="retro_review.overdue",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "review_due_at": review.due_at.isoformat(),
+                    "marked_overdue_at": now.isoformat(),
+                },
+            )
+    return affected
+
+
+def assert_retro_reviews_allow_closure(change: ChangeRecord) -> None:
+    """
+    Gate closure: raise DomainConflictError if any retro-review blocks closure.
+
+    Blocking conditions:
+    - pending review (code: retro_review_pending or retro_review_overdue if past due_at)
+    - submitted + needs_remediation with no remediation_reference
+    """
+    if not change.retro_review_required:
+        return
+
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    now = timezone.now()
+    blockers = []
+
+    for review in reviews:
+        if review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                blockers.append(
+                    {"review_id": str(review.id), "reason": "retro_review_overdue"}
+                )
+            else:
+                blockers.append(
+                    {"review_id": str(review.id), "reason": "retro_review_pending"}
+                )
+        elif review.status == RetroReview.Status.SUBMITTED:
+            if (
+                review.disposition
+                in (
+                    RetroReview.Disposition.NEEDS_REMEDIATION,
+                    RetroReview.Disposition.CONTROL_FAILURE,
+                )
+                and not review.remediation_reference.strip()
+            ):
+                blockers.append(
+                    {
+                        "review_id": str(review.id),
+                        "reason": "retro_review_needs_remediation_reference",
+                    }
+                )
+
+    if blockers:
+        AuditService.emit(
+            organization_id=change.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="change-closure",
+            event_type="change.closure_blocked_retro_review",
+            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
+            object_id=change.id,
+            metadata={
+                "blockers": blockers,
+                "change_record_id": str(change.id),
+            },
+        )
+        raise DomainConflictError(
+            code="retro_review_blocking_closure",
+            detail="Change closure is blocked by pending or unresolved retro-reviews.",
+        )
+
+
+def summarize_retro_review_blockers(change: ChangeRecord) -> dict:
+    """Return a summary dict of retro-review blocking state for a change."""
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    now = timezone.now()
+
+    pending_ids = []
+    overdue_ids = []
+    needs_remediation_without_ref_ids = []
+    control_failure_ids = []
+
+    for review in reviews:
+        if review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                overdue_ids.append(str(review.id))
+            else:
+                pending_ids.append(str(review.id))
+        elif review.status == RetroReview.Status.SUBMITTED:
+            if review.disposition == RetroReview.Disposition.CONTROL_FAILURE:
+                control_failure_ids.append(str(review.id))
+            if (
+                review.disposition
+                in (
+                    RetroReview.Disposition.NEEDS_REMEDIATION,
+                    RetroReview.Disposition.CONTROL_FAILURE,
+                )
+                and not review.remediation_reference.strip()
+            ):
+                needs_remediation_without_ref_ids.append(str(review.id))
+
+    has_blockers = bool(pending_ids or overdue_ids or needs_remediation_without_ref_ids)
+    return {
+        "has_blockers": has_blockers,
+        "pending_review_ids": pending_ids,
+        "overdue_review_ids": overdue_ids,
+        "needs_remediation_without_ref_ids": needs_remediation_without_ref_ids,
+        "control_failure_review_ids": control_failure_ids,
+        "total_reviews": len(reviews),
+    }

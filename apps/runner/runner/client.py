@@ -17,6 +17,8 @@ from runner.schemas import (
     ArtifactUploadResponse,
     BindChangeExecutionRequest,
     BindChangeExecutionResponse,
+    BreakglassHeartbeatRequest,
+    BreakglassHeartbeatResponse,
     ClaimNextRequest,
     ClaimNextResponse,
     CompleteExecutionRequest,
@@ -413,6 +415,38 @@ class ApiClient:
             ).model_dump(mode="json"),
         )
         return ExecutionFinishedResponse.model_validate(data)
+
+    def breakglass_heartbeat(
+        self,
+        change_record_id: UUID,
+        claim_token: UUID,
+        breakglass_session_id: UUID,
+        scope_sha256: str,
+    ) -> BreakglassHeartbeatResponse | None:
+        """
+        Report a breakglass session observation to Django.  Non-fatal on error.
+        Returns the response or None if the call fails.
+        """
+        try:
+            data = self._post(
+                f"/api/v1/internal/changes/{change_record_id}/breakglass-heartbeat/",
+                BreakglassHeartbeatRequest(
+                    runner_id=self._runner_id,
+                    claim_token=claim_token,
+                    breakglass_session_id=breakglass_session_id,
+                    scope_sha256=scope_sha256,
+                    observed_at=_utcnow(),
+                ).model_dump(mode="json"),
+            )
+            return BreakglassHeartbeatResponse.model_validate(data)
+        except Exception as exc:
+            logger.warning(
+                "breakglass_heartbeat failed for change %s session %s: %s",
+                change_record_id,
+                breakglass_session_id,
+                exc,
+            )
+            return None
 
     def submit_verification_result(
         self,

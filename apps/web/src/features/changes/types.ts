@@ -12,6 +12,7 @@ export interface OperationProfile {
   risk_level: string
   requires_approval: boolean
   verification_required: boolean
+  allow_emergency_changes: boolean
   allowed_target_types: string[]
   allowed_workflows: AllowedWorkflow[]
 }
@@ -130,8 +131,118 @@ export interface ChangeRecord {
   policy_decision: Record<string, unknown> | null
   execution_binding: ExecutionBindingSummary | null
   window: ChangeWindow | null
+  is_emergency?: boolean
+  emergency_reason?: string
+  retro_review_required?: boolean
+  retro_review_due_at?: string | null
+  retro_review_blocking_status?: string
+  active_breakglass_session?: BreakglassSession | null
   created_at: string
   updated_at: string
+}
+
+// ----- Exception types -----
+
+export type ExceptionType =
+  | 'freeze_override'
+  | 'window_overrun'
+  | 'late_verification'
+  | 'policy_override'
+  | 'missing_artifact'
+
+export type ExceptionStatus = 'pending_approval' | 'approved' | 'rejected' | 'resolved' | 'expired'
+
+export interface ChangeException {
+  id: string
+  change_record_id: string
+  exception_type: ExceptionType
+  status: ExceptionStatus
+  reason: string
+  scope_json: Record<string, unknown>
+  requested_by_id: string | null
+  requested_at: string
+  approval_request_id: string | null
+  approved_by_id: string | null
+  approved_at: string | null
+  rejected_at: string | null
+  expires_at: string
+  resolved_at: string | null
+  resolution_note: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateExceptionInput {
+  exception_type: ExceptionType
+  reason: string
+  scope_json: Record<string, unknown>
+  expires_at: string
+}
+
+// ----- Breakglass types -----
+
+export type BreakglassStatus = 'active' | 'ended' | 'expired' | 'revoked'
+export type BreakglassReviewStatus = 'pending' | 'submitted' | 'accepted' | 'overdue' | 'blocked'
+
+export interface BreakglassSession {
+  id: string
+  change_record_id: string
+  status: BreakglassStatus
+  scope_sha256: string
+  reason: string
+  activated_by_id: string | null
+  started_at: string
+  expires_at: string
+  ended_at: string | null
+  end_reason: string
+  review_due_at: string
+  review_status: BreakglassReviewStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface ActivateBreakglassInput {
+  reason: string
+  scope_json: {
+    allowed_actions: string[]
+    gate_types: string[]
+    target_ids: string[]
+    [key: string]: unknown
+  }
+  expires_at: string
+}
+
+// ----- Retro-review types -----
+
+export type RetroReviewStatus = 'pending' | 'submitted' | 'superseded'
+export type RetroReviewDisposition = 'accepted' | 'needs_remediation' | 'control_failure'
+
+export interface RetroReview {
+  id: string
+  change_record_id: string
+  change_record_title?: string
+  breakglass_session_id: string | null
+  change_exception_id: string | null
+  status: RetroReviewStatus
+  disposition: RetroReviewDisposition | ''
+  reviewed_by_id: string | null
+  reviewed_at: string | null
+  due_at: string
+  summary: string
+  remediation_required: boolean
+  remediation_reference: string
+  control_failure_category: string
+  evidence_json: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface SubmitRetroReviewInput {
+  retro_review_id: string
+  disposition: RetroReviewDisposition
+  summary: string
+  remediation_reference?: string
+  evidence_json?: Record<string, unknown>
 }
 
 export type VerificationCheckType =
@@ -236,4 +347,6 @@ export interface CreateChangeInput {
     environment: string
     display_name?: string
   }>
+  is_emergency?: boolean
+  emergency_reason?: string
 }

@@ -121,6 +121,23 @@ class ClaimedVerificationKey(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class BreakglassSessionFacts(BaseModel):
+    """Informational breakglass facts included in claimed execution payloads.
+
+    These are scope and expiry observations only.  The runner must not treat
+    them as credentials or use them to skip Django step-start gate calls.
+    """
+
+    breakglass_session_id: UUID
+    scope_sha256: str
+    scope_summary: str = ""
+    started_at: datetime
+    expires_at: datetime
+    review_due_at: datetime
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class ClaimedExecution(BaseModel):
     id: UUID
     status: Literal["claimed", "running"]
@@ -139,6 +156,8 @@ class ClaimedExecution(BaseModel):
     operation_profile_key: str | None = None
     verification_plan_id: UUID | None = None
     verification_keys: list[ClaimedVerificationKey] = []
+    # Optional breakglass facts — informational only; no local privilege changes
+    breakglass: BreakglassSessionFacts | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -360,6 +379,33 @@ class BindChangeExecutionResponse(BaseModel):
     change_record_id: UUID
     execution_id: UUID
     bound_at: datetime | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
+# Breakglass heartbeat (optional, change-bound only)
+# ---------------------------------------------------------------------------
+
+
+class BreakglassHeartbeatRequest(BaseModel):
+    """Runner -> Django: report observation of an active breakglass session."""
+
+    runner_id: str
+    claim_token: UUID
+    breakglass_session_id: UUID
+    scope_sha256: str
+    observed_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BreakglassHeartbeatResponse(BaseModel):
+    """Django -> runner: current authoritative breakglass status."""
+
+    status: str
+    expires_at: datetime | None = None
+    server_time: datetime
 
     model_config = ConfigDict(extra="ignore")
 

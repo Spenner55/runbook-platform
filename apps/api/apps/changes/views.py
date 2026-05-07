@@ -10,11 +10,24 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
-from apps.changes.models import VerificationPlan
+from apps.changes.models import (
+    BreakglassSession,
+    ChangeException,
+    ChangeRecord,
+    RetroReview,
+    VerificationPlan,
+)
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
+    BreakglassActivateSerializer,
+    BreakglassEndSerializer,
+    BreakglassHeartbeatInputSerializer,
+    BreakglassSessionDetailSerializer,
     ChangeClosureCreateSerializer,
     ChangeClosureDetailSerializer,
+    ChangeExceptionCreateSerializer,
+    ChangeExceptionDetailSerializer,
+    ChangeExceptionResolveSerializer,
     ChangeRecordDetailSerializer,
     ChangeWindowInputSerializer,
     ChangeWindowOutputSerializer,
@@ -25,6 +38,8 @@ from apps.changes.serializers import (
     FreezeRuleSerializer,
     InternalRunnerVerificationResultSerializer,
     OperationProfileSerializer,
+    RetroReviewDetailSerializer,
+    RetroReviewSubmitSerializer,
     SubmitChangeRecordSerializer,
     UpdateFreezeRuleSerializer,
     VerificationPlanDetailSerializer,
@@ -122,6 +137,8 @@ class ChangeRecordListCreateView(APIView):
                 scheduled_for=d.get("scheduled_for"),
                 targets=d.get("targets", []),
                 actor=actor,
+                is_emergency=d.get("is_emergency", False),
+                emergency_reason=d.get("emergency_reason", ""),
             )
         except (
             DomainValidationError,
@@ -885,3 +902,531 @@ class InternalRunnerVerificationResultView(APIView):
             else http_status.HTTP_422_UNPROCESSABLE_ENTITY
         )
         return Response(result, status=status_code)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 2: Exception views
+# ---------------------------------------------------------------------------
+
+
+class ChangeExceptionListCreateView(APIView):
+    """
+    GET  /api/v1/changes/{change_id}/exceptions/ — list exceptions for a change
+    POST /api/v1/changes/{change_id}/exceptions/ — request a new exception
+    """
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def _get_change(self, request, change_id):
+        organization_id = require_organization_id(request)
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        return change, org, organization_id
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        qs = ChangeException.objects.filter(
+            change_record=change, organization=org
+        ).order_by("-requested_at")
+
+        # Optional filters
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        type_filter = request.query_params.get("exception_type")
+        if type_filter:
+            qs = qs.filter(exception_type=type_filter)
+        if request.query_params.get("active") in ("true", "1"):
+            from django.utils import timezone as tz
+
+            qs = qs.filter(
+                status=ChangeException.Status.APPROVED,
+                expires_at__gt=tz.now(),
+            )
+
+        return Response(
+            {"results": ChangeExceptionDetailSerializer(qs, many=True).data}
+        )
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeExceptionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.request_exception(
+                change=change,
+                actor=actor,
+                exception_type=d["exception_type"],
+                reason=d["reason"],
+                scope_json=d["scope_json"],
+                expires_at=d["expires_at"],
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(
+            ChangeExceptionDetailSerializer(exc).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class ChangeExceptionApproveView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/approve/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.approve_exception(
+                change_exception=exc,
+                actor=actor,
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+class ChangeExceptionRejectView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/reject/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.reject_exception(
+                change_exception=exc,
+                actor=actor,
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+class ChangeExceptionResolveView(APIView):
+    """POST /api/v1/changes/{change_id}/exceptions/{exception_id}/resolve/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, exception_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            exc = ChangeException.objects.get(
+                pk=exception_id, change_record=change, organization=org
+            )
+        except ChangeException.DoesNotExist:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Exception not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChangeExceptionResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        actor = actor_from_request(request)
+        try:
+            exc = services.resolve_exception(
+                change_exception=exc,
+                actor=actor,
+                resolution_note=serializer.validated_data.get("resolution_note", ""),
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(ChangeExceptionDetailSerializer(exc).data)
+
+
+# ---------------------------------------------------------------------------
+# Phase 11.4 Batch 3: Breakglass public and internal views
+# ---------------------------------------------------------------------------
+
+
+class ChangeBreakglassActivateView(APIView):
+    """POST /api/v1/changes/{change_id}/breakglass/activate/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = BreakglassActivateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        actor = actor_from_request(request)
+        try:
+            session = services.activate_breakglass(
+                change=change,
+                actor=actor,
+                scope_json=d["scope_json"],
+                reason=d["reason"],
+                expires_at=d["expires_at"],
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(
+            BreakglassSessionDetailSerializer(session).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class ChangeBreakglassEndView(APIView):
+    """POST /api/v1/changes/{change_id}/breakglass/end/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user, organization_id=organization_id, roles=OPERATOR_ROLES
+        )
+        org = Organization.objects.get(pk=organization_id)
+        change = selectors.get_change_record(change_id=change_id, organization=org)
+        if change is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Change record not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            session = BreakglassSession.objects.get(
+                change_record=change,
+                organization=org,
+                status=BreakglassSession.Status.ACTIVE,
+            )
+        except BreakglassSession.DoesNotExist:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "No active breakglass session."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = BreakglassEndSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        end_reason = serializer.validated_data.get("end_reason") or "manual_end"
+
+        actor = actor_from_request(request)
+        try:
+            session = services.end_breakglass(
+                session=session,
+                actor=actor,
+                end_reason=end_reason,
+                actor_user=request.user,
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(BreakglassSessionDetailSerializer(session).data)
+
+
+class ChangeBreakglassHeartbeatView(APIView):
+    """POST /api/v1/internal/changes/{change_id}/breakglass-heartbeat/"""
+
+    authentication_classes = [RunnerBearerTokenAuthentication]
+    permission_classes = [IsRunnerAuthenticated]
+
+    def post(self, request, change_id):
+        from django.shortcuts import get_object_or_404
+        from django.utils import timezone as tz
+
+        serializer = BreakglassHeartbeatInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        change = get_object_or_404(ChangeRecord, pk=change_id)
+
+        try:
+            session = services.record_breakglass_heartbeat(
+                change=change,
+                runner_id=d["runner_id"],
+                claim_token=str(d["claim_token"]),
+                observed_session_id=str(d["breakglass_session_id"]),
+                now=d.get("observed_at") or tz.now(),
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        if session is None:
+            return Response(
+                {"status": "expired", "expires_at": None, "server_time": tz.now()}
+            )
+
+        return Response(
+            {
+                "status": session.status,
+                "expires_at": session.expires_at,
+                "server_time": tz.now(),
+            }
+        )
+
+
+class ChangeRetroReviewListView(APIView):
+    """GET /api/v1/changes/<change_id>/retro-reviews/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        reviews = selectors.list_retro_reviews_for_change(
+            change_id=change_id, organization=org
+        )
+        return Response(
+            {"results": RetroReviewDetailSerializer(reviews, many=True).data}
+        )
+
+
+class ChangeRetroReviewSubmitView(APIView):
+    """POST /api/v1/changes/<change_id>/retro-reviews/<review_id>/submit/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, review_id):
+        organization_id = require_organization_id(request)
+        org = Organization.objects.get(pk=organization_id)
+
+        serializer = RetroReviewSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        review = selectors.get_retro_review(
+            review_id=review_id, change_id=change_id, organization=org
+        )
+        if review is None:
+            return Response(
+                {
+                    "errors": [
+                        {"code": "not_found", "detail": "Retro-review not found."}
+                    ]
+                },
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        # control_failure requires admin/owner role; others require operator
+        if d["disposition"] == RetroReview.Disposition.CONTROL_FAILURE:
+            assert_organization_role(
+                user=request.user,
+                organization_id=organization_id,
+                roles=ADMIN_ROLES,
+            )
+        else:
+            assert_organization_role(
+                user=request.user,
+                organization_id=organization_id,
+                roles=OPERATOR_ROLES,
+            )
+
+        from apps.audit.services import actor_from_request
+
+        actor = actor_from_request(request)
+
+        try:
+            review = services.submit_retro_review(
+                review=review,
+                actor=actor,
+                actor_user=request.user,
+                disposition=d["disposition"],
+                summary=d["summary"],
+                evidence_json=d.get("evidence_json", {}),
+                remediation_reference=d.get("remediation_reference", ""),
+            )
+        except (
+            DomainValidationError,
+            DomainConflictError,
+            InvalidStateTransitionError,
+        ) as e:
+            return _error_response(e)
+
+        return Response(RetroReviewDetailSerializer(review).data)
+
+
+class RetroReviewInboxView(APIView):
+    """GET /api/v1/changes/retro-reviews/inbox/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user,
+            organization_id=organization_id,
+            roles=OPERATOR_ROLES,
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        reviews = selectors.list_retro_review_inbox(organization=org)
+        return Response(
+            {"results": RetroReviewDetailSerializer(reviews, many=True).data}
+        )

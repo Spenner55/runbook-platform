@@ -188,7 +188,7 @@ async function executeRequest(path: string, init: ApiRequestInit, accessToken: s
 }
 
 export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  if (path.startsWith('/api/v1/internal/')) {
+  if (path.startsWith('/api/v1/internal/') || path.startsWith('/internal/v1/')) {
     throw new Error('Browser requests to internal API endpoints are not allowed.')
   }
 

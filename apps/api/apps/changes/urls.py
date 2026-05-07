@@ -2,10 +2,19 @@ from django.urls import path
 
 from apps.changes.views import (
     BindChangeExecutionView,
+    ChangeBreakglassActivateView,
+    ChangeBreakglassEndView,
+    ChangeBreakglassHeartbeatView,
     ChangeCloseView,
+    ChangeExceptionApproveView,
+    ChangeExceptionListCreateView,
+    ChangeExceptionRejectView,
+    ChangeExceptionResolveView,
     ChangeRecordDetailView,
     ChangeRecordListCreateView,
     ChangeRecordSubmitView,
+    ChangeRetroReviewListView,
+    ChangeRetroReviewSubmitView,
     ChangeVerificationPlanView,
     ChangeVerificationResultCreateView,
     ChangeWindowView,
@@ -20,6 +29,7 @@ from apps.changes.views import (
     FreezeRuleListCreateView,
     InternalRunnerVerificationResultView,
     OperationProfileListView,
+    RetroReviewInboxView,
 )
 
 public_urlpatterns = [
@@ -74,6 +84,51 @@ public_urlpatterns = [
         DispatchPreflightLatestView.as_view(),
         name="change-record-preflight-latest",
     ),
+    path(
+        "<uuid:change_id>/exceptions/",
+        ChangeExceptionListCreateView.as_view(),
+        name="change-exception-list-create",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/approve/",
+        ChangeExceptionApproveView.as_view(),
+        name="change-exception-approve",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/reject/",
+        ChangeExceptionRejectView.as_view(),
+        name="change-exception-reject",
+    ),
+    path(
+        "<uuid:change_id>/exceptions/<uuid:exception_id>/resolve/",
+        ChangeExceptionResolveView.as_view(),
+        name="change-exception-resolve",
+    ),
+    path(
+        "<uuid:change_id>/breakglass/activate/",
+        ChangeBreakglassActivateView.as_view(),
+        name="change-breakglass-activate",
+    ),
+    path(
+        "<uuid:change_id>/breakglass/end/",
+        ChangeBreakglassEndView.as_view(),
+        name="change-breakglass-end",
+    ),
+    path(
+        "<uuid:change_id>/retro-reviews/",
+        ChangeRetroReviewListView.as_view(),
+        name="change-retro-review-list",
+    ),
+    path(
+        "<uuid:change_id>/retro-reviews/<uuid:review_id>/submit/",
+        ChangeRetroReviewSubmitView.as_view(),
+        name="change-retro-review-submit",
+    ),
+    path(
+        "retro-reviews/inbox/",
+        RetroReviewInboxView.as_view(),
+        name="retro-review-inbox",
+    ),
 ]
 
 freeze_rule_urlpatterns = [
@@ -119,5 +174,10 @@ internal_urlpatterns = [
         "<uuid:change_id>/verification-results/",
         InternalRunnerVerificationResultView.as_view(),
         name="internal-change-verification-result-create",
+    ),
+    path(
+        "<uuid:change_id>/breakglass-heartbeat/",
+        ChangeBreakglassHeartbeatView.as_view(),
+        name="internal-change-breakglass-heartbeat",
     ),
 ]
