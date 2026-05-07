@@ -171,8 +171,12 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             return None
         try:
             from apps.changes.models import BreakglassSession
-            from apps.changes.services import _build_scope_summary
+            from apps.changes.services import (
+                _build_scope_summary,
+                enforce_emergency_expiry_for_change,
+            )
 
+            enforce_emergency_expiry_for_change(binding.change_record)
             session = BreakglassSession.objects.get(
                 change_record=binding.change_record,
                 status=BreakglassSession.Status.ACTIVE,

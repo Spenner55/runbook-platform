@@ -80,6 +80,9 @@ def _make_scope(change, *, actions=None, gates=None, target_ids=None):
 @pytest.fixture
 def running_change(db, draft_change, user, org):
     """A change record in 'running' status (force-set for testing)."""
+    profile = draft_change.operation_profile
+    profile.allow_emergency_changes = True
+    profile.save(update_fields=["allow_emergency_changes", "updated_at"])
     draft_change.status = ChangeRecord.Status.RUNNING
     draft_change.save(update_fields=["status", "updated_at"])
     return draft_change
@@ -88,6 +91,9 @@ def running_change(db, draft_change, user, org):
 @pytest.fixture
 def dispatchable_change(db, draft_change):
     """A change record in 'dispatchable' status."""
+    profile = draft_change.operation_profile
+    profile.allow_emergency_changes = True
+    profile.save(update_fields=["allow_emergency_changes", "updated_at"])
     draft_change.status = ChangeRecord.Status.DISPATCHABLE
     draft_change.save(update_fields=["status", "updated_at"])
     return draft_change
@@ -201,6 +207,9 @@ def test_activate_breakglass_emits_audit_events(running_change, operator_user, d
 
 @pytest.mark.django_db
 def test_activate_breakglass_invalid_status(draft_change, operator_user, db):
+    profile = draft_change.operation_profile
+    profile.allow_emergency_changes = True
+    profile.save(update_fields=["allow_emergency_changes", "updated_at"])
     scope = _make_scope(draft_change)
     with pytest.raises(DomainConflictError) as exc_info:
         change_services.activate_breakglass(
@@ -212,6 +221,27 @@ def test_activate_breakglass_invalid_status(draft_change, operator_user, db):
             actor_user=operator_user,
         )
     assert exc_info.value.code == "change_status_invalid_for_breakglass"
+
+
+@pytest.mark.django_db
+def test_activate_breakglass_requires_profile_emergency_enabled(
+    running_change, operator_user, db
+):
+    profile = running_change.operation_profile
+    profile.allow_emergency_changes = False
+    profile.save(update_fields=["allow_emergency_changes", "updated_at"])
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        change_services.activate_breakglass(
+            change=running_change,
+            actor=_user_actor(operator_user),
+            scope_json=_make_scope(running_change),
+            reason="Reason",
+            expires_at=_future(1800),
+            actor_user=operator_user,
+        )
+
+    assert exc_info.value.code == "breakglass_not_allowed"
 
 
 @pytest.mark.django_db
@@ -601,6 +631,62 @@ def test_record_breakglass_heartbeat_does_not_extend_expiry(
     result.refresh_from_db()
     assert result.expires_at == original_expires  # expiry unchanged
     assert result.last_heartbeat_at is not None
+
+
+@pytest.mark.django_db
+def test_execution_heartbeat_synchronously_expires_breakglass(
+    running_change, operator_user, db
+):
+    scope = _make_scope(running_change)
+    session = change_services.activate_breakglass(
+        change=running_change,
+        actor=_user_actor(operator_user),
+        scope_json=scope,
+        reason="Reason",
+        expires_at=_future(1800),
+        actor_user=operator_user,
+    )
+
+    from apps.changes.models import ChangeExecutionBinding
+    from apps.executions import services as execution_services
+    from apps.executions.models import Execution
+
+    execution = Execution.objects.create(
+        organization=running_change.organization,
+        workflow=running_change.workflow,
+        workflow_version=running_change.workflow.version,
+        workflow_snapshot={},
+        status=Execution.Status.RUNNING,
+        claimed_by_runner_id="runner-1",
+        claim_token="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    ChangeExecutionBinding.objects.create(
+        organization=running_change.organization,
+        change_record=running_change,
+        execution=execution,
+        operation_profile_key="prod-maintenance",
+        requested_inputs_sha256="abc123",
+        dispatch_token_nonce="nonce",
+        dispatch_token_hash="hash",
+        dispatch_token_expires_at=_future(3600),
+        reserved_at=_now(),
+        bound_at=_now(),
+        bound_by_runner_id="runner-1",
+    )
+    BreakglassSession.objects.filter(pk=session.pk).update(
+        started_at=_past(120),
+        expires_at=_past(60),
+    )
+
+    execution_services.heartbeat_execution(
+        execution=execution,
+        runner_id="runner-1",
+        claim_token="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+
+    session.refresh_from_db()
+    assert session.status == BreakglassSession.Status.EXPIRED
+    assert session.end_reason == "expired"
 
 
 # ---------------------------------------------------------------------------

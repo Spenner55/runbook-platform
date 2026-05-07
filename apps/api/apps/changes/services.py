@@ -600,7 +600,26 @@ def assert_execution_change_binding_ready(
             detail="Claim token is invalid.",
         )
 
+    enforce_emergency_expiry_for_change(binding.change_record)
     validate_request_integrity(binding.change_record)
+
+
+def enforce_emergency_expiry_for_change(change: ChangeRecord, now=None) -> None:
+    """Synchronously expire emergency exception and breakglass records for a change."""
+    now = now or timezone.now()
+    expire_exceptions(change=change, now=now)
+    expire_breakglass_sessions(change=change, now=now)
+
+
+def enforce_emergency_expiry_for_execution(execution, now=None) -> None:
+    """Expire emergency state for a change-bound execution, if one exists."""
+    try:
+        binding = ChangeExecutionBinding.objects.select_related("change_record").get(
+            execution=execution
+        )
+    except ChangeExecutionBinding.DoesNotExist:
+        return
+    enforce_emergency_expiry_for_change(binding.change_record, now=now)
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +678,17 @@ def create_change_record(
             code="invalid_operation_profile",
             detail="Operation profile risk level must be 'high' or 'critical'.",
         )
+    if is_emergency:
+        if not profile.allow_emergency_changes:
+            raise DomainValidationError(
+                code="emergency_changes_not_allowed",
+                detail="Operation profile does not allow emergency changes.",
+            )
+        if not emergency_reason.strip():
+            raise DomainValidationError(
+                code="emergency_reason_required",
+                detail="Emergency reason is required for emergency changes.",
+            )
 
     try:
         workflow = Workflow.objects.get(pk=workflow_id, organization=organization)
@@ -1711,6 +1741,7 @@ def submit_verification_result(
             .select_related("operation_profile")
             .get(pk=change.pk)
         )
+        enforce_emergency_expiry_for_change(change)
         plan = (
             VerificationPlan.objects.select_for_update()
             .select_related("operation_profile")
@@ -2552,6 +2583,7 @@ def close_change(
             .select_related("operation_profile")
             .get(pk=change.pk)
         )
+        enforce_emergency_expiry_for_change(change)
         if ChangeClosure.objects.filter(change_record=change).exists():
             raise DomainConflictError(
                 code="change_already_closed",
@@ -2725,6 +2757,7 @@ def make_dispatchable(
                 detail=f"Cannot dispatch change with status '{change.status}'.",
             )
         now = timezone.now()
+        enforce_emergency_expiry_for_change(change, now=now)
         if (
             change.status == ChangeRecord.Status.SCHEDULED
             and change.scheduled_for
@@ -4165,6 +4198,7 @@ def run_dispatch_preflight(
         .prefetch_related("targets")
         .get(pk=change.pk)
     )
+    enforce_emergency_expiry_for_change(change, now=now)
 
     targets = list(change.targets.order_by("position"))
     checks: list[dict] = []
@@ -5168,6 +5202,11 @@ def activate_breakglass(
         )
 
     profile = change.operation_profile
+    if not profile.allow_emergency_changes:
+        raise DomainValidationError(
+            code="breakglass_not_allowed",
+            detail="Operation profile does not allow emergency changes or breakglass.",
+        )
     max_seconds = profile.max_breakglass_seconds or _DEFAULT_MAX_BREAKGLASS_SECONDS
     retro_sla_seconds = (
         profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS

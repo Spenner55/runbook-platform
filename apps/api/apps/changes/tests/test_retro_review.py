@@ -296,6 +296,9 @@ def test_submit_retro_review_self_review_breakglass_rejected(
     draft_change, operator_user
 ):
     """Breakglass activator cannot review their own session."""
+    profile = draft_change.operation_profile
+    profile.allow_emergency_changes = True
+    profile.save(update_fields=["allow_emergency_changes", "updated_at"])
     draft_change.status = ChangeRecord.Status.RUNNING
     draft_change.save(update_fields=["status", "updated_at"])
 
