@@ -6,7 +6,9 @@ import { ApprovalsInboxPage } from '../routes/approvals/ApprovalsInboxPage'
 import { LoginPage } from '../routes/auth/LoginPage'
 import { ChangeCreatePage } from '../routes/changes/ChangeCreatePage'
 import { ChangeDetailPage } from '../routes/changes/ChangeDetailPage'
+import { ChangeEmergencyCreatePage } from '../routes/changes/ChangeEmergencyCreatePage'
 import { ChangesPage } from '../routes/changes/ChangesPage'
+import { RetroReviewInboxPage } from '../routes/changes/RetroReviewInboxPage'
 import { FreezeRulesPage } from '../routes/freeze-rules/FreezeRulesPage'
 import { ExecutionDetailPage } from '../routes/executions/ExecutionDetailPage'
 import { ExecutionsPage } from '../routes/executions/ExecutionsPage'
@@ -50,7 +52,9 @@ export const router = createBrowserRouter([
           { path: 'integrations/:integrationId', element: <IntegrationDetailPage /> },
           { path: 'changes', element: <ChangesPage /> },
           { path: 'changes/new', element: <ChangeCreatePage /> },
+          { path: 'changes/new/emergency', element: <ChangeEmergencyCreatePage /> },
           { path: 'changes/:changeId', element: <ChangeDetailPage /> },
+          { path: 'retro-reviews', element: <RetroReviewInboxPage /> },
           { path: 'freeze-rules', element: <FreezeRulesPage /> },
           { path: 'settings', element: <SettingsPage /> },
         ],

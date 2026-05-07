@@ -14,6 +14,7 @@ from apps.changes.models import (
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    RetroReview,
     VerificationCheck,
     VerificationPlan,
     VerificationResult,
@@ -105,6 +106,7 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
     execution_binding = serializers.SerializerMethodField()
     policy_decision = serializers.SerializerMethodField()
     window = serializers.SerializerMethodField()
+    active_breakglass_session = serializers.SerializerMethodField()
 
     class Meta:
         model = ChangeRecord
@@ -136,6 +138,12 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
             "policy_decision",
             "execution_binding",
             "window",
+            "is_emergency",
+            "emergency_reason",
+            "retro_review_required",
+            "retro_review_due_at",
+            "retro_review_blocking_status",
+            "active_breakglass_session",
             "created_at",
             "updated_at",
         ]
@@ -167,6 +175,12 @@ class ChangeRecordDetailSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_active_breakglass_session(self, obj):
+        session = obj.breakglass_sessions.filter(status="active").first()
+        if session is None:
+            return None
+        return BreakglassSessionDetailSerializer(session).data
+
 
 class CreateChangeRecordSerializer(serializers.Serializer):
     operation_profile_key = serializers.CharField(max_length=96)
@@ -179,6 +193,8 @@ class CreateChangeRecordSerializer(serializers.Serializer):
         required=False, allow_null=True, default=None
     )
     targets = ChangeTargetSerializer(many=True, required=False, default=list)
+    is_emergency = serializers.BooleanField(default=False)
+    emergency_reason = serializers.CharField(max_length=4000, allow_blank=True, default="")
 
 
 class SubmitChangeRecordSerializer(serializers.Serializer):
@@ -602,3 +618,43 @@ class BreakglassHeartbeatInputSerializer(serializers.Serializer):
     breakglass_session_id = serializers.UUIDField()
     scope_sha256 = serializers.CharField(max_length=64)
     observed_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class RetroReviewDetailSerializer(serializers.ModelSerializer):
+    reviewed_by_id = serializers.UUIDField(read_only=True)
+    change_record_title = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RetroReview
+        fields = [
+            "id",
+            "change_record_id",
+            "change_record_title",
+            "breakglass_session_id",
+            "change_exception_id",
+            "status",
+            "disposition",
+            "reviewed_by_id",
+            "reviewed_at",
+            "due_at",
+            "summary",
+            "remediation_required",
+            "remediation_reference",
+            "control_failure_category",
+            "evidence_json",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_change_record_title(self, obj):
+        return obj.change_record.title if obj.change_record_id else ""
+
+
+class RetroReviewSubmitSerializer(serializers.Serializer):
+    retro_review_id = serializers.UUIDField()
+    disposition = serializers.ChoiceField(choices=RetroReview.Disposition.choices)
+    summary = serializers.CharField(max_length=5000)
+    remediation_reference = serializers.CharField(
+        max_length=255, default="", allow_blank=True
+    )
+    evidence_json = serializers.DictField(required=False, default=dict)

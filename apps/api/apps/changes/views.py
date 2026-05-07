@@ -10,7 +10,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
-from apps.changes.models import BreakglassSession, ChangeException, VerificationPlan
+from apps.changes.models import BreakglassSession, ChangeException, RetroReview, VerificationPlan
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
     BreakglassActivateSerializer,
@@ -33,6 +33,8 @@ from apps.changes.serializers import (
     FreezeRuleSerializer,
     InternalRunnerVerificationResultSerializer,
     OperationProfileSerializer,
+    RetroReviewDetailSerializer,
+    RetroReviewSubmitSerializer,
     SubmitChangeRecordSerializer,
     UpdateFreezeRuleSerializer,
     VerificationPlanDetailSerializer,
@@ -130,6 +132,8 @@ class ChangeRecordListCreateView(APIView):
                 scheduled_for=d.get("scheduled_for"),
                 targets=d.get("targets", []),
                 actor=actor,
+                is_emergency=d.get("is_emergency", False),
+                emergency_reason=d.get("emergency_reason", ""),
             )
         except (
             DomainValidationError,
@@ -1247,3 +1251,95 @@ class ChangeBreakglassHeartbeatView(APIView):
                 "server_time": tz.now(),
             }
         )
+
+
+class ChangeRetroReviewListView(APIView):
+    """GET /api/v1/changes/<change_id>/retro-reviews/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, change_id):
+        organization_id = require_organization_id(request)
+        assert_organization_member(user=request.user, organization_id=organization_id)
+        org = Organization.objects.get(pk=organization_id)
+
+        reviews = selectors.list_retro_reviews_for_change(
+            change_id=change_id, organization=org
+        )
+        return Response({"results": RetroReviewDetailSerializer(reviews, many=True).data})
+
+
+class ChangeRetroReviewSubmitView(APIView):
+    """POST /api/v1/changes/<change_id>/retro-reviews/<review_id>/submit/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, change_id, review_id):
+        organization_id = require_organization_id(request)
+        org = Organization.objects.get(pk=organization_id)
+
+        serializer = RetroReviewSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        review = selectors.get_retro_review(
+            review_id=review_id, change_id=change_id, organization=org
+        )
+        if review is None:
+            return Response(
+                {"errors": [{"code": "not_found", "detail": "Retro-review not found."}]},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        # control_failure requires admin/owner role; others require operator
+        if d["disposition"] == RetroReview.Disposition.CONTROL_FAILURE:
+            assert_organization_role(
+                user=request.user,
+                organization_id=organization_id,
+                roles=ADMIN_ROLES,
+            )
+        else:
+            assert_organization_role(
+                user=request.user,
+                organization_id=organization_id,
+                roles=OPERATOR_ROLES,
+            )
+
+        from apps.audit.services import actor_from_request
+        actor = actor_from_request(request)
+
+        try:
+            review = services.submit_retro_review(
+                review=review,
+                actor=actor,
+                actor_user=request.user,
+                disposition=d["disposition"],
+                summary=d["summary"],
+                evidence_json=d.get("evidence_json", {}),
+                remediation_reference=d.get("remediation_reference", ""),
+            )
+        except (DomainValidationError, DomainConflictError, InvalidStateTransitionError) as e:
+            return _error_response(e)
+
+        return Response(RetroReviewDetailSerializer(review).data)
+
+
+class RetroReviewInboxView(APIView):
+    """GET /api/v1/changes/retro-reviews/inbox/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        organization_id = require_organization_id(request)
+        assert_organization_role(
+            user=request.user,
+            organization_id=organization_id,
+            roles=OPERATOR_ROLES,
+        )
+        org = Organization.objects.get(pk=organization_id)
+
+        reviews = selectors.list_retro_review_inbox(organization=org)
+        return Response({"results": RetroReviewDetailSerializer(reviews, many=True).data})

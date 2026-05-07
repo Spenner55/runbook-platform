@@ -1,10 +1,13 @@
 """Read-only selectors for the changes app."""
 
 from apps.changes.models import (
+    BreakglassSession,
+    ChangeException,
     ChangeRecord,
     DispatchEligibilityCheck,
     FreezeRule,
     OperationProfile,
+    RetroReview,
 )
 
 
@@ -101,3 +104,22 @@ def list_dispatch_preflights_for_change(*, change_id, organization):
         change_record_id=change_id,
         organization=organization,
     ).order_by("-checked_at")
+
+
+def list_retro_reviews_for_change(*, change_id, organization):
+    return RetroReview.objects.filter(
+        change_record_id=change_id, organization=organization
+    ).select_related("breakglass_session", "change_exception", "reviewed_by").order_by("-due_at")
+
+
+def list_retro_review_inbox(*, organization):
+    """Return pending retro-reviews org-wide, ordered by due_at ascending."""
+    return RetroReview.objects.filter(
+        organization=organization, status=RetroReview.Status.PENDING
+    ).select_related("change_record", "breakglass_session", "change_exception").order_by("due_at")
+
+
+def get_retro_review(*, review_id, change_id, organization):
+    return RetroReview.objects.filter(
+        pk=review_id, change_record_id=change_id, organization=organization
+    ).select_related("breakglass_session", "change_exception", "reviewed_by").first()

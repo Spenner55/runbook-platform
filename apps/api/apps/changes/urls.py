@@ -13,6 +13,8 @@ from apps.changes.views import (
     ChangeRecordDetailView,
     ChangeRecordListCreateView,
     ChangeRecordSubmitView,
+    ChangeRetroReviewListView,
+    ChangeRetroReviewSubmitView,
     ChangeVerificationPlanView,
     ChangeVerificationResultCreateView,
     ChangeWindowView,
@@ -27,6 +29,7 @@ from apps.changes.views import (
     FreezeRuleListCreateView,
     InternalRunnerVerificationResultView,
     OperationProfileListView,
+    RetroReviewInboxView,
 )
 
 public_urlpatterns = [
@@ -110,6 +113,21 @@ public_urlpatterns = [
         "<uuid:change_id>/breakglass/end/",
         ChangeBreakglassEndView.as_view(),
         name="change-breakglass-end",
+    ),
+    path(
+        "<uuid:change_id>/retro-reviews/",
+        ChangeRetroReviewListView.as_view(),
+        name="change-retro-review-list",
+    ),
+    path(
+        "<uuid:change_id>/retro-reviews/<uuid:review_id>/submit/",
+        ChangeRetroReviewSubmitView.as_view(),
+        name="change-retro-review-submit",
+    ),
+    path(
+        "retro-reviews/inbox/",
+        RetroReviewInboxView.as_view(),
+        name="retro-review-inbox",
     ),
 ]
 

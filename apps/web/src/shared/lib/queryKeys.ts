@@ -33,4 +33,7 @@ export const queryKeys = {
   changeVerificationPlan: (changeId: string) => ['change', changeId, 'verification-plan'] as const,
   freezeRules: (organizationId: string, isActive?: string) =>
     ['freeze-rules', organizationId, isActive ?? 'all'] as const,
+  changeExceptions: (changeId: string) => ['change', changeId, 'exceptions'] as const,
+  changeRetroReviews: (changeId: string) => ['change', changeId, 'retro-reviews'] as const,
+  retroReviewInbox: ['retro-review-inbox'] as const,
 }

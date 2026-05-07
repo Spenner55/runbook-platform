@@ -4,8 +4,10 @@ import { Link, useParams } from 'react-router-dom'
 import { useChangeDetail } from '../../features/changes/hooks/useChangeDetail'
 import { useCloseChange } from '../../features/changes/hooks/useCloseChange'
 import { useDispatchChange } from '../../features/changes/hooks/useDispatchChange'
+import { useExceptions } from '../../features/changes/hooks/useExceptions'
 import { useLatestPreflight } from '../../features/changes/hooks/useLatestPreflight'
 import { usePatchWindow } from '../../features/changes/hooks/usePatchWindow'
+import { useRetroReviews } from '../../features/changes/hooks/useRetroReviews'
 import { useRunPreflight } from '../../features/changes/hooks/useRunPreflight'
 import { useSubmitChange } from '../../features/changes/hooks/useSubmitChange'
 import { useSubmitVerificationResult } from '../../features/changes/hooks/useSubmitVerificationResult'
@@ -19,6 +21,11 @@ import type {
   VerificationPlan,
 } from '../../features/changes/types'
 import { getApiErrorMessage } from '../../shared/api/client'
+import { BreakglassActivationModal } from './components/BreakglassActivationModal'
+import { BreakglassStatusPanel } from './components/BreakglassStatusPanel'
+import { ExceptionRequestForm } from './components/ExceptionRequestForm'
+import { RetroReviewPanel } from './components/RetroReviewPanel'
+import { ViolationBanner } from './components/ViolationBanner'
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '—'
@@ -83,9 +90,14 @@ function ChangeOverview({ change }: { change: ChangeRecord }) {
 
   return (
     <section className="stack-md">
-      <div>
-        <h3>{change.title}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0 }}>{change.title}</h3>
         <ChangeStatusBadge status={change.status} />
+        {change.is_emergency && (
+          <span className="pill pill--danger" aria-label="Emergency change">
+            EMERGENCY
+          </span>
+        )}
       </div>
       {change.summary ? <p>{change.summary}</p> : null}
       <dl style={{ display: 'grid', gridTemplateColumns: '200px 1fr', rowGap: '0.25rem' }}>
@@ -102,6 +114,12 @@ function ChangeOverview({ change }: { change: ChangeRecord }) {
         </dd>
         <dt className="muted">Justification</dt>
         <dd>{change.justification || <em className="muted">None provided</em>}</dd>
+        {change.is_emergency && change.emergency_reason && (
+          <>
+            <dt className="muted">Emergency reason</dt>
+            <dd style={{ color: 'var(--color-danger, #d00)' }}>{change.emergency_reason}</dd>
+          </>
+        )}
 
         {inputsHash && (
           <>
@@ -1025,6 +1043,138 @@ function PreflightCard({ change }: { change: ChangeRecord }) {
   )
 }
 
+function ExceptionsSection({ changeId }: { changeId: string }) {
+  const { data: exceptions, isLoading, error } = useExceptions(changeId)
+  const [showForm, setShowForm] = useState(false)
+
+  return (
+    <section className="stack-md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h4 style={{ margin: 0 }}>Exceptions</h4>
+        {!showForm && (
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowForm(true)}>
+            Request Exception
+          </button>
+        )}
+      </div>
+
+      {isLoading && <p className="muted">Loading exceptions…</p>}
+      {error && <p className="banner banner--error">Could not load exceptions.</p>}
+
+      {exceptions && exceptions.length === 0 && !showForm && (
+        <p className="muted">No exceptions.</p>
+      )}
+
+      {exceptions && exceptions.length > 0 && (
+        <ul className="step-list">
+          {exceptions.map((exc) => (
+            <li key={exc.id} className="step-list__item">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span className={
+                  exc.status === 'approved' ? 'pill pill--success' :
+                  exc.status === 'pending_approval' ? 'pill pill--warn' :
+                  exc.status === 'expired' || exc.status === 'rejected' ? 'pill pill--danger' :
+                  'pill'
+                }>{exc.status.replace(/_/g, ' ')}</span>
+                <span className="pill">{exc.exception_type.replace(/_/g, ' ')}</span>
+                <span className="muted" style={{ fontSize: '0.85em' }}>
+                  Expires: {formatDateTime(exc.expires_at)}
+                </span>
+              </div>
+              {exc.reason && (
+                <p className="muted" style={{ margin: '0.25rem 0 0', fontSize: '0.85em' }}>{exc.reason}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {showForm && (
+        <ExceptionRequestForm
+          changeId={changeId}
+          onSuccess={() => setShowForm(false)}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+    </section>
+  )
+}
+
+function BreakglassSection({ change }: { change: ChangeRecord }) {
+  const [showModal, setShowModal] = useState(false)
+  const session = change.active_breakglass_session ?? null
+
+  return (
+    <section className="stack-md">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <h4 style={{ margin: 0 }}>Breakglass</h4>
+        {!session && !showModal && (
+          <button
+            className="btn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setShowModal(true)}
+          >
+            Activate Breakglass
+          </button>
+        )}
+      </div>
+
+      {session && <BreakglassStatusPanel session={session} />}
+      {!session && !showModal && <p className="muted">No active breakglass session.</p>}
+
+      {showModal && (
+        <BreakglassActivationModal
+          changeId={change.id}
+          onSuccess={() => setShowModal(false)}
+          onClose={() => setShowModal(false)}
+        />
+      )}
+    </section>
+  )
+}
+
+function RetroReviewSection({ changeId }: { changeId: string }) {
+  const { data: reviews, isLoading, error } = useRetroReviews(changeId)
+
+  if (isLoading) return <p className="muted">Loading retro reviews…</p>
+  if (error) return <p className="banner banner--error">Could not load retro reviews.</p>
+  if (!reviews) return null
+
+  return <RetroReviewPanel changeId={changeId} reviews={reviews} />
+}
+
+function ChangeViolationSection({ change }: { change: ChangeRecord }) {
+  const { data: reviews } = useRetroReviews(change.id)
+  const { data: exceptions } = useExceptions(change.id)
+
+  const overdueReviews = reviews?.filter(
+    (r) => r.status === 'pending' && new Date(r.due_at) < new Date()
+  ) ?? []
+  const missingArtifactExceptions = exceptions?.filter(
+    (e) => e.exception_type === 'missing_artifact' && e.status === 'approved'
+  ) ?? []
+  const controlFailureReviews = reviews?.filter(
+    (r) => r.disposition === 'control_failure'
+  ) ?? []
+
+  const hasViolations =
+    overdueReviews.length > 0 ||
+    missingArtifactExceptions.length > 0 ||
+    controlFailureReviews.length > 0 ||
+    (change.active_breakglass_session?.review_status === 'overdue')
+
+  if (!hasViolations) return null
+
+  return (
+    <ViolationBanner
+      overdueReviews={overdueReviews}
+      missingArtifactExceptions={missingArtifactExceptions}
+      controlFailureReviews={controlFailureReviews}
+      activeBreakglass={change.active_breakglass_session ?? null}
+    />
+  )
+}
+
 export function ChangeDetailPage() {
   const { changeId } = useParams<{ changeId: string }>()
   const { data: change, isLoading, error } = useChangeDetail(changeId ?? '')
@@ -1041,6 +1191,7 @@ export function ChangeDetailPage() {
           ← All changes
         </Link>
       </div>
+      <ChangeViolationSection change={change} />
       <ChangeOverview change={change} />
       <SubmitChangeSection change={change} />
       <ChangeTargetsList change={change} />
@@ -1051,6 +1202,9 @@ export function ChangeDetailPage() {
       <VerificationSection change={change} />
       <ClosurePanel change={change} />
       <ExecutionBindingSection change={change} />
+      <ExceptionsSection changeId={change.id} />
+      <BreakglassSection change={change} />
+      <RetroReviewSection changeId={change.id} />
     </div>
   )
 }

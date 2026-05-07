@@ -31,9 +31,19 @@ export function ChangesPage() {
           <h2>Changes</h2>
           <p className="muted">Production operation dossiers.</p>
         </div>
-        <Link to="/changes/new" className="btn btn--primary">
-          New Change Request
-        </Link>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <Link to="/changes/new" className="btn btn--primary">
+            New Change Request
+          </Link>
+          <Link
+            to="/changes/new/emergency"
+            className="btn"
+            style={{ borderColor: 'var(--color-danger, #d00)', color: 'var(--color-danger, #d00)' }}
+            aria-label="New emergency change request"
+          >
+            Emergency
+          </Link>
+        </div>
       </div>
 
       {isLoading && <p>Loading changes…</p>}

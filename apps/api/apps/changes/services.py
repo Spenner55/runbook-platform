@@ -629,6 +629,8 @@ def create_change_record(
     scheduled_for=None,
     targets: list[dict] | None = None,
     actor: AuditActor | None = None,
+    is_emergency: bool = False,
+    emergency_reason: str = "",
 ) -> ChangeRecord:
     """Create a draft change record from an active operation profile."""
     requested_inputs = requested_inputs or {}
@@ -682,19 +684,26 @@ def create_change_record(
     _validate_targets(targets, profile)
 
     with transaction.atomic():
+        actor_user_id = (
+            actor.actor_id
+            if actor and actor.actor_type == AuditEvent.ActorType.USER
+            else None
+        )
         change = ChangeRecord.objects.create(
             organization=organization,
             operation_profile=profile,
             workflow=workflow,
-            requested_by_id=actor.actor_id
-            if actor and actor.actor_type == AuditEvent.ActorType.USER
-            else None,
+            requested_by_id=actor_user_id,
             title=title,
             summary=summary,
             justification=justification,
             status=ChangeRecord.Status.DRAFT,
             requested_inputs=requested_inputs,
             scheduled_for=scheduled_for,
+            is_emergency=is_emergency,
+            emergency_reason=emergency_reason if is_emergency else "",
+            emergency_declared_by_id=actor_user_id if is_emergency else None,
+            emergency_declared_at=timezone.now() if is_emergency else None,
         )
         for position, target_data in enumerate(targets, start=1):
             normalized = normalize_target_identifier(target_data["target_identifier"])
@@ -2548,6 +2557,8 @@ def close_change(
                 code="change_already_closed",
                 detail="Change already has an immutable closure record.",
             )
+
+        assert_retro_reviews_allow_closure(change)
 
         try:
             plan = (
@@ -4851,6 +4862,10 @@ def approve_exception(
                 retro_review_blocking_status="pending",
             )
 
+    # Create RetroReview for qualifying exception types (idempotent, outside transaction)
+    if change_exception.exception_type in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+        ensure_retro_review_for_exception(change_exception)
+
     AuditService.emit(
         organization_id=change_exception.organization_id,
         actor_type=actor.actor_type,
@@ -5516,3 +5531,369 @@ def mark_breakglass_review_overdue(*, now=None) -> list:
             },
         )
     return overdue
+
+
+# ---------------------------------------------------------------------------
+# Retro-review lifecycle services (Phase 11.4 Batch 4)
+# ---------------------------------------------------------------------------
+
+
+def _recompute_change_retro_review_status(change: ChangeRecord) -> None:
+    """
+    Recompute change.retro_review_blocking_status from all RetroReview objects
+    linked to the change, and save.
+
+    Priority:
+      control_failure  (any submitted review has control_failure disposition)
+      overdue          (any pending review is past its due_at)
+      pending          (any pending review not yet overdue)
+      ""               (all reviews submitted/accepted)
+    """
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    if not reviews:
+        return
+
+    now = timezone.now()
+    new_status = ""
+    for review in reviews:
+        if review.status == RetroReview.Status.SUBMITTED:
+            if review.disposition == RetroReview.Disposition.CONTROL_FAILURE:
+                new_status = "control_failure"
+                break
+        elif review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                new_status = "overdue"
+            elif new_status not in ("overdue",):
+                new_status = "pending"
+
+    if change.retro_review_blocking_status != new_status:
+        change.retro_review_blocking_status = new_status
+        change.save(update_fields=["retro_review_blocking_status", "updated_at"])
+
+
+def ensure_retro_review_for_exception(change_exception) -> "RetroReview | None":
+    """
+    Idempotently create a RetroReview for qualifying exception types.
+    Returns None for non-qualifying types.
+    """
+    if change_exception.exception_type not in _EXCEPTION_RETRO_REVIEW_REQUIRED_TYPES:
+        return None
+
+    # Idempotent: return existing if already created
+    existing = RetroReview.objects.filter(change_exception=change_exception).first()
+    if existing is not None:
+        return existing
+
+    change = ChangeRecord.objects.select_for_update().get(pk=change_exception.change_record_id)
+    profile = change.operation_profile
+    retro_sla_seconds = (
+        profile.retro_review_sla_seconds or _DEFAULT_RETRO_REVIEW_SLA_SECONDS
+    )
+    now = timezone.now()
+    due_at = now + timedelta(seconds=retro_sla_seconds)
+
+    review = RetroReview.objects.create(
+        organization=change.organization,
+        change_record=change,
+        change_exception=change_exception,
+        status=RetroReview.Status.PENDING,
+        due_at=due_at,
+    )
+
+    # Update change fields
+    change.retro_review_required = True
+    if change.retro_review_due_at is None or due_at < change.retro_review_due_at:
+        change.retro_review_due_at = due_at
+    change.retro_review_blocking_status = "pending"
+    change.save(
+        update_fields=[
+            "retro_review_required",
+            "retro_review_due_at",
+            "retro_review_blocking_status",
+            "updated_at",
+        ]
+    )
+
+    AuditService.emit(
+        organization_id=change.organization_id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        actor_label="exception-approval",
+        event_type="retro_review.required",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=review.id,
+        metadata={
+            "change_record_id": str(change.pk),
+            "change_exception_id": str(change_exception.id),
+            "exception_type": change_exception.exception_type,
+            "review_due_at": due_at.isoformat(),
+        },
+    )
+    return review
+
+
+def submit_retro_review(
+    *,
+    review: RetroReview,
+    actor: AuditActor,
+    actor_user=None,
+    disposition: str,
+    summary: str,
+    evidence_json: dict | None = None,
+    remediation_reference: str = "",
+) -> RetroReview:
+    """
+    Submit a retro-review with a disposition.
+
+    Self-review check is done before the transaction (same pattern as approve_exception).
+    """
+    if evidence_json is None:
+        evidence_json = {}
+
+    if disposition not in RetroReview.Disposition.values:
+        raise DomainValidationError(
+            code="retro_review_disposition_invalid",
+            detail=f"Invalid disposition: '{disposition}'.",
+        )
+    if not summary or not summary.strip():
+        raise DomainValidationError(
+            code="retro_review_summary_required",
+            detail="Review summary is required.",
+        )
+
+    # Self-review check before transaction so audit event is not rolled back.
+    if actor_user is not None:
+        # Breakglass: activator cannot review
+        if (
+            review.breakglass_session_id is not None
+            and review.breakglass_session.activated_by_id is not None
+            and str(actor_user.pk) == str(review.breakglass_session.activated_by_id)
+        ):
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=actor.actor_type,
+                actor_id=actor.actor_id,
+                actor_label=actor.actor_label,
+                event_type="retro_review.self_review_rejected",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "reason": "breakglass_activator_cannot_review",
+                },
+            )
+            raise DomainValidationError(
+                code="retro_review_self_review_rejected",
+                detail="The breakglass activator cannot review their own session.",
+            )
+        # Exception: requester cannot review
+        if (
+            review.change_exception_id is not None
+            and review.change_exception.requested_by_id is not None
+            and str(actor_user.pk) == str(review.change_exception.requested_by_id)
+        ):
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=actor.actor_type,
+                actor_id=actor.actor_id,
+                actor_label=actor.actor_label,
+                event_type="retro_review.self_review_rejected",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "reason": "exception_requester_cannot_review",
+                },
+            )
+            raise DomainValidationError(
+                code="retro_review_self_review_rejected",
+                detail="The exception requester cannot review their own exception.",
+            )
+
+    if disposition == RetroReview.Disposition.NEEDS_REMEDIATION and not remediation_reference.strip():
+        raise DomainValidationError(
+            code="retro_review_remediation_reference_required",
+            detail="A remediation reference is required for 'needs_remediation' disposition.",
+        )
+
+    with transaction.atomic():
+        review = RetroReview.objects.select_for_update().get(pk=review.pk)
+
+        if review.status != RetroReview.Status.PENDING:
+            raise InvalidStateTransitionError(
+                code="retro_review_not_pending",
+                detail=f"RetroReview is in status '{review.status}'; only pending reviews can be submitted.",
+            )
+
+        now = timezone.now()
+        review.status = RetroReview.Status.SUBMITTED
+        review.disposition = disposition
+        review.reviewed_by = actor_user
+        review.reviewed_at = now
+        review.summary = summary
+        review.evidence_json = evidence_json
+        review.remediation_required = disposition in (
+            RetroReview.Disposition.NEEDS_REMEDIATION,
+            RetroReview.Disposition.CONTROL_FAILURE,
+        )
+        review.remediation_reference = remediation_reference
+        review.control_failure_category = evidence_json.get("control_failure_category", "")
+        review.save(
+            update_fields=[
+                "status",
+                "disposition",
+                "reviewed_by",
+                "reviewed_at",
+                "summary",
+                "evidence_json",
+                "remediation_required",
+                "remediation_reference",
+                "control_failure_category",
+                "updated_at",
+            ]
+        )
+
+        # Update linked breakglass session review_status
+        if review.breakglass_session_id is not None:
+            BreakglassSession.objects.filter(pk=review.breakglass_session_id).update(
+                review_status=BreakglassSession.ReviewStatus.SUBMITTED,
+                updated_at=now,
+            )
+
+        # Recompute change blocking status
+        change = ChangeRecord.objects.select_for_update().get(pk=review.change_record_id)
+        _recompute_change_retro_review_status(change)
+
+    AuditService.emit(
+        organization_id=review.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="retro_review.submitted",
+        object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+        object_id=review.id,
+        metadata={
+            "change_record_id": str(review.change_record_id),
+            "disposition": disposition,
+            "remediation_required": review.remediation_required,
+            "reviewed_at": now.isoformat(),
+        },
+    )
+    return review
+
+
+def mark_overdue_retro_reviews(*, now=None) -> list:
+    """
+    Find pending RetroReview objects past their due_at.
+    Update change.retro_review_blocking_status to 'overdue' if not already.
+    Emit audit events (no duplicate events if already overdue).
+    Returns list of affected reviews.
+    """
+    if now is None:
+        now = timezone.now()
+
+    qs = RetroReview.objects.filter(
+        status=RetroReview.Status.PENDING,
+        due_at__lte=now,
+    ).select_related("change_record")
+
+    affected = []
+    for review in qs:
+        change = review.change_record
+        if change.retro_review_blocking_status != "overdue":
+            change.retro_review_blocking_status = "overdue"
+            change.save(update_fields=["retro_review_blocking_status", "updated_at"])
+            affected.append(review)
+            AuditService.emit(
+                organization_id=review.organization_id,
+                actor_type=AuditEvent.ActorType.SYSTEM,
+                actor_label="overdue-check",
+                event_type="retro_review.overdue",
+                object_type=AuditEvent.ObjectType.RETRO_REVIEW,
+                object_id=review.id,
+                metadata={
+                    "change_record_id": str(review.change_record_id),
+                    "review_due_at": review.due_at.isoformat(),
+                    "marked_overdue_at": now.isoformat(),
+                },
+            )
+    return affected
+
+
+def assert_retro_reviews_allow_closure(change: ChangeRecord) -> None:
+    """
+    Gate closure: raise DomainConflictError if any retro-review blocks closure.
+
+    Blocking conditions:
+    - pending review (code: retro_review_pending or retro_review_overdue if past due_at)
+    - submitted + needs_remediation with no remediation_reference
+    """
+    if not change.retro_review_required:
+        return
+
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    now = timezone.now()
+    blockers = []
+
+    for review in reviews:
+        if review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                blockers.append({"review_id": str(review.id), "reason": "retro_review_overdue"})
+            else:
+                blockers.append({"review_id": str(review.id), "reason": "retro_review_pending"})
+        elif (
+            review.status == RetroReview.Status.SUBMITTED
+            and review.disposition == RetroReview.Disposition.NEEDS_REMEDIATION
+            and not review.remediation_reference.strip()
+        ):
+            blockers.append({"review_id": str(review.id), "reason": "retro_review_needs_remediation_reference"})
+
+    if blockers:
+        actor = system_actor("Change closure service")
+        AuditService.emit(
+            organization_id=change.organization_id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            actor_label="change-closure",
+            event_type="change.closure_blocked_retro_review",
+            object_type=AuditEvent.ObjectType.CHANGE_RECORD,
+            object_id=change.id,
+            metadata={
+                "blockers": blockers,
+                "change_record_id": str(change.id),
+            },
+        )
+        raise DomainConflictError(
+            code="retro_review_blocking_closure",
+            detail="Change closure is blocked by pending or unresolved retro-reviews.",
+        )
+
+
+def summarize_retro_review_blockers(change: ChangeRecord) -> dict:
+    """Return a summary dict of retro-review blocking state for a change."""
+    reviews = list(RetroReview.objects.filter(change_record=change))
+    now = timezone.now()
+
+    pending_ids = []
+    overdue_ids = []
+    needs_remediation_without_ref_ids = []
+
+    for review in reviews:
+        if review.status == RetroReview.Status.PENDING:
+            if review.due_at <= now:
+                overdue_ids.append(str(review.id))
+            else:
+                pending_ids.append(str(review.id))
+        elif (
+            review.status == RetroReview.Status.SUBMITTED
+            and review.disposition == RetroReview.Disposition.NEEDS_REMEDIATION
+            and not review.remediation_reference.strip()
+        ):
+            needs_remediation_without_ref_ids.append(str(review.id))
+
+    has_blockers = bool(pending_ids or overdue_ids or needs_remediation_without_ref_ids)
+    return {
+        "has_blockers": has_blockers,
+        "pending_review_ids": pending_ids,
+        "overdue_review_ids": overdue_ids,
+        "needs_remediation_without_ref_ids": needs_remediation_without_ref_ids,
+        "total_reviews": len(reviews),
+    }

@@ -1,13 +1,19 @@
 import { apiRequest } from '../../../shared/api/client'
 import type {
+  ActivateBreakglassInput,
+  BreakglassSession,
+  ChangeException,
   ChangeRecord,
   ChangeWindow,
   CloseChangeInput,
   ClosureResponse,
   CreateChangeInput,
+  CreateExceptionInput,
   DispatchEligibilityCheck,
   OperationProfile,
   PatchWindowInput,
+  RetroReview,
+  SubmitRetroReviewInput,
   SubmitVerificationResultInput,
   VerificationPlan,
   VerificationResultResponse,
@@ -82,4 +88,56 @@ export function closeChange(changeId: string, input: CloseChangeInput) {
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+// ----- Exception APIs -----
+
+export function listExceptions(changeId: string) {
+  return apiRequest<{ results: ChangeException[] }>(
+    `/api/v1/changes/${changeId}/exceptions/`
+  ).then((r) => r.results)
+}
+
+export function createException(changeId: string, input: CreateExceptionInput) {
+  return apiRequest<ChangeException>(`/api/v1/changes/${changeId}/exceptions/`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+// ----- Breakglass APIs -----
+
+export function activateBreakglass(changeId: string, input: ActivateBreakglassInput) {
+  return apiRequest<BreakglassSession>(`/api/v1/changes/${changeId}/breakglass/activate/`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function endBreakglass(changeId: string, endReason = 'manual_end') {
+  return apiRequest<BreakglassSession>(`/api/v1/changes/${changeId}/breakglass/end/`, {
+    method: 'POST',
+    body: JSON.stringify({ end_reason: endReason }),
+  })
+}
+
+// ----- Retro-review APIs -----
+
+export function listRetroReviews(changeId: string) {
+  return apiRequest<{ results: RetroReview[] }>(
+    `/api/v1/changes/${changeId}/retro-reviews/`
+  ).then((r) => r.results)
+}
+
+export function submitRetroReview(changeId: string, reviewId: string, input: SubmitRetroReviewInput) {
+  return apiRequest<RetroReview>(
+    `/api/v1/changes/${changeId}/retro-reviews/${reviewId}/submit/`,
+    { method: 'POST', body: JSON.stringify(input) }
+  )
+}
+
+export function listRetroReviewInbox() {
+  return apiRequest<{ results: RetroReview[] }>('/api/v1/changes/retro-reviews/inbox/').then(
+    (r) => r.results
+  )
 }
