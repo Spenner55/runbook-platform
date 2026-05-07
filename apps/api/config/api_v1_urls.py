@@ -21,6 +21,7 @@ from apps.changes.urls import (
 from apps.changes.urls import (
     public_urlpatterns as change_public_urlpatterns,
 )
+from apps.evidence.urls import urlpatterns as evidence_public_urlpatterns
 from apps.executions.internal_views import (
     ApprovalStatusView,
     ClaimNextExecutionView,
@@ -49,6 +50,7 @@ urlpatterns = [
     path("audit/", include("apps.audit.urls")),
     path("integrations/", include("apps.integrations.urls")),
     path("changes/", include((change_public_urlpatterns, "changes"))),
+    path("", include((evidence_public_urlpatterns, "evidence"))),
     path("freeze-rules/", include((change_freeze_rule_urlpatterns, "freeze-rules"))),
     *artifact_public_urlpatterns,
     path(

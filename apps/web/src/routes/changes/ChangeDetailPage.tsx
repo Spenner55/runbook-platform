@@ -23,6 +23,7 @@ import type {
 import { getApiErrorMessage } from '../../shared/api/client'
 import { BreakglassActivationModal } from './components/BreakglassActivationModal'
 import { BreakglassStatusPanel } from './components/BreakglassStatusPanel'
+import { EvidencePanel } from './components/EvidencePanel'
 import { ExceptionRequestForm } from './components/ExceptionRequestForm'
 import { RetroReviewPanel } from './components/RetroReviewPanel'
 import { ViolationBanner } from './components/ViolationBanner'
@@ -1209,6 +1210,7 @@ export function ChangeDetailPage() {
       <ExceptionsSection changeId={change.id} />
       <BreakglassSection change={change} />
       <RetroReviewSection changeId={change.id} />
+      <EvidencePanel changeId={change.id} changeStatus={change.status} />
     </div>
   )
 }

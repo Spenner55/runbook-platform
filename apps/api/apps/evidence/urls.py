@@ -1,0 +1,99 @@
+from django.urls import path
+
+from apps.evidence.views import (
+    ChangeEvidenceBundleLatestView,
+    ChangeEvidenceBundleListCreateView,
+    EvidenceBundleCompletenessView,
+    EvidenceBundleContentView,
+    EvidenceBundleDetailView,
+    EvidenceBundleDownloadView,
+    EvidenceBundleExportListCreateView,
+    EvidenceBundleInvalidateView,
+    EvidenceBundleLegalHoldView,
+    EvidenceBundleManifestView,
+    EvidenceBundleSealView,
+    EvidenceExportDetailView,
+    EvidenceExportDownloadView,
+    EvidenceExportReceiptView,
+    LegalHoldReleaseView,
+)
+
+app_name = "evidence"
+
+urlpatterns = [
+    path(
+        "changes/<uuid:change_id>/evidence-bundles/",
+        ChangeEvidenceBundleListCreateView.as_view(),
+        name="change-evidence-bundle-list-create",
+    ),
+    path(
+        "changes/<uuid:change_id>/evidence-bundles/latest/",
+        ChangeEvidenceBundleLatestView.as_view(),
+        name="change-evidence-bundle-latest",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/",
+        EvidenceBundleDetailView.as_view(),
+        name="evidence-bundle-detail",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/manifest/",
+        EvidenceBundleManifestView.as_view(),
+        name="evidence-bundle-manifest",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/completeness/",
+        EvidenceBundleCompletenessView.as_view(),
+        name="evidence-bundle-completeness",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/seal/",
+        EvidenceBundleSealView.as_view(),
+        name="evidence-bundle-seal",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/invalidate/",
+        EvidenceBundleInvalidateView.as_view(),
+        name="evidence-bundle-invalidate",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/download/",
+        EvidenceBundleDownloadView.as_view(),
+        name="evidence-bundle-download",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/content/",
+        EvidenceBundleContentView.as_view(),
+        name="evidence-bundle-content",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/exports/",
+        EvidenceBundleExportListCreateView.as_view(),
+        name="evidence-bundle-export-list-create",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/legal-hold/",
+        EvidenceBundleLegalHoldView.as_view(),
+        name="evidence-bundle-legal-hold",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/",
+        EvidenceExportDetailView.as_view(),
+        name="evidence-export-detail",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/receipt/",
+        EvidenceExportReceiptView.as_view(),
+        name="evidence-export-receipt",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/download/",
+        EvidenceExportDownloadView.as_view(),
+        name="evidence-export-download",
+    ),
+    path(
+        "legal-holds/<uuid:hold_id>/release/",
+        LegalHoldReleaseView.as_view(),
+        name="legal-hold-release",
+    ),
+]

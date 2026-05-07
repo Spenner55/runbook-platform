@@ -54,6 +54,18 @@ class AuditEvent(BaseModel):
         CHANGE_EXCEPTION = "change_exception", "Change Exception"
         BREAKGLASS_SESSION = "breakglass_session", "Breakglass Session"
         RETRO_REVIEW = "retro_review", "Retro Review"
+        EVIDENCE_BUNDLE = "evidence_bundle", "Evidence Bundle"
+        EVIDENCE_BUNDLE_ITEM = "evidence_bundle_item", "Evidence Bundle Item"
+        EVIDENCE_REDACTION_POLICY = (
+            "evidence_redaction_policy",
+            "Evidence Redaction Policy",
+        )
+        EVIDENCE_EXPORT = "evidence_export", "Evidence Export"
+        EVIDENCE_RETENTION_POLICY = (
+            "evidence_retention_policy",
+            "Evidence Retention Policy",
+        )
+        LEGAL_HOLD = "legal_hold", "Legal Hold"
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
@@ -138,6 +150,12 @@ class AuditEvent(BaseModel):
                         "change_exception",
                         "breakglass_session",
                         "retro_review",
+                        "evidence_bundle",
+                        "evidence_bundle_item",
+                        "evidence_redaction_policy",
+                        "evidence_export",
+                        "evidence_retention_policy",
+                        "legal_hold",
                     ]
                 ),
                 name="audit_object_type_valid_chk",
