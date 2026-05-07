@@ -13,7 +13,6 @@ Covers:
 """
 
 from datetime import timedelta
-from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -30,7 +29,6 @@ from apps.common.exceptions import (
     InvalidStateTransitionError,
 )
 from apps.organizations.models import Membership, MembershipRole
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -593,8 +591,8 @@ def test_record_breakglass_heartbeat_does_not_extend_expiry(
     original_expires = session.expires_at
 
     # Simulate an execution binding so the service can validate runner ownership.
-    from apps.executions.models import Execution
     from apps.changes.models import ChangeExecutionBinding
+    from apps.executions.models import Execution
 
     execution = Execution.objects.create(
         organization=running_change.organization,

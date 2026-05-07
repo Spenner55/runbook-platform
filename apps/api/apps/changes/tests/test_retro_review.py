@@ -23,10 +23,13 @@ from rest_framework.test import APIClient
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes import services as change_services
-from apps.changes.models import ChangeException, ChangeRecord, RetroReview
-from apps.common.exceptions import DomainConflictError, DomainValidationError, InvalidStateTransitionError
+from apps.changes.models import ChangeException, ChangeRecord, FreezeRule, RetroReview
+from apps.common.exceptions import (
+    DomainConflictError,
+    DomainValidationError,
+    InvalidStateTransitionError,
+)
 from apps.organizations.models import Membership, MembershipRole
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,6 +58,60 @@ def _user_actor(user):
         actor_id=str(user.pk),
         actor_label=user.email,
     )
+
+
+def _make_valid_policy_scope(change):
+    from apps.executions.models import Execution, ExecutionStep
+    from apps.policies.models import PolicyEvaluation
+
+    execution = Execution.objects.create(
+        organization=change.organization,
+        workflow=change.workflow,
+        workflow_version=change.workflow.version,
+        workflow_snapshot={},
+    )
+    step = ExecutionStep.objects.create(
+        execution=execution,
+        position=1,
+        step_key="policy-step",
+        name="Policy step",
+        step_type="shell",
+        risk_level="high",
+    )
+    evaluation = PolicyEvaluation.objects.create(
+        organization=change.organization,
+        execution=execution,
+        step=step,
+        matched=True,
+        outcome="block",
+        effective_outcome="block",
+        decision_source="workflow_default",
+        evaluated_at=_now(),
+    )
+    change.refresh_from_db()
+    change.policy_evaluation = evaluation
+    change.save(update_fields=["policy_evaluation", "updated_at"])
+    return {
+        "policy_evaluation_id": str(evaluation.id),
+        "policy_rule_ids": [],
+        "overridden_outcome": "block",
+    }
+
+
+def _make_valid_freeze_scope(change):
+    rule = FreezeRule.objects.create(
+        organization=change.organization,
+        name="Retro freeze",
+        behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+        starts_at=_past(3600),
+        ends_at=_future(3600),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=True,
+    )
+    return {
+        "freeze_rule_id": str(rule.id),
+        "target_ids": [str(tid) for tid in change.targets.values_list("id", flat=True)],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -112,18 +169,14 @@ def api_client_admin(admin_user, org):
 
 
 @pytest.fixture
-def policy_override_exception(draft_change, operator_user, approver_user):
+def policy_override_exception(draft_change, operator_user, admin_user):
     """An approved policy_override exception."""
     exc = change_services.request_exception(
         change=draft_change,
         actor=_user_actor(operator_user),
         exception_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
         reason="Override policy block for maintenance",
-        scope_json={
-            "policy_evaluation_id": "pe-1",
-            "policy_rule_ids": ["r-1"],
-            "overridden_outcome": "blocked",
-        },
+        scope_json=_make_valid_policy_scope(draft_change),
         expires_at=_future(7200),
         actor_user=operator_user,
     )
@@ -131,11 +184,11 @@ def policy_override_exception(draft_change, operator_user, approver_user):
 
 
 @pytest.fixture
-def approved_policy_override_exception(policy_override_exception, approver_user):
+def approved_policy_override_exception(policy_override_exception, admin_user):
     return change_services.approve_exception(
         change_exception=policy_override_exception,
-        actor=_user_actor(approver_user),
-        actor_user=approver_user,
+        actor=_user_actor(admin_user),
+        actor_user=admin_user,
     )
 
 
@@ -147,7 +200,7 @@ def freeze_override_exception(draft_change, operator_user):
         actor=_user_actor(operator_user),
         exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
         reason="Override freeze",
-        scope_json={"freeze_rule_id": "r-freeze", "target_ids": ["t-1"]},
+        scope_json=_make_valid_freeze_scope(draft_change),
         expires_at=_future(7200),
         actor_user=operator_user,
     )
@@ -178,13 +231,13 @@ def pending_retro_review(draft_change, approved_policy_override_exception, org):
 
 @pytest.mark.django_db
 def test_ensure_retro_review_for_exception_creates_review(
-    draft_change, policy_override_exception, approver_user
+    draft_change, policy_override_exception, admin_user
 ):
     """Approving a policy_override creates a RetroReview."""
     change_services.approve_exception(
         change_exception=policy_override_exception,
-        actor=_user_actor(approver_user),
-        actor_user=approver_user,
+        actor=_user_actor(admin_user),
+        actor_user=admin_user,
     )
     review = RetroReview.objects.filter(
         change_record=draft_change,
@@ -505,15 +558,15 @@ def test_close_change_blocked_by_pending_retro_review(
 
 @pytest.mark.django_db
 def test_approve_exception_creates_retro_review(
-    policy_override_exception, approver_user, draft_change
+    policy_override_exception, admin_user, draft_change
 ):
     """approve_exception creates a RetroReview for policy_override."""
     assert not RetroReview.objects.filter(change_record=draft_change).exists()
 
     change_services.approve_exception(
         change_exception=policy_override_exception,
-        actor=_user_actor(approver_user),
-        actor_user=approver_user,
+        actor=_user_actor(admin_user),
+        actor_user=admin_user,
     )
 
     assert RetroReview.objects.filter(
@@ -529,16 +582,17 @@ def test_approve_exception_creates_retro_review(
 
 @pytest.mark.django_db
 def test_control_failure_disposition_updates_change_status(
-    pending_retro_review, draft_change, approver_user
+    pending_retro_review, draft_change, admin_user
 ):
     """control_failure disposition sets retro_review_blocking_status=control_failure."""
     change_services.submit_retro_review(
         review=pending_retro_review,
-        actor=_user_actor(approver_user),
-        actor_user=approver_user,
+        actor=_user_actor(admin_user),
+        actor_user=admin_user,
         disposition=RetroReview.Disposition.CONTROL_FAILURE,
         summary="Control failure identified",
         evidence_json={"control_failure_category": "access_control"},
+        remediation_reference="TICKET-CTRL-1",
     )
     draft_change.refresh_from_db()
     assert draft_change.retro_review_blocking_status == "control_failure"

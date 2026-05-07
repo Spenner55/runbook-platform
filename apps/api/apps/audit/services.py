@@ -28,13 +28,18 @@ FORBIDDEN_METADATA_KEYS = {
     "change_dispatch_token",
     "claim_token",
     "command",
+    "command_output",
     "cookie",
     "dispatch_token",
     "dispatch_token_hash",
     "headers",
+    "iam_policy_document",
+    "kube_config",
     "password",
     "private_key",
+    "raw_command",
     "raw_command_output",
+    "raw_output",
     "raw_response",
     "raw_response_body",
     "request_body",
@@ -61,6 +66,9 @@ FORBIDDEN_METADATA_KEYS = {
     "webhook_url",
     "workflow_snapshot",
     "x_api_key",
+    "cloud_account",
+    "kubeconfig",
+    "kube_config_file",
 }
 
 REJECTED_METADATA_KEYS = {

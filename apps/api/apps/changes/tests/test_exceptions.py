@@ -21,6 +21,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.approvals import services as approval_services
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditActor
 from apps.changes import services as change_services
@@ -30,8 +31,8 @@ from apps.changes.models import (
     ChangeWindow,
     FreezeRule,
 )
+from apps.common.exceptions import DomainValidationError
 from apps.organizations.models import Membership, MembershipRole
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,6 +61,109 @@ def _user_actor(user):
         actor_id=str(user.pk),
         actor_label=str(user.pk),
     )
+
+
+def _freeze_scope(change, rule):
+    return {
+        "freeze_rule_id": str(rule.id),
+        "target_ids": [str(tid) for tid in change.targets.values_list("id", flat=True)],
+    }
+
+
+def _make_valid_freeze_scope(change):
+    rule = FreezeRule.objects.create(
+        organization=change.organization,
+        name="Scoped allow freeze",
+        behavior=FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+        starts_at=_past(3600),
+        ends_at=_future(3600),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=True,
+    )
+    return _freeze_scope(change, rule)
+
+
+def _make_valid_window_scope(change):
+    window = ChangeWindow.objects.create(
+        organization=change.organization,
+        change_record=change,
+        starts_at=_past(7200),
+        ends_at=_past(3600),
+    )
+    return {
+        "change_window_id": str(window.id),
+        "allowed_until": _future(3600).isoformat(),
+    }
+
+
+def _make_valid_verification_scope(change):
+    if change.status == ChangeRecord.Status.DRAFT:
+        change = change_services.submit_change_record(
+            change=change, actor=_system_actor()
+        )
+    plan = change_services.ensure_verification_plan(
+        change=change, actor=_system_actor(), activate=True
+    )
+    check = plan.checks.first()
+    return {
+        "verification_plan_id": str(plan.id),
+        "verification_check_ids": [str(check.id)],
+        "due_at": _future(3600).isoformat(),
+    }
+
+
+def _make_valid_missing_artifact_scope(change):
+    if change.status == ChangeRecord.Status.DRAFT:
+        change = change_services.submit_change_record(
+            change=change, actor=_system_actor()
+        )
+    plan = change_services.ensure_verification_plan(
+        change=change, actor=_system_actor(), activate=True
+    )
+    check = plan.checks.first()
+    return {
+        "verification_check_id": str(check.id),
+        "expected_artifact_kind": check.artifact_kind,
+        "replacement_evidence": "INC-001",
+    }
+
+
+def _make_valid_policy_scope(change):
+    from apps.executions.models import Execution, ExecutionStep
+    from apps.policies.models import PolicyEvaluation
+
+    execution = Execution.objects.create(
+        organization=change.organization,
+        workflow=change.workflow,
+        workflow_version=change.workflow.version,
+        workflow_snapshot={},
+    )
+    step = ExecutionStep.objects.create(
+        execution=execution,
+        position=1,
+        step_key="policy-step",
+        name="Policy step",
+        step_type="shell",
+        risk_level="high",
+    )
+    evaluation = PolicyEvaluation.objects.create(
+        organization=change.organization,
+        execution=execution,
+        step=step,
+        matched=True,
+        outcome="block",
+        effective_outcome="block",
+        decision_source="workflow_default",
+        evaluated_at=_now(),
+    )
+    change.refresh_from_db()
+    change.policy_evaluation = evaluation
+    change.save(update_fields=["policy_evaluation", "updated_at"])
+    return {
+        "policy_evaluation_id": str(evaluation.id),
+        "policy_rule_ids": [],
+        "overridden_outcome": "block",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +231,8 @@ def freeze_rule_allow_exception(org):
 
 @pytest.fixture
 def second_change_record(org, operation_profile, published_workflow):
-    from apps.audit.services import AuditActor
     from apps.audit.models import AuditEvent
+    from apps.audit.services import AuditActor
     from apps.changes import services as change_services
 
     actor = AuditActor(actor_type=AuditEvent.ActorType.SYSTEM, actor_label="test")
@@ -173,6 +277,96 @@ def api_client_approver(approver_user, org):
     return client
 
 
+@pytest.mark.django_db
+def test_central_approval_decision_approves_linked_change_exception(
+    change, freeze_rule_allow_exception, approver_user
+):
+    exc = change_services.request_exception(
+        change=change,
+        actor=_user_actor(approver_user),
+        exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
+        reason="Need emergency freeze override",
+        scope_json=_freeze_scope(change, freeze_rule_allow_exception),
+        expires_at=_future(),
+        actor_user=None,
+    )
+
+    approval_services.decide_approval(
+        approval_request=exc.approval_request,
+        decision="approved",
+        actor=_user_actor(approver_user),
+        actor_user=approver_user,
+    )
+
+    exc.refresh_from_db()
+    assert exc.status == ChangeException.Status.APPROVED
+    assert exc.approved_by == approver_user
+
+
+@pytest.mark.django_db
+def test_central_approval_decision_rejects_exception_self_approval(
+    change, freeze_rule_allow_exception, operator_user
+):
+    exc = change_services.request_exception(
+        change=change,
+        actor=_user_actor(operator_user),
+        exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
+        reason="Need emergency freeze override",
+        scope_json=_freeze_scope(change, freeze_rule_allow_exception),
+        expires_at=_future(),
+        actor_user=operator_user,
+    )
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        approval_services.decide_approval(
+            approval_request=exc.approval_request,
+            decision="approved",
+            actor=_user_actor(operator_user),
+            actor_user=operator_user,
+        )
+    assert exc_info.value.code == "exception_self_approval_rejected"
+    exc.refresh_from_db()
+    assert exc.status == ChangeException.Status.PENDING_APPROVAL
+
+
+@pytest.mark.django_db
+def test_policy_override_central_approval_requires_admin(
+    change, approver_user
+):
+    from apps.approvals.models import ApprovalRequest
+
+    now = _now()
+    exc = ChangeException.objects.create(
+        organization=change.organization,
+        change_record=change,
+        exception_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
+        status=ChangeException.Status.PENDING_APPROVAL,
+        reason="Policy override",
+        scope_json=_make_valid_policy_scope(change),
+        requested_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    ar = ApprovalRequest.objects.create(
+        organization=change.organization,
+        subject_type=ApprovalRequest.SubjectType.CHANGE_EXCEPTION,
+        subject_id=exc.id,
+        status=ApprovalRequest.Status.PENDING,
+        requested_at=now,
+        requested_by_runner_id="",
+    )
+    exc.approval_request = ar
+    exc.save(update_fields=["approval_request", "updated_at"])
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        approval_services.decide_approval(
+            approval_request=ar,
+            decision="approved",
+            actor=_user_actor(approver_user),
+            actor_user=approver_user,
+        )
+    assert exc_info.value.code == "exception_admin_approval_required"
+
+
 # ---------------------------------------------------------------------------
 # Exception service: request_exception
 # ---------------------------------------------------------------------------
@@ -186,7 +380,7 @@ class TestRequestException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="Production freeze exception needed.",
-            scope_json={"freeze_rule_id": "rule-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=operator_user,
         )
@@ -202,7 +396,7 @@ class TestRequestException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.WINDOW_OVERRUN,
             reason="Running past window end.",
-            scope_json={"change_window_id": "w-1", "allowed_until": "2026-01-01T00:00:00Z"},
+            scope_json=_make_valid_window_scope(change),
             expires_at=_future(3600),
             actor_user=operator_user,
         )
@@ -339,7 +533,10 @@ class TestRequestException:
                 reason="trying to override block rule",
                 scope_json={
                     "freeze_rule_id": str(freeze_rule_block.id),
-                    "target_ids": ["t-1"],
+                    "target_ids": [
+                        str(tid)
+                        for tid in change.targets.values_list("id", flat=True)
+                    ],
                 },
                 expires_at=_future(),
                 actor_user=operator_user,
@@ -353,10 +550,7 @@ class TestRequestException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="override allow_with_exception freeze",
-            scope_json={
-                "freeze_rule_id": str(freeze_rule_allow_exception.id),
-                "target_ids": ["t-1"],
-            },
+            scope_json=_freeze_scope(change, freeze_rule_allow_exception),
             expires_at=_future(),
             actor_user=operator_user,
         )
@@ -366,7 +560,7 @@ class TestRequestException:
         from apps.common.exceptions import DomainValidationError
 
         # Create a window that starts in the future
-        ChangeWindow.objects.create(
+        window = ChangeWindow.objects.create(
             organization=change.organization,
             change_record=change,
             starts_at=_future(7200),
@@ -379,7 +573,7 @@ class TestRequestException:
                 exception_type=ChangeException.ExceptionType.WINDOW_OVERRUN,
                 reason="window not open yet",
                 scope_json={
-                    "change_window_id": "w-1",
+                    "change_window_id": str(window.id),
                     "allowed_until": _future(20000).isoformat(),
                 },
                 expires_at=_future(),
@@ -389,29 +583,11 @@ class TestRequestException:
     def test_all_exception_types_can_be_created(self, change, operator_user):
         """All valid types with valid scope produce a pending exception."""
         valid_scopes = {
-            ChangeException.ExceptionType.FREEZE_OVERRIDE: {
-                "freeze_rule_id": "r-1",
-                "target_ids": ["t-1"],
-            },
-            ChangeException.ExceptionType.WINDOW_OVERRUN: {
-                "change_window_id": "w-1",
-                "allowed_until": "2099-01-01T00:00:00Z",
-            },
-            ChangeException.ExceptionType.LATE_VERIFICATION: {
-                "verification_plan_id": "vp-1",
-                "verification_check_ids": ["vc-1"],
-                "due_at": "2099-01-01T00:00:00Z",
-            },
-            ChangeException.ExceptionType.POLICY_OVERRIDE: {
-                "policy_evaluation_id": "pe-1",
-                "policy_rule_ids": ["pr-1"],
-                "overridden_outcome": "blocked",
-            },
-            ChangeException.ExceptionType.MISSING_ARTIFACT: {
-                "verification_check_id": "vc-1",
-                "expected_artifact_kind": "test_report",
-                "replacement_evidence": "See INC-001",
-            },
+            ChangeException.ExceptionType.FREEZE_OVERRIDE: _make_valid_freeze_scope(change),
+            ChangeException.ExceptionType.WINDOW_OVERRUN: _make_valid_window_scope(change),
+            ChangeException.ExceptionType.LATE_VERIFICATION: _make_valid_verification_scope(change),
+            ChangeException.ExceptionType.POLICY_OVERRIDE: _make_valid_policy_scope(change),
+            ChangeException.ExceptionType.MISSING_ARTIFACT: _make_valid_missing_artifact_scope(change),
         }
         for exc_type, scope in valid_scopes.items():
             exc = change_services.request_exception(
@@ -440,7 +616,7 @@ class TestApproveException:
             actor=_user_actor(user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="Need freeze override",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=user,
         )
@@ -492,7 +668,7 @@ class TestApproveException:
                 actor_user=operator_user,
             )
         events = AuditEvent.objects.filter(
-            event_type="retro_review.self_review_rejected",
+            event_type="change_exception.self_approval_rejected",
             object_id=exc.id,
         )
         assert events.exists()
@@ -530,49 +706,41 @@ class TestApproveException:
         assert exc_info.value.code == "exception_not_pending"
 
     def test_policy_override_sets_retro_review_required(
-        self, change, operator_user, approver_user
+        self, change, operator_user, admin_user
     ):
         exc = change_services.request_exception(
             change=change,
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.POLICY_OVERRIDE,
             reason="Override policy block",
-            scope_json={
-                "policy_evaluation_id": "pe-1",
-                "policy_rule_ids": ["r-1"],
-                "overridden_outcome": "blocked",
-            },
+            scope_json=_make_valid_policy_scope(change),
             expires_at=_future(),
             actor_user=operator_user,
         )
         change_services.approve_exception(
             change_exception=exc,
-            actor=_user_actor(approver_user),
-            actor_user=approver_user,
+            actor=_user_actor(admin_user),
+            actor_user=admin_user,
         )
         change.refresh_from_db()
         assert change.retro_review_required is True
 
     def test_missing_artifact_sets_retro_review_required(
-        self, change, operator_user, approver_user
+        self, change, operator_user, admin_user
     ):
         exc = change_services.request_exception(
             change=change,
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.MISSING_ARTIFACT,
             reason="Artifact missing",
-            scope_json={
-                "verification_check_id": "vc-1",
-                "expected_artifact_kind": "report",
-                "replacement_evidence": "INC-001",
-            },
+            scope_json=_make_valid_missing_artifact_scope(change),
             expires_at=_future(),
             actor_user=operator_user,
         )
         change_services.approve_exception(
             change_exception=exc,
-            actor=_user_actor(approver_user),
-            actor_user=approver_user,
+            actor=_user_actor(admin_user),
+            actor_user=admin_user,
         )
         change.refresh_from_db()
         assert change.retro_review_required is True
@@ -591,7 +759,7 @@ class TestRejectException:
             actor=_user_actor(user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="Need freeze override",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=user,
         )
@@ -664,7 +832,7 @@ class TestExpireExceptions:
             actor=_user_actor(user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=expires_at,
             actor_user=user,
         )
@@ -727,7 +895,7 @@ class TestFindApplicableException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(3600),
             actor_user=operator_user,
         )
@@ -757,7 +925,7 @@ class TestFindApplicableException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=expires_at,
             actor_user=operator_user,
         )
@@ -783,7 +951,7 @@ class TestFindApplicableException:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=expires_at,
             actor_user=operator_user,
         )
@@ -821,7 +989,7 @@ class TestChangeExceptionAPI:
             {
                 "exception_type": "freeze_override",
                 "reason": "Production incident.",
-                "scope_json": {"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+                "scope_json": _make_valid_freeze_scope(change),
                 "expires_at": _future(7200).isoformat(),
             },
             format="json",
@@ -838,7 +1006,7 @@ class TestChangeExceptionAPI:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=operator_user,
         )
@@ -879,7 +1047,7 @@ class TestChangeExceptionAPI:
             {
                 "exception_type": "freeze_override",
                 "reason": "test",
-                "scope_json": {"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+                "scope_json": _make_valid_freeze_scope(change),
                 "expires_at": _future(3600).isoformat(),
             },
             format="json",
@@ -893,6 +1061,7 @@ class TestChangeExceptionAPI:
         self, change, api_client_operator, org_factory
     ):
         from rest_framework_simplejwt.tokens import RefreshToken
+
         from apps.users.models import User
 
         other_org = org_factory("other-org-exc")
@@ -908,7 +1077,7 @@ class TestChangeExceptionAPI:
             {
                 "exception_type": "freeze_override",
                 "reason": "test",
-                "scope_json": {"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+                "scope_json": _make_valid_freeze_scope(change),
                 "expires_at": _future(3600).isoformat(),
             },
             format="json",
@@ -921,7 +1090,7 @@ class TestChangeExceptionAPI:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=operator_user,
         )
@@ -951,7 +1120,7 @@ class TestExceptionApproveRejectAPI:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.FREEZE_OVERRIDE,
             reason="test",
-            scope_json={"freeze_rule_id": "r-1", "target_ids": ["t-1"]},
+            scope_json=_make_valid_freeze_scope(change),
             expires_at=_future(7200),
             actor_user=operator_user,
         )
@@ -1043,11 +1212,7 @@ class TestLateVerificationSemantics:
             actor=_user_actor(operator_user),
             exception_type=ChangeException.ExceptionType.LATE_VERIFICATION,
             reason="Late verification needed",
-            scope_json={
-                "verification_plan_id": "vp-1",
-                "verification_check_ids": ["vc-1"],
-                "due_at": "2099-01-01T00:00:00Z",
-            },
+            scope_json=_make_valid_verification_scope(change),
             expires_at=_future(7200),
             actor_user=operator_user,
         )

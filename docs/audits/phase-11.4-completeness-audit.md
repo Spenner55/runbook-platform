@@ -160,3 +160,44 @@ docker compose exec web npm test -- --run apps/web/src/routes/changes apps/web/s
 make lint
 make check-migrations
 ```
+
+## 13. Fix Implementation Summary
+
+### Fixes completed
+
+- Central `CHANGE_EXCEPTION` approval decisions now update linked `ChangeException` rows, enforce requester != approver, and require admin/owner approval for `policy_override` and `missing_artifact`.
+- Exception scope validation now proves referenced freeze rules, windows, verification plans/checks, policy evaluations/rules, and target IDs belong to the same organization/change where applicable.
+- Dispatch preflight now uses approved, non-expired `ChangeException` rows for freeze overrides and ignores legacy `freeze_exception_reference` as authority.
+- Policy dispatch gates can be satisfied only by a matching approved `policy_override` exception or scoped active breakglass.
+- Breakglass scope assertion is wired into dispatch/preflight policy/window gates and runner policy continuation paths; out-of-scope active sessions fail closed.
+- Active breakglass sessions are ended on execution terminal handling and closure; the runner now reports a bounded breakglass heartbeat observation when a claimed change execution includes breakglass facts.
+- Retro-review closure checks now include `control_failure` remediation/reference enforcement, admin/owner reviewer enforcement, and closure summary violation markers.
+- Audit metadata scrubber now covers additional emergency-sensitive keys including raw command/output, cloud account, IAM policy document, and kubeconfig variants.
+- Public operation profile API exposes `allow_emergency_changes`; emergency create UI filters unsupported profiles client-side while preserving server authority.
+- Browser API client now blocks both `/api/v1/internal/` and `/internal/v1/` route families.
+- Repository lint drift discovered during this work was corrected in Phase 11.4 files and runner test imports so `make lint` passes.
+
+### Tests added/updated
+
+- Updated backend exception tests to use real same-change/same-org scope objects and to cover central approval decisions, self-approval rejection, admin-only severe exception approval, and legacy freeze reference rejection.
+- Updated preflight tests for approved scoped `freeze_override` behavior.
+- Updated retro-review tests for admin-only control-failure handling and strict policy/freeze exception scopes.
+- Added runner executor coverage for breakglass heartbeat observation.
+- Added frontend tests for emergency profile filtering and `/internal/v1/` browser request blocking.
+
+### Commands run
+
+```bash
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api python manage.py check
+docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/changes/tests apps/approvals/tests apps/executions/tests/test_approval_runner_api.py -q
+docker compose exec runner pytest runner/tests/test_runner_breakglass_contract.py runner/tests/test_executor.py -q
+docker compose exec web npm test -- --run
+docker compose exec web npm run build
+make lint
+make check-migrations
+```
+
+### Remaining risks
+
+- Phase 11.4 is now functionally ready against the audited blocking items, but broader production rollout should still monitor real emergency flows for policy/window scope mismatches because exception and breakglass scopes are intentionally strict.
+- Frontend breakglass and exception forms still use some free-form scope entry patterns; server-side authority rejects malformed scope, but selector-based UX remains a follow-up hardening improvement.

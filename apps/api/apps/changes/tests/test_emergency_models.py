@@ -18,7 +18,6 @@ from apps.changes.models import (
 )
 from apps.organizations.models import Organization
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

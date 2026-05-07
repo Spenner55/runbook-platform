@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 from apps.approvals import services as approval_services
 from apps.approvals.models import ApprovalRequest
 from apps.common.authentication import RunnerBearerTokenAuthentication
-from apps.common.exceptions import InvalidStateTransitionError
+from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError
 from apps.common.permissions import IsRunnerAuthenticated
 from apps.executions import services
 from apps.executions.internal_serializers import (
@@ -67,6 +67,47 @@ def _assert_change_bound_execution_ready(
             status=http_status.HTTP_403_FORBIDDEN,
         )
     return None
+
+
+def _get_change_for_execution(execution):
+    try:
+        return execution.change_binding.change_record
+    except Exception:
+        return None
+
+
+def _change_has_active_breakglass(change) -> bool:
+    if change is None:
+        return False
+    return change.breakglass_sessions.filter(status="active").exists()
+
+
+def _breakglass_execution_gate_decision(
+    *, execution, gate_type: str, action: str
+) -> tuple[bool, Response | None]:
+    change = _get_change_for_execution(execution)
+    if change is None:
+        return False, None
+    try:
+        from apps.changes import services as change_services
+
+        target_ids = [
+            str(tid) for tid in change.targets.values_list("id", flat=True)
+        ]
+        change_services.assert_breakglass_allows(
+            change=change,
+            gate_type=gate_type,
+            action=action,
+            target_ids=target_ids,
+        )
+    except DomainValidationError as exc:
+        if exc.code == "no_active_breakglass_session":
+            return False, None
+        return False, Response(
+            {"errors": [{"code": exc.code, "detail": exc.detail}]},
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
+    return True, None
 
 
 class RunnerInternalAPIView(APIView):
@@ -287,6 +328,34 @@ class ExecutionStepStartView(RunnerInternalAPIView):
             effective_outcome = evaluation.effective_outcome
 
             if effective_outcome == "approval_required":
+                change = _get_change_for_execution(execution)
+                if _change_has_active_breakglass(change):
+                    breakglass_allowed, breakglass_guard = _breakglass_execution_gate_decision(
+                        execution=execution,
+                        gate_type="policy_override",
+                        action="continue_running",
+                    )
+                    if breakglass_guard is not None:
+                        return breakglass_guard
+                    if breakglass_allowed:
+                        step = services.update_execution_step(
+                            execution=execution,
+                            step_id=str(step_id),
+                            runner_id=runner_id,
+                            claim_token=claim_token,
+                            new_status=ExecutionStep.Status.RUNNING,
+                            _allow_running=True,
+                        )
+                        execution.refresh_from_db()
+                        return Response(
+                            {
+                                "execution_id": str(execution.id),
+                                "execution_status": execution.status,
+                                "step": {"id": str(step.id), "status": step.status},
+                                "runner_action": "run",
+                                "poll_after_seconds": 0,
+                            }
+                        )
                 ar, created = approval_services.request_step_approval(
                     execution=execution,
                     step=step,
@@ -306,6 +375,34 @@ class ExecutionStepStartView(RunnerInternalAPIView):
                 )
 
             if effective_outcome == "block":
+                change = _get_change_for_execution(execution)
+                if _change_has_active_breakglass(change):
+                    breakglass_allowed, breakglass_guard = _breakglass_execution_gate_decision(
+                        execution=execution,
+                        gate_type="policy_override",
+                        action="continue_running",
+                    )
+                    if breakglass_guard is not None:
+                        return breakglass_guard
+                    if breakglass_allowed:
+                        step = services.update_execution_step(
+                            execution=execution,
+                            step_id=str(step_id),
+                            runner_id=runner_id,
+                            claim_token=claim_token,
+                            new_status=ExecutionStep.Status.RUNNING,
+                            _allow_running=True,
+                        )
+                        execution.refresh_from_db()
+                        return Response(
+                            {
+                                "execution_id": str(execution.id),
+                                "execution_status": execution.status,
+                                "step": {"id": str(step.id), "status": step.status},
+                                "runner_action": "run",
+                                "poll_after_seconds": 0,
+                            }
+                        )
                 step = services.update_execution_step(
                     execution=execution,
                     step_id=str(step_id),
@@ -422,6 +519,15 @@ class ApprovalStatusView(RunnerInternalAPIView):
                 )
 
             if ar.status == ApprovalRequest.Status.APPROVED:
+                change = _get_change_for_execution(execution)
+                if _change_has_active_breakglass(change):
+                    _, breakglass_guard = _breakglass_execution_gate_decision(
+                        execution=execution,
+                        gate_type="policy_override",
+                        action="continue_running",
+                    )
+                    if breakglass_guard is not None:
+                        return breakglass_guard
                 step = services.update_execution_step(
                     execution=execution,
                     step_id=str(step_id),

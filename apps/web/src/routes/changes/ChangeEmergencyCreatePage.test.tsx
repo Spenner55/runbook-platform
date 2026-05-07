@@ -14,6 +14,7 @@ const mockProfile = {
   risk_level: 'high',
   requires_approval: true,
   verification_required: false,
+  allow_emergency_changes: true,
   allowed_target_types: ['server'],
   allowed_workflows: [{ id: 'workflow-1', name: 'Maintenance Workflow', version: 1 }],
 }
@@ -91,6 +92,28 @@ describe('ChangeEmergencyCreatePage', () => {
     renderPage()
     await waitFor(() => screen.getByLabelText(/emergency reason/i))
     expect(screen.getByLabelText(/emergency reason/i)).toBeInTheDocument()
+  })
+
+  it('hides profiles that do not allow emergency changes', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse({
+        results: [
+          mockProfile,
+          {
+            ...mockProfile,
+            id: 'profile-2',
+            key: 'standard-maintenance',
+            name: 'Standard Maintenance',
+            allow_emergency_changes: false,
+          },
+        ],
+      })
+    )
+    renderPage()
+    await waitFor(() => screen.getByLabelText(/operation profile/i))
+
+    expect(screen.getByRole('option', { name: /production maintenance/i })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /standard maintenance/i })).not.toBeInTheDocument()
   })
 
   it('sends is_emergency=true and emergency_reason in the create payload', async () => {

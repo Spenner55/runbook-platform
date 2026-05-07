@@ -10,7 +10,13 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.audit.services import actor_from_request
 from apps.changes import selectors, services
-from apps.changes.models import BreakglassSession, ChangeException, RetroReview, VerificationPlan
+from apps.changes.models import (
+    BreakglassSession,
+    ChangeException,
+    ChangeRecord,
+    RetroReview,
+    VerificationPlan,
+)
 from apps.changes.serializers import (
     BindChangeExecutionSerializer,
     BreakglassActivateSerializer,
@@ -19,7 +25,6 @@ from apps.changes.serializers import (
     BreakglassSessionDetailSerializer,
     ChangeClosureCreateSerializer,
     ChangeClosureDetailSerializer,
-    ChangeExceptionApproveRejectSerializer,
     ChangeExceptionCreateSerializer,
     ChangeExceptionDetailSerializer,
     ChangeExceptionResolveSerializer,

@@ -11,7 +11,7 @@ Covers:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,10 +22,8 @@ from runner.schemas import (
     BreakglassHeartbeatResponse,
     BreakglassSessionFacts,
     ClaimedExecution,
-    ClaimedStep,
     StepStartResponse,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,7 +111,6 @@ def test_breakglass_facts_extra_ignored():
 
 def test_breakglass_session_facts_no_credential_fields():
     """BreakglassSessionFacts must not have fields that look like credentials."""
-    import dataclasses
 
     field_names = set(BreakglassSessionFacts.model_fields.keys())
     credential_like = {

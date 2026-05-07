@@ -31,10 +31,11 @@ export function ChangeEmergencyCreatePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [inputsError, setInputsError] = useState<string | null>(null)
 
-  const selectedProfile = profiles?.find((p) => p.key === profileKey)
+  const emergencyProfiles = profiles?.filter((p) => p.allow_emergency_changes) ?? []
+  const selectedProfile = emergencyProfiles.find((p) => p.key === profileKey)
 
   function handleProfileChange(key: string) {
-    const newProfile = profiles?.find((p) => p.key === key)
+    const newProfile = emergencyProfiles.find((p) => p.key === key)
     const firstType = newProfile?.allowed_target_types[0] ?? ''
     setProfileKey(key)
     setWorkflowId('')
@@ -154,12 +155,15 @@ export function ChangeEmergencyCreatePage() {
               required
             >
               <option value="">Select a profile…</option>
-              {profiles?.map((p) => (
+              {emergencyProfiles.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.name} ({p.risk_level})
                 </option>
               ))}
             </select>
+          )}
+          {!profilesLoading && emergencyProfiles.length === 0 && (
+            <p className="muted">No emergency-enabled operation profiles are available.</p>
           )}
         </div>
 

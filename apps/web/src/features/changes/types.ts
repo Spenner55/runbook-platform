@@ -12,6 +12,7 @@ export interface OperationProfile {
   risk_level: string
   requires_approval: boolean
   verification_required: boolean
+  allow_emergency_changes: boolean
   allowed_target_types: string[]
   allowed_workflows: AllowedWorkflow[]
 }

@@ -84,6 +84,7 @@ class DecideApprovalView(APIView):
             decision=d["decision"],
             notes=d.get("notes", ""),
             actor=actor_from_request(request),
+            actor_user=request.user,
         )
 
         ar.refresh_from_db()

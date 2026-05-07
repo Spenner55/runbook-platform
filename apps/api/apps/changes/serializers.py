@@ -40,6 +40,7 @@ class OperationProfileSerializer(serializers.ModelSerializer):
             "risk_level",
             "requires_approval",
             "verification_required",
+            "allow_emergency_changes",
             "allowed_target_types",
             "allowed_workflows",
         ]

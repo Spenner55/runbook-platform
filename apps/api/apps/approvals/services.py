@@ -424,6 +424,7 @@ def decide_approval(
     notes: str = "",
     actor: AuditActor | None = None,
     actor_label: str = "",
+    actor_user=None,
 ) -> ApprovalDecision:
     """
     Apply a human decision to a pending approval request.
@@ -474,14 +475,25 @@ def decide_approval(
                 detail=f"Approval request is already in terminal state '{locked.status}'.",
             )
 
-        locked.status = decision
-        locked.resolved_at = now
-        locked.save(update_fields=["status", "resolved_at", "updated_at"])
-
         audit_actor = actor or AuditActor(
             actor_type=AuditEvent.ActorType.UNKNOWN,
             actor_label=actor_label or "Unauthenticated public API",
         )
+
+        if locked.subject_type == ApprovalRequest.SubjectType.CHANGE_EXCEPTION:
+            from apps.changes import services as change_services
+
+            change_services.apply_exception_approval_decision(
+                approval_request=locked,
+                decision=decision,
+                actor=audit_actor,
+                actor_user=actor_user,
+            )
+
+        locked.status = decision
+        locked.resolved_at = now
+        locked.save(update_fields=["status", "resolved_at", "updated_at"])
+
         approval_decision = ApprovalDecision.objects.create(
             approval_request=locked,
             decision=decision,
