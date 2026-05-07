@@ -1,11 +1,17 @@
 import hashlib
+import io
 import json
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import (
+    ObjectDoesNotExist,
+    SuspiciousFileOperation,
+    ValidationError,
+)
 from django.db import transaction
 from django.db.models import Max
 from django.forms.models import model_to_dict
@@ -18,12 +24,14 @@ from apps.changes.models import (
     ChangeRecord,
     VerificationResult,
 )
+from apps.common.exceptions import DomainValidationError
 from apps.evidence import selectors
 from apps.evidence.models import EvidenceBundle, EvidenceBundleItem
+from apps.evidence.storage import EvidenceStorage
 
 
 def assert_bundle_mutable(bundle) -> None:
-    if bundle.is_sealed:
+    if bundle.has_sealed_content:
         raise ValidationError(
             "Sealed evidence bundles are immutable.",
             code="evidence_bundle_immutable",
@@ -31,6 +39,23 @@ def assert_bundle_mutable(bundle) -> None:
 
 
 SCHEMA_VERSION = "1"
+ZIP_FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+ZIP_FILE_EXTERNAL_ATTR = 0o100644 << 16
+ZIP_COMPRESSION = zipfile.ZIP_STORED
+
+CANONICAL_REQUIRED_PATHS = {
+    "change/change_record.json": EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
+    "change/targets.json": EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
+    "controls/approvals.json": EvidenceBundleItem.ItemType.APPROVAL,
+    "controls/policy_decisions.json": EvidenceBundleItem.ItemType.POLICY_DECISION,
+    "execution/execution.json": EvidenceBundleItem.ItemType.EXECUTION,
+    "verification/plan.json": EvidenceBundleItem.ItemType.VERIFICATION_RESULT,
+    "verification/results.json": EvidenceBundleItem.ItemType.VERIFICATION_RESULT,
+    "audit/audit_trail.ndjson": EvidenceBundleItem.ItemType.AUDIT_EVENT,
+    "artifacts/index.json": EvidenceBundleItem.ItemType.ARTIFACT,
+    "exceptions/exceptions.json": EvidenceBundleItem.ItemType.EXCEPTION,
+    "exports/export_receipt.json": EvidenceBundleItem.ItemType.EXPORT_RECEIPT,
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +73,17 @@ class _Section:
     source_id: str = ""
     source_updated_at: datetime | None = None
     source_metadata: dict | None = None
+
+
+@dataclass(frozen=True)
+class _PackageEntry:
+    path: str
+    content: bytes
+    media_type: str
+    item_type: str
+    item_key: str = ""
+    required: bool = True
+    source_refs: tuple[dict, ...] = ()
 
 
 def create_evidence_bundle_for_change(
@@ -108,6 +144,611 @@ def materialize_evidence_bundle(*args, **kwargs) -> EvidenceBundle:
 
 def create_evidence_bundle(*args, **kwargs) -> EvidenceBundle:
     return create_evidence_bundle_for_change(*args, **kwargs)
+
+
+def seal_bundle(
+    bundle: EvidenceBundle,
+    actor: AuditActor | None = None,
+    *,
+    sealed_by=None,
+    storage: EvidenceStorage | None = None,
+) -> EvidenceBundle:
+    """Seal a complete evidence bundle into an immutable deterministic ZIP."""
+
+    storage = storage or EvidenceStorage()
+    storage_key = ""
+    wrote_storage = False
+    try:
+        with transaction.atomic():
+            locked_bundle = (
+                EvidenceBundle.objects.select_for_update()
+                .select_related("change_record", "organization")
+                .get(pk=bundle.pk)
+            )
+            list(EvidenceBundleItem.objects.select_for_update().filter(bundle=locked_bundle))
+            if locked_bundle.status != EvidenceBundle.Status.COMPILING:
+                raise DomainValidationError(
+                    code="evidence_bundle_not_compiling",
+                    detail="Only compiling evidence bundles can be sealed.",
+                )
+            if (
+                locked_bundle.completeness_status
+                != EvidenceBundle.CompletenessStatus.COMPLETE
+            ):
+                raise DomainValidationError(
+                    code="evidence_bundle_not_complete",
+                    detail="Only complete evidence bundles can be sealed.",
+                )
+            _assert_no_missing_or_invalid_items(locked_bundle)
+
+            locked_bundle.sealed_at = timezone.now()
+            locked_bundle.sealed_by = sealed_by
+            locked_bundle.save(update_fields=["sealed_at", "sealed_by", "updated_at"])
+
+            package = build_sealed_bundle_package(locked_bundle, storage=storage)
+            storage_key = _sealed_bundle_storage_key(locked_bundle)
+            storage.save_bytes(storage_key, package["zip_bytes"])
+            wrote_storage = True
+
+            locked_bundle.manifest = _normalize(package["manifest"])
+            locked_bundle.manifest_sha256 = package["manifest_sha256"]
+            locked_bundle.payload_checksums_sha256 = package[
+                "payload_checksums_sha256"
+            ]
+            locked_bundle.content_sha256 = package["content_sha256"]
+            locked_bundle.content_size_bytes = package["content_size_bytes"]
+            locked_bundle.storage_key = storage_key
+            locked_bundle.mime_type = "application/zip"
+            locked_bundle.status = EvidenceBundle.Status.SEALED
+            locked_bundle.save(
+                update_fields=[
+                    "manifest",
+                    "manifest_sha256",
+                    "payload_checksums_sha256",
+                    "content_sha256",
+                    "content_size_bytes",
+                    "storage_key",
+                    "mime_type",
+                    "status",
+                    "updated_at",
+                ]
+            )
+
+            transaction.on_commit(
+                lambda: _emit_bundle_sealed(bundle_id=locked_bundle.id, actor=actor)
+            )
+            return locked_bundle
+    except Exception as exc:
+        if wrote_storage and storage_key:
+            storage.delete(storage_key)
+        if isinstance(exc, DomainValidationError) and exc.code in {
+            "artifact_storage_missing",
+            "artifact_checksum_mismatch",
+        }:
+            invalidated = invalidate_bundle(
+                bundle,
+                reason=exc.code,
+                actor=actor,
+                invalidated_by=sealed_by,
+            )
+            invalidated.completeness_status = EvidenceBundle.CompletenessStatus.INVALID
+            invalidated.save(update_fields=["completeness_status", "updated_at"])
+        raise
+
+
+def seal_evidence_bundle(*args, **kwargs) -> EvidenceBundle:
+    return seal_bundle(*args, **kwargs)
+
+
+def invalidate_bundle(
+    bundle: EvidenceBundle,
+    *,
+    reason: str,
+    actor: AuditActor | None = None,
+    invalidated_by=None,
+) -> EvidenceBundle:
+    """Invalidate a compiling or sealed bundle without rewriting sealed bytes."""
+
+    if not reason:
+        raise DomainValidationError(
+            code="evidence_invalidation_reason_required",
+            detail="Invalidation reason is required.",
+        )
+
+    with transaction.atomic():
+        locked_bundle = EvidenceBundle.objects.select_for_update().get(pk=bundle.pk)
+        if locked_bundle.status == EvidenceBundle.Status.INVALIDATED:
+            return locked_bundle
+        if locked_bundle.status not in [
+            EvidenceBundle.Status.COMPILING,
+            EvidenceBundle.Status.SEALED,
+        ]:
+            raise DomainValidationError(
+                code="invalid_evidence_bundle_transition",
+                detail="Evidence bundle status cannot be invalidated.",
+            )
+        previous_status = locked_bundle.status
+        locked_bundle.status = EvidenceBundle.Status.INVALIDATED
+        locked_bundle.invalidated_at = timezone.now()
+        locked_bundle.invalidation_reason = reason[:128]
+        locked_bundle.invalidated_by = invalidated_by
+        locked_bundle.save(
+            update_fields=[
+                "status",
+                "invalidated_at",
+                "invalidation_reason",
+                "invalidated_by",
+                "updated_at",
+            ]
+        )
+        transaction.on_commit(
+            lambda: _emit_bundle_invalidated(
+                bundle_id=locked_bundle.id,
+                previous_status=previous_status,
+                actor=actor,
+            )
+        )
+        return locked_bundle
+
+
+def build_sealed_bundle_package(
+    bundle: EvidenceBundle,
+    *,
+    storage: EvidenceStorage | None = None,
+) -> dict:
+    """Build deterministic sealed bundle bytes without writing storage or status."""
+
+    storage = storage or EvidenceStorage()
+    bundle = (
+        EvidenceBundle.objects.select_related("change_record", "organization")
+        .get(pk=bundle.pk)
+    )
+    if bundle.sealed_at is None:
+        raise DomainValidationError(
+            code="evidence_bundle_sealed_at_required",
+            detail="sealed_at must be persisted before package generation.",
+        )
+
+    payload_entries = _payload_entries_for_bundle(bundle, storage=storage)
+    bundle = _refresh_bundle_source_snapshot_from_items(bundle)
+    manifest = _manifest_for_bundle(bundle, payload_entries)
+    manifest_bytes = canonical_json_bytes(manifest)
+    manifest_sha256 = sha256_hexdigest(manifest_bytes)
+
+    entries_by_path = {
+        entry.path: entry.content for entry in payload_entries
+    }
+    entries_by_path["manifest.json"] = manifest_bytes
+    checksums_bytes = canonical_checksums_bytes(entries_by_path)
+    entries_by_path["checksums.sha256"] = checksums_bytes
+
+    payload_checksums_bytes = canonical_checksums_bytes(
+        {entry.path: entry.content for entry in payload_entries}
+    )
+    payload_checksums_sha256 = sha256_hexdigest(payload_checksums_bytes)
+    zip_bytes = deterministic_zip_bytes(entries_by_path)
+    content_sha256 = sha256_hexdigest(zip_bytes)
+
+    return {
+        "manifest": manifest,
+        "manifest_bytes": manifest_bytes,
+        "manifest_sha256": manifest_sha256,
+        "checksums_bytes": checksums_bytes,
+        "payload_checksums_sha256": payload_checksums_sha256,
+        "zip_bytes": zip_bytes,
+        "content_sha256": content_sha256,
+        "content_size_bytes": len(zip_bytes),
+    }
+
+
+def canonical_checksums_bytes(entries_by_path: dict[str, bytes]) -> bytes:
+    lines = []
+    for path in sorted(entries_by_path):
+        if path == "checksums.sha256":
+            continue
+        _validate_zip_path(path)
+        lines.append(f"{sha256_hexdigest(entries_by_path[path])}  {path}")
+    return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+
+
+def deterministic_zip_bytes(entries_by_path: dict[str, bytes]) -> bytes:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(
+        archive,
+        "w",
+        compression=ZIP_COMPRESSION,
+        allowZip64=True,
+        strict_timestamps=True,
+    ) as zip_file:
+        zip_file.comment = b""
+        for path in sorted(entries_by_path):
+            _validate_zip_path(path)
+            info = zipfile.ZipInfo(path, date_time=ZIP_FIXED_DATE_TIME)
+            info.compress_type = ZIP_COMPRESSION
+            info.create_system = 3
+            info.external_attr = ZIP_FILE_EXTERNAL_ATTR
+            zip_file.writestr(info, entries_by_path[path])
+    return archive.getvalue()
+
+
+def _assert_no_missing_or_invalid_items(bundle: EvidenceBundle) -> None:
+    missing_required = bundle.items.filter(required=True, present=False).exists()
+    invalid_items = bundle.items.filter(valid=False).exists()
+    if missing_required:
+        raise DomainValidationError(
+            code="evidence_bundle_missing_required_items",
+            detail="Evidence bundle has missing required items.",
+        )
+    if invalid_items:
+        raise DomainValidationError(
+            code="evidence_bundle_invalid_items",
+            detail="Evidence bundle has invalid items.",
+        )
+
+
+def _payload_entries_for_bundle(
+    bundle: EvidenceBundle,
+    *,
+    storage: EvidenceStorage,
+) -> list[_PackageEntry]:
+    sections = _source_sections_for_bundle(bundle)
+    entries_by_path: dict[str, _PackageEntry] = {}
+
+    for section in sections:
+        content = (
+            canonical_ndjson_bytes(section.payload)
+            if section.canonical_path.endswith(".ndjson")
+            else canonical_json_bytes(section.payload)
+        )
+        item = (
+            EvidenceBundleItem.objects.filter(
+                bundle=bundle,
+                item_type=section.item_type,
+                item_key=section.item_key,
+            )
+            .order_by("position", "id")
+            .first()
+        )
+        if item is not None:
+            _sync_compiling_item_content(item, content)
+        entries_by_path[section.canonical_path] = _PackageEntry(
+            path=section.canonical_path,
+            content=content,
+            media_type="application/x-ndjson"
+            if section.canonical_path.endswith(".ndjson")
+            else "application/json",
+            item_type=section.item_type,
+            item_key=section.item_key,
+            required=section.required,
+            source_refs=_source_refs_for_path(bundle, section.canonical_path),
+        )
+
+    for path, item_type in CANONICAL_REQUIRED_PATHS.items():
+        if path not in entries_by_path:
+            content = b"" if path.endswith(".ndjson") else canonical_json_bytes({})
+            entries_by_path[path] = _PackageEntry(
+                path=path,
+                content=content,
+                media_type="application/x-ndjson"
+                if path.endswith(".ndjson")
+                else "application/json",
+                item_type=item_type,
+                required=True,
+                source_refs=_source_refs_for_path(bundle, path),
+            )
+
+    artifact_items = (
+        EvidenceBundleItem.objects.select_related("artifact")
+        .filter(bundle=bundle, item_type=EvidenceBundleItem.ItemType.ARTIFACT)
+        .exclude(artifact__isnull=True)
+        .order_by("canonical_path", "item_key", "id")
+    )
+    for item in artifact_items:
+        if item.canonical_path == "artifacts/index.json":
+            continue
+        artifact = item.artifact
+        if not storage.exists(artifact.storage_key):
+            _invalidate_for_artifact_defect(
+                bundle,
+                reason="artifact_storage_missing",
+                detail=f"Artifact storage bytes are missing for {artifact.id}.",
+            )
+        artifact_bytes = storage.read_bytes(artifact.storage_key)
+        artifact_sha256 = sha256_hexdigest(artifact_bytes)
+        if artifact_sha256 != artifact.checksum_sha256:
+            _invalidate_for_artifact_defect(
+                bundle,
+                reason="artifact_checksum_mismatch",
+                detail=f"Artifact checksum mismatch for {artifact.id}.",
+            )
+        _sync_compiling_item_content(item, artifact_bytes)
+        entries_by_path[item.canonical_path] = _PackageEntry(
+            path=item.canonical_path,
+            content=artifact_bytes,
+            media_type=item.mime_type or artifact.mime_type,
+            item_type=item.item_type,
+            item_key=item.item_key,
+            required=item.required,
+            source_refs=_source_refs_for_item(item),
+        )
+
+    return [entries_by_path[path] for path in sorted(entries_by_path)]
+
+
+def _source_sections_for_bundle(bundle: EvidenceBundle) -> list[_Section]:
+    change = (
+        ChangeRecord.objects.select_related("operation_profile", "workflow")
+        .get(pk=bundle.change_record_id)
+    )
+    targets = list(selectors.change_targets_for_bundle(change))
+    verification_plan = selectors.verification_plan_for_bundle(change)
+    verification_checks = list(selectors.verification_checks_for_bundle(change))
+    verification_results = list(selectors.verification_results_for_bundle(change))
+    closure = selectors.closure_for_bundle(change)
+    exceptions = list(selectors.exceptions_for_bundle(change))
+    breakglass_sessions = list(selectors.breakglass_sessions_for_bundle(change))
+    retro_reviews = list(selectors.retro_reviews_for_bundle(change))
+    execution_binding = selectors.execution_binding_for_bundle(change)
+    execution = execution_binding.execution if execution_binding is not None else None
+    execution_steps = (
+        list(execution.steps.order_by("position", "created_at", "id"))
+        if execution is not None
+        else []
+    )
+    approvals = list(
+        selectors.approval_requests_for_bundle(
+            change,
+            exceptions=exceptions,
+            execution=execution,
+        )
+    )
+    policy_evaluations = list(
+        selectors.policy_evaluations_for_bundle(
+            change,
+            exceptions=exceptions,
+            execution=execution,
+        )
+    )
+    artifacts = list(
+        selectors.artifacts_for_bundle(
+            change,
+            execution=execution,
+            verification_results=verification_results,
+            exceptions=exceptions,
+        )
+    )
+    related_object_ids = _related_object_ids(
+        change=change,
+        targets=targets,
+        execution_binding=execution_binding,
+        execution=execution,
+        execution_steps=execution_steps,
+        approvals=approvals,
+        policy_evaluations=policy_evaluations,
+        verification_plan=verification_plan,
+        verification_checks=verification_checks,
+        verification_results=verification_results,
+        closure=closure,
+        exceptions=exceptions,
+        breakglass_sessions=breakglass_sessions,
+        retro_reviews=retro_reviews,
+        artifacts=artifacts,
+    )
+    audit_events = list(
+        selectors.audit_events_for_bundle(
+            change,
+            related_object_ids=related_object_ids,
+            source_cutoff_at=bundle.source_cutoff_at,
+        )
+    )
+
+    sections = [
+        _change_snapshot_section(bundle, change, targets),
+        _targets_section(bundle, change, targets),
+        _approvals_section(bundle, change, approvals),
+        _policy_decisions_section(bundle, change, policy_evaluations),
+        _execution_section(bundle, change, execution_binding, execution, execution_steps),
+        _audit_section(bundle, change, audit_events),
+        _artifacts_section(bundle, change, artifacts),
+        _verification_plan_section(
+            bundle,
+            change,
+            verification_plan,
+            verification_checks,
+        ),
+        _verification_results_section(
+            bundle,
+            change,
+            verification_plan,
+            verification_checks,
+            verification_results,
+        ),
+        _closure_section(bundle, change, closure),
+        _exceptions_section(
+            bundle,
+            change,
+            exceptions,
+            breakglass_sessions,
+            retro_reviews,
+            force=True,
+        ),
+        _export_receipt_section(bundle, change),
+    ]
+    external_reference_section = _external_references_section(
+        bundle,
+        change,
+        verification_results,
+        verification_checks,
+        retro_reviews,
+    )
+    if external_reference_section is not None:
+        sections.append(external_reference_section)
+    return sections
+
+
+def _manifest_for_bundle(
+    bundle: EvidenceBundle,
+    payload_entries: list[_PackageEntry],
+) -> dict:
+    entries = [
+        {
+            "path": entry.path,
+            "item_type": entry.item_type,
+            "item_key": entry.item_key,
+            "media_type": entry.media_type,
+            "size_bytes": len(entry.content),
+            "sha256": sha256_hexdigest(entry.content),
+            "required": entry.required,
+            "source_refs": list(entry.source_refs),
+        }
+        for entry in payload_entries
+    ]
+    entries.sort(key=lambda item: (item["path"], item["item_type"], item["item_key"]))
+    change = bundle.change_record
+    return {
+        "manifest_schema_version": SCHEMA_VERSION,
+        "package_type": "sealed_bundle",
+        "bundle": {
+            "id": bundle.id,
+            "version": bundle.version,
+            "status": EvidenceBundle.Status.SEALED,
+            "completeness_status": bundle.completeness_status,
+            "compiled_at": bundle.compiled_at,
+            "sealed_at": bundle.sealed_at,
+        },
+        "change": {
+            "id": change.id,
+            "status": change.status,
+            "request_snapshot_sha256": change.request_snapshot_sha256,
+            "requested_inputs_sha256": change.requested_inputs_sha256,
+        },
+        "source": {
+            "source_snapshot_sha256": bundle.source_snapshot_sha256,
+            "source_cutoff_at": bundle.source_cutoff_at,
+            "source_high_watermark": bundle.source_high_watermark,
+        },
+        "algorithms": {
+            "content_hash": "sha256",
+            "manifest_hash": "sha256",
+            "payload_checksums_hash": "sha256",
+            "zip_method": "zip-stored",
+        },
+        "entries": entries,
+    }
+
+
+def _sync_compiling_item_content(item: EvidenceBundleItem, content: bytes) -> None:
+    content_sha256 = sha256_hexdigest(content)
+    content_size_bytes = len(content)
+    if (
+        item.content_sha256 == content_sha256
+        and item.content_size_bytes == content_size_bytes
+    ):
+        return
+    item.content_sha256 = content_sha256
+    item.content_size_bytes = content_size_bytes
+    item.save(update_fields=["content_sha256", "content_size_bytes", "updated_at"])
+
+
+def _refresh_bundle_source_snapshot_from_items(bundle: EvidenceBundle) -> EvidenceBundle:
+    items = list(
+        EvidenceBundleItem.objects.filter(bundle=bundle).order_by(
+            "position", "item_type", "item_key"
+        )
+    )
+    completeness_report, completeness_status = _completeness_from_items(items)
+    snapshot_payload = [_snapshot_item_payload(item) for item in items]
+    source_snapshot_sha256 = sha256_hexdigest(canonical_json_bytes(snapshot_payload))
+    if (
+        bundle.completeness_report == completeness_report
+        and bundle.completeness_status == completeness_status
+        and bundle.source_snapshot_sha256 == source_snapshot_sha256
+    ):
+        return bundle
+    bundle.completeness_report = completeness_report
+    bundle.completeness_status = completeness_status
+    bundle.source_snapshot_sha256 = source_snapshot_sha256
+    bundle.save(
+        update_fields=[
+            "completeness_report",
+            "completeness_status",
+            "source_snapshot_sha256",
+            "updated_at",
+        ]
+    )
+    return bundle
+
+
+def _snapshot_item_payload(item: EvidenceBundleItem) -> dict:
+    return {
+        "item_type": item.item_type,
+        "item_key": item.item_key,
+        "canonical_path": item.canonical_path,
+        "json_pointer": item.json_pointer,
+        "position": item.position,
+        "required": item.required,
+        "present": item.present,
+        "valid": item.valid,
+        "missing_reason": item.missing_reason,
+        "validation_errors": item.validation_errors,
+        "source_type": item.source_type,
+        "source_id": item.source_id,
+        "source_updated_at": item.source_updated_at,
+        "content_sha256": item.content_sha256,
+        "content_size_bytes": item.content_size_bytes,
+    }
+
+
+def _source_refs_for_path(
+    bundle: EvidenceBundle,
+    path: str,
+) -> tuple[dict, ...]:
+    refs = []
+    for item in (
+        EvidenceBundleItem.objects.filter(bundle=bundle, canonical_path=path)
+        .order_by("position", "item_type", "item_key", "id")
+    ):
+        refs.extend(_source_refs_for_item(item))
+    return tuple(refs)
+
+
+def _source_refs_for_item(item: EvidenceBundleItem) -> tuple[dict, ...]:
+    if not item.source_type and not item.source_id:
+        return ()
+    return (
+        {
+            "source_type": item.source_type,
+            "source_id": item.source_id,
+            "json_pointer": item.json_pointer,
+        },
+    )
+
+
+def _sealed_bundle_storage_key(bundle: EvidenceBundle) -> str:
+    return (
+        f"evidence/org/{bundle.organization_id}/change/{bundle.change_record_id}/"
+        f"bundle/{bundle.id}/v{bundle.version}/sealed.zip"
+    )
+
+
+def _validate_zip_path(path: str) -> None:
+    if (
+        not path
+        or path.startswith("/")
+        or "\\" in path
+        or "\x00" in path
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise SuspiciousFileOperation("Invalid evidence ZIP entry path.")
+
+
+def _invalidate_for_artifact_defect(
+    bundle: EvidenceBundle,
+    *,
+    reason: str,
+    detail: str,
+) -> None:
+    raise DomainValidationError(code=reason, detail=detail)
 
 
 def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
@@ -178,11 +819,18 @@ def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
 
     sections = [
         _change_snapshot_section(bundle, change, targets),
+        _targets_section(bundle, change, targets),
         _approvals_section(bundle, change, approvals),
         _policy_decisions_section(bundle, change, policy_evaluations),
         _execution_section(bundle, change, execution_binding, execution, execution_steps),
         _audit_section(bundle, change, audit_events),
         _artifacts_section(bundle, change, artifacts),
+        _verification_plan_section(
+            bundle,
+            change,
+            verification_plan,
+            verification_checks,
+        ),
         _verification_results_section(
             bundle,
             change,
@@ -191,6 +839,7 @@ def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
             verification_results,
         ),
         _closure_section(bundle, change, closure),
+        _export_receipt_section(bundle, change),
     ]
     exception_section = _exceptions_section(
         bundle,
@@ -198,9 +847,9 @@ def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
         exceptions,
         breakglass_sessions,
         retro_reviews,
+        force=True,
     )
-    if exception_section is not None:
-        sections.append(exception_section)
+    sections.append(exception_section)
     external_reference_section = _external_references_section(
         bundle,
         change,
@@ -299,6 +948,17 @@ def _change_snapshot_section(bundle, change, targets):
         source_id=str(change.id),
         source_updated_at=change.updated_at,
         source_metadata={"status": change.status, "target_count": len(targets)},
+    )
+
+
+def _targets_section(bundle, change, targets):
+    items = [_serialize_target(target) for target in targets]
+    return _Section(
+        item_type=EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
+        item_key="targets",
+        canonical_path="change/targets.json",
+        payload=_section_payload(bundle, change, items=items),
+        source_metadata={"target_count": len(items)},
     )
 
 
@@ -496,6 +1156,43 @@ def _verification_results_section(
     )
 
 
+def _verification_plan_section(bundle, change, verification_plan, verification_checks):
+    items = {
+        "plan": None,
+        "checks": [_serialize_verification_check(check) for check in verification_checks],
+    }
+    if verification_plan is not None:
+        items["plan"] = {
+            "id": verification_plan.id,
+            "mode": verification_plan.mode,
+            "status": verification_plan.status,
+            "generated_from_profile_sha256": verification_plan.generated_from_profile_sha256,
+            "required_check_count": verification_plan.required_check_count,
+            "optional_check_count": verification_plan.optional_check_count,
+            "satisfied_required_count": verification_plan.satisfied_required_count,
+            "failed_required_count": verification_plan.failed_required_count,
+            "generated_at": verification_plan.generated_at,
+            "activated_at": verification_plan.activated_at,
+            "satisfied_at": verification_plan.satisfied_at,
+            "failed_at": verification_plan.failed_at,
+        }
+    return _Section(
+        item_type=EvidenceBundleItem.ItemType.VERIFICATION_RESULT,
+        item_key="verification_plan",
+        canonical_path="verification/plan.json",
+        payload=_section_payload(bundle, change, items=[items]),
+        present=verification_plan is not None,
+        missing_reason="" if verification_plan is not None else "missing_verification_plan",
+        source_type="changes.VerificationPlan" if verification_plan is not None else "",
+        source_id=str(verification_plan.id) if verification_plan is not None else "",
+        source_updated_at=verification_plan.updated_at if verification_plan is not None else None,
+        source_metadata={
+            "required_check_count": len([check for check in verification_checks if check.required]),
+            "check_count": len(verification_checks),
+        },
+    )
+
+
 def _closure_section(bundle, change, closure):
     present = closure is not None
     item = None if closure is None else _serialize_closure(closure)
@@ -513,8 +1210,22 @@ def _closure_section(bundle, change, closure):
     )
 
 
-def _exceptions_section(bundle, change, exceptions, breakglass_sessions, retro_reviews):
-    if not exceptions and not breakglass_sessions and not retro_reviews and not change.is_emergency:
+def _exceptions_section(
+    bundle,
+    change,
+    exceptions,
+    breakglass_sessions,
+    retro_reviews,
+    *,
+    force=False,
+):
+    if (
+        not force
+        and not exceptions
+        and not breakglass_sessions
+        and not retro_reviews
+        and not change.is_emergency
+    ):
         return None
     items = {
         "change_emergency": {
@@ -540,6 +1251,26 @@ def _exceptions_section(bundle, change, exceptions, breakglass_sessions, retro_r
             "breakglass_count": len(breakglass_sessions),
             "retro_review_count": len(retro_reviews),
         },
+    )
+
+
+def _export_receipt_section(bundle, change):
+    receipt = {
+        "receipt_type": "sealed_bundle",
+        "export_id": None,
+        "organization_id": change.organization_id,
+        "change_record_id": change.id,
+        "bundle_id": bundle.id,
+        "bundle_version": bundle.version,
+        "compiled_at": bundle.compiled_at,
+        "sealed_at": bundle.sealed_at,
+    }
+    return _Section(
+        item_type=EvidenceBundleItem.ItemType.EXPORT_RECEIPT,
+        item_key="sealed_bundle_receipt",
+        canonical_path="exports/export_receipt.json",
+        payload=_section_payload(bundle, change, items=[receipt]),
+        source_metadata={"receipt_type": "sealed_bundle"},
     )
 
 
@@ -725,26 +1456,7 @@ def _finalize_bundle_materialization(bundle, audit_events) -> None:
         )
     )
     completeness_report, completeness_status = _completeness_from_items(items)
-    snapshot_payload = [
-        {
-            "item_type": item.item_type,
-            "item_key": item.item_key,
-            "canonical_path": item.canonical_path,
-            "json_pointer": item.json_pointer,
-            "position": item.position,
-            "required": item.required,
-            "present": item.present,
-            "valid": item.valid,
-            "missing_reason": item.missing_reason,
-            "validation_errors": item.validation_errors,
-            "source_type": item.source_type,
-            "source_id": item.source_id,
-            "source_updated_at": item.source_updated_at,
-            "content_sha256": item.content_sha256,
-            "content_size_bytes": item.content_size_bytes,
-        }
-        for item in items
-    ]
+    snapshot_payload = [_snapshot_item_payload(item) for item in items]
     audit_high_watermark = {}
     if audit_events:
         last_event = audit_events[-1]
@@ -833,6 +1545,53 @@ def _emit_bundle_materialized(*, bundle, actor: AuditActor | None) -> None:
             "completeness_status": bundle.completeness_status,
             "item_count": bundle.items.count(),
             "source_snapshot_sha256": bundle.source_snapshot_sha256,
+        },
+    )
+
+
+def _emit_bundle_sealed(*, bundle_id, actor: AuditActor | None) -> None:
+    bundle = EvidenceBundle.objects.get(pk=bundle_id)
+    actor = actor or system_actor("Evidence sealing")
+    AuditService.emit(
+        organization_id=bundle.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_bundle.sealed",
+        object_type=AuditEvent.ObjectType.EVIDENCE_BUNDLE,
+        object_id=bundle.id,
+        metadata={
+            "change_record_id": str(bundle.change_record_id),
+            "version": bundle.version,
+            "manifest_sha256": bundle.manifest_sha256,
+            "content_sha256": bundle.content_sha256,
+            "content_size_bytes": bundle.content_size_bytes,
+            "storage_key": bundle.storage_key,
+        },
+    )
+
+
+def _emit_bundle_invalidated(
+    *,
+    bundle_id,
+    previous_status: str,
+    actor: AuditActor | None,
+) -> None:
+    bundle = EvidenceBundle.objects.get(pk=bundle_id)
+    actor = actor or system_actor("Evidence invalidation")
+    AuditService.emit(
+        organization_id=bundle.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_bundle.invalidated",
+        object_type=AuditEvent.ObjectType.EVIDENCE_BUNDLE,
+        object_id=bundle.id,
+        metadata={
+            "change_record_id": str(bundle.change_record_id),
+            "version": bundle.version,
+            "previous_status": previous_status,
+            "invalidation_reason": bundle.invalidation_reason,
         },
     )
 

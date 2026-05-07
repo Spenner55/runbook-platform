@@ -113,6 +113,22 @@ def test_sealed_bundle_can_be_invalidated_with_reason(evidence_change):
 
 
 @pytest.mark.django_db
+def test_invalidated_bundle_cannot_return_to_compiling(evidence_change):
+    bundle = _bundle(
+        evidence_change,
+        status=EvidenceBundle.Status.INVALIDATED,
+        invalidated_at=timezone.now(),
+        invalidation_reason="superseded",
+    )
+    bundle.status = EvidenceBundle.Status.COMPILING
+
+    with pytest.raises(ValidationError) as exc_info:
+        bundle.save()
+
+    assert exc_info.value.code == "evidence_bundle_terminal"
+
+
+@pytest.mark.django_db
 def test_sealed_bundle_items_cannot_be_added(evidence_change):
     bundle = _sealed_bundle(evidence_change)
 
@@ -124,6 +140,36 @@ def test_sealed_bundle_items_cannot_be_added(evidence_change):
             item_key="change",
             canonical_path="change/change_record.json",
         )
+
+    assert exc_info.value.code == "evidence_bundle_immutable"
+
+
+@pytest.mark.django_db
+def test_invalidated_sealed_bundle_items_remain_immutable(evidence_change):
+    bundle = _bundle(evidence_change)
+    item = EvidenceBundleItem.objects.create(
+        organization=evidence_change.organization,
+        bundle=bundle,
+        item_type=EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
+        item_key="change",
+        canonical_path="change/change_record.json",
+    )
+    bundle.status = EvidenceBundle.Status.SEALED
+    bundle.completeness_status = EvidenceBundle.CompletenessStatus.COMPLETE
+    bundle.sealed_at = timezone.now()
+    bundle.manifest_sha256 = "a" * 64
+    bundle.content_sha256 = "b" * 64
+    bundle.content_size_bytes = 128
+    bundle.storage_key = f"evidence/{evidence_change.organization_id}/{bundle.id}.zip"
+    bundle.save()
+    bundle.status = EvidenceBundle.Status.INVALIDATED
+    bundle.invalidated_at = timezone.now()
+    bundle.invalidation_reason = "superseded"
+    bundle.save()
+
+    item.source_metadata = {"changed": True}
+    with pytest.raises(ValidationError) as exc_info:
+        item.save()
 
     assert exc_info.value.code == "evidence_bundle_immutable"
 

@@ -190,6 +190,12 @@ class EvidenceBundle(BaseModel):
     def is_sealed(self) -> bool:
         return self.status == self.Status.SEALED
 
+    @property
+    def has_sealed_content(self) -> bool:
+        return self.is_sealed or (
+            self.status == self.Status.INVALIDATED and bool(self.manifest_sha256)
+        )
+
     def clean(self):
         super().clean()
         if (
@@ -220,6 +226,24 @@ class EvidenceBundle(BaseModel):
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
+            if previous is not None and previous.status == self.Status.INVALIDATED:
+                if self.status != self.Status.INVALIDATED:
+                    raise ValidationError(
+                        "Invalidated evidence bundles are terminal.",
+                        code="evidence_bundle_terminal",
+                    )
+                if previous.manifest_sha256:
+                    changed = [
+                        field
+                        for field in self.IMMUTABLE_AFTER_SEAL
+                        if getattr(previous, field) != getattr(self, field)
+                    ]
+                    if changed:
+                        raise ValidationError(
+                            f"Sealed evidence bundles are immutable "
+                            f"(attempted to change: {changed}).",
+                            code="evidence_bundle_immutable",
+                        )
             if previous is not None and previous.status == self.Status.SEALED:
                 changed = [
                     field
@@ -361,9 +385,17 @@ class EvidenceBundleItem(BaseModel):
     def _parent_is_sealed(self) -> bool:
         if self.bundle_id is None:
             return False
-        return EvidenceBundle.objects.filter(
-            pk=self.bundle_id, status=EvidenceBundle.Status.SEALED
-        ).exists()
+        return (
+            EvidenceBundle.objects.filter(
+                pk=self.bundle_id, status=EvidenceBundle.Status.SEALED
+            ).exists()
+            or EvidenceBundle.objects.filter(
+                pk=self.bundle_id,
+                status=EvidenceBundle.Status.INVALIDATED,
+            )
+            .exclude(manifest_sha256="")
+            .exists()
+        )
 
     def save(self, *args, **kwargs):
         if self._parent_is_sealed():
