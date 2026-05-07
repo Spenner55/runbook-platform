@@ -50,7 +50,7 @@ urlpatterns = [
     path("audit/", include("apps.audit.urls")),
     path("integrations/", include("apps.integrations.urls")),
     path("changes/", include((change_public_urlpatterns, "changes"))),
-    path("evidence/", include((evidence_public_urlpatterns, "evidence"))),
+    path("", include((evidence_public_urlpatterns, "evidence"))),
     path("freeze-rules/", include((change_freeze_rule_urlpatterns, "freeze-rules"))),
     *artifact_public_urlpatterns,
     path(

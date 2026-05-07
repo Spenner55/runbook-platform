@@ -3,10 +3,13 @@ import io
 import json
 import zipfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import urlencode
 from uuid import UUID
 
+from django.conf import settings
+from django.core import signing
 from django.core.exceptions import (
     ObjectDoesNotExist,
     SuspiciousFileOperation,
@@ -42,6 +45,7 @@ SCHEMA_VERSION = "1"
 ZIP_FIXED_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 ZIP_FILE_EXTERNAL_ATTR = 0o100644 << 16
 ZIP_COMPRESSION = zipfile.ZIP_STORED
+DOWNLOAD_TOKEN_SALT = "evidence.bundle.download"
 
 CANONICAL_REQUIRED_PATHS = {
     "change/change_record.json": EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
@@ -289,6 +293,122 @@ def invalidate_bundle(
             )
         )
         return locked_bundle
+
+
+def create_bundle_download_url(
+    *,
+    bundle: EvidenceBundle,
+    actor: AuditActor,
+    storage: EvidenceStorage | None = None,
+) -> dict:
+    """Return a time-limited local download descriptor for a sealed bundle."""
+
+    storage = storage or EvidenceStorage()
+    bundle = EvidenceBundle.objects.get(pk=bundle.pk)
+    if bundle.status != EvidenceBundle.Status.SEALED:
+        raise DomainValidationError(
+            code="evidence_bundle_not_sealed",
+            detail="Only sealed evidence bundles can be downloaded.",
+        )
+    if bundle.storage_deleted_at is not None or not bundle.storage_key:
+        raise DomainValidationError(
+            code="evidence_bundle_storage_missing",
+            detail="Evidence bundle storage is not available.",
+        )
+    if not storage.exists(bundle.storage_key):
+        raise DomainValidationError(
+            code="evidence_bundle_storage_missing",
+            detail="Evidence bundle storage is not available.",
+        )
+
+    ttl = settings.ARTIFACT_DOWNLOAD_URL_TTL_SECONDS
+    expires_at = timezone.now() + timedelta(seconds=ttl)
+    token = create_bundle_download_token(bundle=bundle, expires_at=expires_at)
+    query = urlencode(
+        {"organization_id": str(bundle.organization_id), "token": token}
+    )
+    download_url = f"/api/v1/evidence-bundles/{bundle.id}/content/?{query}"
+    filename = f"evidence-bundle-{bundle.change_record_id}-v{bundle.version}.zip"
+
+    AuditService.emit(
+        organization_id=bundle.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_bundle.downloaded",
+        object_type=AuditEvent.ObjectType.EVIDENCE_BUNDLE,
+        object_id=bundle.id,
+        metadata={
+            "change_record_id": str(bundle.change_record_id),
+            "version": bundle.version,
+            "manifest_sha256": bundle.manifest_sha256,
+            "content_sha256": bundle.content_sha256,
+            "content_size_bytes": bundle.content_size_bytes,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+
+    return {
+        "bundle_id": str(bundle.id),
+        "download_url": download_url,
+        "expires_at": expires_at.isoformat(),
+        "method": "GET",
+        "content_disposition": "attachment",
+        "filename": filename,
+        "content_sha256": bundle.content_sha256,
+        "content_size_bytes": bundle.content_size_bytes,
+    }
+
+
+def create_bundle_download_token(*, bundle: EvidenceBundle, expires_at) -> str:
+    return signing.dumps(
+        {
+            "bundle_id": str(bundle.id),
+            "organization_id": str(bundle.organization_id),
+            "expires_at": expires_at.isoformat(),
+            "content_sha256": bundle.content_sha256,
+        },
+        salt=DOWNLOAD_TOKEN_SALT,
+    )
+
+
+def validate_bundle_download_token(*, bundle: EvidenceBundle, token: str) -> None:
+    try:
+        payload = signing.loads(token, salt=DOWNLOAD_TOKEN_SALT)
+    except signing.BadSignature as exc:
+        raise DomainValidationError(
+            code="evidence_bundle_download_token_invalid",
+            detail="Evidence bundle download token is invalid.",
+        ) from exc
+
+    if payload.get("bundle_id") != str(bundle.id) or payload.get(
+        "organization_id"
+    ) != str(bundle.organization_id):
+        raise DomainValidationError(
+            code="evidence_bundle_download_token_invalid",
+            detail="Evidence bundle download token does not match this bundle.",
+        )
+    if payload.get("content_sha256") != bundle.content_sha256:
+        raise DomainValidationError(
+            code="evidence_bundle_download_token_invalid",
+            detail="Evidence bundle download token does not match current content.",
+        )
+
+    expires_at_raw = payload.get("expires_at")
+    try:
+        expires_at = timezone.datetime.fromisoformat(expires_at_raw)
+    except (TypeError, ValueError) as exc:
+        raise DomainValidationError(
+            code="evidence_bundle_download_token_invalid",
+            detail="Evidence bundle download token expiry is invalid.",
+        ) from exc
+    if timezone.is_naive(expires_at):
+        expires_at = timezone.make_aware(expires_at, UTC)
+    if expires_at <= timezone.now():
+        raise DomainValidationError(
+            code="evidence_bundle_download_token_expired",
+            detail="Evidence bundle download token has expired.",
+        )
 
 
 def build_sealed_bundle_package(
@@ -1566,7 +1686,6 @@ def _emit_bundle_sealed(*, bundle_id, actor: AuditActor | None) -> None:
             "manifest_sha256": bundle.manifest_sha256,
             "content_sha256": bundle.content_sha256,
             "content_size_bytes": bundle.content_size_bytes,
-            "storage_key": bundle.storage_key,
         },
     )
 
