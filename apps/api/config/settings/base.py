@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "apps.artifacts.apps.ArtifactsConfig",
     "apps.integrations.apps.IntegrationsConfig",
     "apps.changes.apps.ChangesConfig",
+    "apps.evidence.apps.EvidenceConfig",
 ]
 
 MIDDLEWARE = [
