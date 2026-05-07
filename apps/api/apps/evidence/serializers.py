@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.evidence.models import EvidenceBundle
+from apps.evidence.models import EvidenceBundle, EvidenceExport, LegalHold
 
 
 class EvidenceBundleSerializer(serializers.ModelSerializer):
@@ -138,3 +138,83 @@ class EvidenceBundleCompletenessSerializer(serializers.ModelSerializer):
             "compiled_at",
         ]
         read_only_fields = fields
+
+
+class EvidenceExportSerializer(serializers.ModelSerializer):
+    """Public export representation. Never exposes storage keys or raw bytes."""
+
+    bundle_id = serializers.UUIDField(read_only=True)
+    organization_id = serializers.UUIDField(read_only=True)
+    redaction_policy_id = serializers.UUIDField(read_only=True)
+    requested_by_id = serializers.UUIDField(read_only=True)
+    download_available = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EvidenceExport
+        fields = [
+            "id",
+            "organization_id",
+            "bundle_id",
+            "redaction_policy_id",
+            "status",
+            "requested_by_id",
+            "requested_at",
+            "ready_at",
+            "expires_at",
+            "content_sha256",
+            "content_size_bytes",
+            "manifest",
+            "manifest_sha256",
+            "source_manifest_sha256",
+            "source_bundle_content_sha256",
+            "redaction_summary",
+            "receipt",
+            "receipt_sha256",
+            "failure_code",
+            "failure_message",
+            "download_count",
+            "last_downloaded_at",
+            "download_available",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_download_available(self, obj):
+        return bool(
+            obj.status == EvidenceExport.Status.READY
+            and obj.storage_deleted_at is None
+            and obj.content_sha256
+        )
+
+
+class EvidenceExportCreateSerializer(serializers.Serializer):
+    redaction_policy_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+
+
+class LegalHoldSerializer(serializers.ModelSerializer):
+    change_record_id = serializers.UUIDField(read_only=True)
+    evidence_bundle_id = serializers.UUIDField(read_only=True)
+    placed_by_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = LegalHold
+        fields = [
+            "id",
+            "status",
+            "change_record_id",
+            "evidence_bundle_id",
+            "placed_by_id",
+            "placed_at",
+            "external_reference",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class LegalHoldCreateSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=2000)
+    external_reference = serializers.CharField(
+        max_length=512, required=False, allow_blank=True, default=""
+    )

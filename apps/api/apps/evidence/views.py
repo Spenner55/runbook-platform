@@ -19,7 +19,7 @@ from apps.common.permissions import (
     assert_organization_role,
 )
 from apps.evidence import services
-from apps.evidence.models import EvidenceBundle
+from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRedactionPolicy
 from apps.evidence.serializers import (
     EvidenceBundleCompletenessSerializer,
     EvidenceBundleCreateSerializer,
@@ -28,6 +28,10 @@ from apps.evidence.serializers import (
     EvidenceBundleSealSerializer,
     EvidenceBundleSerializer,
     EvidenceBundleSummarySerializer,
+    EvidenceExportCreateSerializer,
+    EvidenceExportSerializer,
+    LegalHoldCreateSerializer,
+    LegalHoldSerializer,
 )
 from apps.evidence.storage import EvidenceStorage
 from apps.organizations.models import Organization
@@ -305,3 +309,180 @@ class EvidenceBundleContentView(APIView):
         filename = f"evidence-bundle-{bundle.change_record_id}-v{bundle.version}.zip"
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
+
+
+def _get_export(export_id, org):
+    return get_object_or_404(
+        EvidenceExport.objects.select_related("bundle", "organization"),
+        pk=export_id,
+        organization=org,
+    )
+
+
+class EvidenceBundleExportListCreateView(APIView):
+    """GET/POST /api/v1/evidence-bundles/{bundle_id}/exports/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, bundle_id):
+        org = _get_org(request)
+        assert_organization_member(user=request.user, organization_id=org.id)
+        bundle = _get_bundle(bundle_id, org)
+        exports = EvidenceExport.objects.filter(
+            organization=org,
+            bundle=bundle,
+        ).order_by("-requested_at")
+        return Response(
+            {"results": EvidenceExportSerializer(exports, many=True).data}
+        )
+
+    def post(self, request, bundle_id):
+        org = _get_org(request)
+        assert_organization_role(
+            user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
+        )
+        bundle = _get_bundle(bundle_id, org)
+
+        serializer = EvidenceExportCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        redaction_policy = None
+        policy_id = d.get("redaction_policy_id")
+        if policy_id:
+            redaction_policy = get_object_or_404(
+                EvidenceRedactionPolicy,
+                pk=policy_id,
+                organization=org,
+            )
+
+        try:
+            export = services.create_export(
+                bundle,
+                redaction_policy=redaction_policy,
+                actor=actor_from_request(request),
+                requested_by=request.user,
+            )
+        except (ValidationError, DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
+
+        export.refresh_from_db()
+        return Response(
+            EvidenceExportSerializer(export).data,
+            status=http_status.HTTP_201_CREATED,
+        )
+
+
+class EvidenceExportDetailView(APIView):
+    """GET /api/v1/evidence-exports/{export_id}/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, export_id):
+        org = _get_org(request)
+        assert_organization_member(user=request.user, organization_id=org.id)
+        export = _get_export(export_id, org)
+        return Response(EvidenceExportSerializer(export).data)
+
+
+class EvidenceExportReceiptView(APIView):
+    """GET /api/v1/evidence-exports/{export_id}/receipt/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, export_id):
+        org = _get_org(request)
+        assert_organization_member(user=request.user, organization_id=org.id)
+        export = _get_export(export_id, org)
+        return Response(
+            {
+                "id": export.id,
+                "bundle_id": export.bundle_id,
+                "status": export.status,
+                "receipt": export.receipt,
+                "receipt_sha256": export.receipt_sha256,
+                "source_manifest_sha256": export.source_manifest_sha256,
+                "source_bundle_content_sha256": export.source_bundle_content_sha256,
+                "redaction_summary": export.redaction_summary,
+            }
+        )
+
+
+class EvidenceExportDownloadView(APIView):
+    """GET /api/v1/evidence-exports/{export_id}/download/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, export_id):
+        org = _get_org(request)
+        assert_organization_member(user=request.user, organization_id=org.id)
+        export = _get_export(export_id, org)
+
+        if export.status != EvidenceExport.Status.READY:
+            return _error_response(
+                DomainValidationError(code="export_not_ready", detail="Export is not ready."),
+                status=http_status.HTTP_409_CONFLICT,
+            )
+        if export.storage_deleted_at is not None or not export.storage_key:
+            return _error_response(
+                DomainValidationError(
+                    code="export_storage_missing",
+                    detail="Export storage is not available.",
+                ),
+                status=http_status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            export_bytes = services.download_export(
+                export,
+                actor=actor_from_request(request),
+            )
+        except (ValidationError, DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc, status=http_status.HTTP_409_CONFLICT)
+
+        import io
+        file_obj = io.BytesIO(export_bytes)
+        filename = f"evidence-export-{export.bundle.change_record_id}-{export.id}.zip"
+        response = FileResponse(file_obj, content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+
+class EvidenceBundleLegalHoldView(APIView):
+    """POST /api/v1/evidence-bundles/{bundle_id}/legal-hold/"""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, bundle_id):
+        org = _get_org(request)
+        assert_organization_role(
+            user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
+        )
+        bundle = _get_bundle(bundle_id, org)
+
+        serializer = LegalHoldCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            hold = services.create_legal_hold(
+                bundle,
+                reason=d["reason"],
+                external_reference=d.get("external_reference", ""),
+                actor=actor_from_request(request),
+                placed_by=request.user,
+            )
+        except (ValidationError, DomainValidationError) as exc:
+            return _error_response(exc)
+        except DomainConflictError as exc:
+            return _error_response(exc, status=http_status.HTTP_409_CONFLICT)
+
+        return Response(
+            LegalHoldSerializer(hold).data,
+            status=http_status.HTTP_201_CREATED,
+        )

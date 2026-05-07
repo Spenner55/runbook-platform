@@ -1,4 +1,3 @@
-
 from django.urls import path
 
 from apps.evidence.views import (
@@ -8,9 +7,14 @@ from apps.evidence.views import (
     EvidenceBundleContentView,
     EvidenceBundleDetailView,
     EvidenceBundleDownloadView,
+    EvidenceBundleExportListCreateView,
     EvidenceBundleInvalidateView,
+    EvidenceBundleLegalHoldView,
     EvidenceBundleManifestView,
     EvidenceBundleSealView,
+    EvidenceExportDetailView,
+    EvidenceExportDownloadView,
+    EvidenceExportReceiptView,
 )
 
 app_name = "evidence"
@@ -60,5 +64,30 @@ urlpatterns = [
         "evidence-bundles/<uuid:bundle_id>/content/",
         EvidenceBundleContentView.as_view(),
         name="evidence-bundle-content",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/exports/",
+        EvidenceBundleExportListCreateView.as_view(),
+        name="evidence-bundle-export-list-create",
+    ),
+    path(
+        "evidence-bundles/<uuid:bundle_id>/legal-hold/",
+        EvidenceBundleLegalHoldView.as_view(),
+        name="evidence-bundle-legal-hold",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/",
+        EvidenceExportDetailView.as_view(),
+        name="evidence-export-detail",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/receipt/",
+        EvidenceExportReceiptView.as_view(),
+        name="evidence-export-receipt",
+    ),
+    path(
+        "evidence-exports/<uuid:export_id>/download/",
+        EvidenceExportDownloadView.as_view(),
+        name="evidence-export-download",
     ),
 ]

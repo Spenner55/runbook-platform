@@ -27,9 +27,17 @@ from apps.changes.models import (
     ChangeRecord,
     VerificationResult,
 )
-from apps.common.exceptions import DomainValidationError
+from django.db.models import Q
+
+from apps.common.exceptions import DomainConflictError, DomainValidationError
 from apps.evidence import selectors
-from apps.evidence.models import EvidenceBundle, EvidenceBundleItem
+from apps.evidence.models import (
+    EvidenceBundle,
+    EvidenceBundleItem,
+    EvidenceExport,
+    EvidenceRedactionPolicy,
+    LegalHold,
+)
 from apps.evidence.storage import EvidenceStorage
 
 
@@ -2049,3 +2057,708 @@ def _normalize(value):
     if hasattr(value, "pk") and hasattr(value, "_meta"):
         return _normalize(model_to_dict(value))
     return value
+
+
+# ---------------------------------------------------------------------------
+# EvidenceRedactionPolicy service helpers
+# ---------------------------------------------------------------------------
+
+
+def compute_redaction_policy_sha256(rules: list) -> str:
+    """Compute canonical SHA-256 of a redaction policy rule list."""
+    return sha256_hexdigest(canonical_json_bytes(rules))
+
+
+# ---------------------------------------------------------------------------
+# Export creation
+# ---------------------------------------------------------------------------
+
+
+def create_export(
+    bundle: EvidenceBundle,
+    *,
+    redaction_policy: EvidenceRedactionPolicy | None = None,
+    actor: AuditActor | None = None,
+    requested_by=None,
+    storage: EvidenceStorage | None = None,
+) -> EvidenceExport:
+    """Create a derived export ZIP from a sealed bundle."""
+    storage = storage or EvidenceStorage()
+
+    bundle = (
+        EvidenceBundle.objects.select_related("change_record", "organization", "retention_policy")
+        .get(pk=bundle.pk)
+    )
+    if bundle.status != EvidenceBundle.Status.SEALED:
+        raise DomainValidationError(
+            code="bundle_not_sealed",
+            detail="Only sealed evidence bundles can be exported.",
+        )
+    if bundle.storage_deleted_at is not None or not bundle.storage_key:
+        raise DomainValidationError(
+            code="bundle_storage_missing",
+            detail="Sealed bundle storage is not available.",
+        )
+    if not storage.exists(bundle.storage_key):
+        raise DomainValidationError(
+            code="bundle_storage_missing",
+            detail="Sealed bundle storage is not available.",
+        )
+
+    bundle_bytes = storage.read_bytes(bundle.storage_key)
+    if sha256_hexdigest(bundle_bytes) != bundle.content_sha256:
+        raise DomainValidationError(
+            code="bundle_checksum_mismatch",
+            detail="Sealed bundle checksum does not match stored bytes.",
+        )
+
+    if redaction_policy is not None:
+        if not redaction_policy.is_active:
+            raise DomainValidationError(
+                code="redaction_policy_inactive",
+                detail="Redaction policy is not active.",
+            )
+        if redaction_policy.organization_id != bundle.organization_id:
+            raise DomainValidationError(
+                code="redaction_policy_invalid",
+                detail="Redaction policy does not belong to this organization.",
+            )
+
+    requested_at = timezone.now()
+    export = EvidenceExport.objects.create(
+        organization=bundle.organization,
+        bundle=bundle,
+        redaction_policy=redaction_policy,
+        status=EvidenceExport.Status.CREATING,
+        requested_by=requested_by,
+        requested_at=requested_at,
+        source_manifest_sha256=bundle.manifest_sha256,
+        source_bundle_content_sha256=bundle.content_sha256,
+    )
+
+    storage_key = ""
+    wrote_storage = False
+    try:
+        source_entries = _load_zip_entries(bundle_bytes)
+        export_entries, redaction_summary = _apply_redaction_policy(
+            source_entries,
+            policy=redaction_policy,
+        )
+
+        receipt = _build_export_receipt(
+            bundle=bundle,
+            export=export,
+            redaction_policy=redaction_policy,
+            redaction_summary=redaction_summary,
+        )
+        receipt_bytes = canonical_json_bytes(receipt)
+        receipt_sha256 = sha256_hexdigest(receipt_bytes)
+        export_entries["exports/export_receipt.json"] = receipt_bytes
+
+        export_manifest = _build_export_manifest(
+            bundle=bundle,
+            export=export,
+            entries_by_path=export_entries,
+            redaction_summary=redaction_summary,
+            receipt_sha256=receipt_sha256,
+        )
+        manifest_bytes = canonical_json_bytes(export_manifest)
+        manifest_sha256 = sha256_hexdigest(manifest_bytes)
+        export_entries["manifest.json"] = manifest_bytes
+        checksums_bytes = canonical_checksums_bytes(export_entries)
+        export_entries["checksums.sha256"] = checksums_bytes
+
+        zip_bytes = deterministic_zip_bytes(export_entries)
+        content_sha256 = sha256_hexdigest(zip_bytes)
+        content_size_bytes = len(zip_bytes)
+
+        storage_key = _export_storage_key(export)
+        storage.save_bytes(storage_key, zip_bytes)
+        wrote_storage = True
+
+        ready_at = timezone.now()
+        expires_at = ready_at + timedelta(days=_export_retention_days(bundle))
+
+        export.status = EvidenceExport.Status.READY
+        export.ready_at = ready_at
+        export.expires_at = expires_at
+        export.storage_key = storage_key
+        export.content_sha256 = content_sha256
+        export.content_size_bytes = content_size_bytes
+        export.manifest = _normalize(export_manifest)
+        export.manifest_sha256 = manifest_sha256
+        export.redaction_summary = redaction_summary
+        export.receipt = _normalize(receipt)
+        export.receipt_sha256 = receipt_sha256
+        export.save()
+
+        export_id = export.id
+        transaction.on_commit(lambda: _emit_export_created(export_id=export_id, actor=actor))
+        return export
+    except Exception as exc:
+        if wrote_storage and storage_key:
+            try:
+                storage.delete(storage_key)
+            except Exception:
+                pass
+        export.refresh_from_db()
+        if export.status == EvidenceExport.Status.CREATING:
+            EvidenceExport.objects.filter(pk=export.pk).update(
+                status=EvidenceExport.Status.FAILED,
+                failure_code=str(getattr(exc, "code", "export_failed"))[:128],
+                failure_message=str(exc)[:500],
+            )
+        raise
+
+
+def download_export(
+    export: EvidenceExport,
+    *,
+    actor: AuditActor | None = None,
+    storage: EvidenceStorage | None = None,
+) -> bytes:
+    """Return export ZIP bytes and emit a download audit event."""
+    storage = storage or EvidenceStorage()
+    export = EvidenceExport.objects.select_related("bundle", "organization").get(pk=export.pk)
+
+    if export.status != EvidenceExport.Status.READY:
+        raise DomainValidationError(
+            code="export_not_ready",
+            detail="Export is not ready for download.",
+        )
+    if export.storage_deleted_at is not None or not export.storage_key:
+        raise DomainValidationError(
+            code="export_storage_missing",
+            detail="Export storage is not available.",
+        )
+    if not storage.exists(export.storage_key):
+        raise DomainValidationError(
+            code="export_storage_missing",
+            detail="Export storage is not available.",
+        )
+
+    export_bytes = storage.read_bytes(export.storage_key)
+
+    actor = actor or system_actor("Evidence export download")
+    AuditService.emit(
+        organization_id=export.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_export.downloaded",
+        object_type=AuditEvent.ObjectType.EVIDENCE_EXPORT,
+        object_id=export.id,
+        metadata={
+            "bundle_id": str(export.bundle_id),
+            "export_id": str(export.id),
+            "content_sha256": export.content_sha256,
+            "content_size_bytes": export.content_size_bytes,
+        },
+    )
+
+    from django.db.models import F
+    EvidenceExport.objects.filter(pk=export.pk).update(
+        download_count=F("download_count") + 1,
+        last_downloaded_at=timezone.now(),
+    )
+
+    return export_bytes
+
+
+# ---------------------------------------------------------------------------
+# Redaction pipeline
+# ---------------------------------------------------------------------------
+
+
+def _load_zip_entries(bundle_bytes: bytes) -> dict[str, bytes]:
+    """Extract all ZIP entries as path -> bytes (excluding checksums.sha256)."""
+    result = {}
+    archive = io.BytesIO(bundle_bytes)
+    with zipfile.ZipFile(archive, "r") as zf:
+        for name in sorted(zf.namelist()):
+            result[name] = zf.read(name)
+    return result
+
+
+def _apply_redaction_policy(
+    source_entries: dict[str, bytes],
+    *,
+    policy: EvidenceRedactionPolicy | None,
+) -> tuple[dict[str, bytes], dict]:
+    """Apply redaction rules to a copy of source entries. Never mutates source."""
+    if policy is None:
+        return dict(source_entries), {
+            "redacted": False,
+            "policy_id": None,
+            "policy_sha256": None,
+            "rules_applied": 0,
+            "omitted_paths": [],
+            "transformed_paths": [],
+            "redaction_counts": {},
+        }
+
+    entries = dict(source_entries)
+    omitted_paths: list[dict] = []
+    transformed_paths: list[dict] = []
+    redaction_counts: dict[str, int] = {}
+
+    for rule in policy.rules:
+        action = rule.get("action", "")
+        rule_id = rule.get("id", "")
+
+        if action == "omit_path":
+            path = rule.get("path", "")
+            if path in entries and path not in ("manifest.json", "checksums.sha256"):
+                del entries[path]
+                omitted_paths.append({"path": path, "rule_id": rule_id})
+                redaction_counts[action] = redaction_counts.get(action, 0) + 1
+
+        elif action == "redact_json_pointer":
+            path = rule.get("path", "")
+            pointer = rule.get("pointer", "")
+            if path in entries and path.endswith(".json"):
+                try:
+                    data = json.loads(entries[path].decode("utf-8"))
+                    count = _apply_json_pointer_redaction(data, pointer)
+                    if count > 0:
+                        entries[path] = canonical_json_bytes(data)
+                        transformed_paths.append(
+                            {"path": path, "pointer": pointer, "rule_id": rule_id, "count": count}
+                        )
+                        redaction_counts[action] = redaction_counts.get(action, 0) + count
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+
+        elif action == "redact_ndjson_field":
+            path = rule.get("path", "")
+            field = rule.get("field", "")
+            if path in entries and path.endswith(".ndjson"):
+                try:
+                    raw = entries[path].decode("utf-8")
+                    count, new_bytes = _apply_ndjson_field_redaction(raw, field)
+                    if count > 0:
+                        entries[path] = new_bytes
+                        transformed_paths.append(
+                            {"path": path, "field": field, "rule_id": rule_id, "count": count}
+                        )
+                        redaction_counts[action] = redaction_counts.get(action, 0) + count
+                except UnicodeDecodeError:
+                    pass
+
+        elif action == "artifact_metadata_only":
+            keys_to_remove = [
+                p for p in list(entries) if p.startswith("artifacts/files/")
+            ]
+            for p in keys_to_remove:
+                del entries[p]
+                omitted_paths.append({"path": p, "rule_id": rule_id, "reason": "artifact_metadata_only"})
+                redaction_counts[action] = redaction_counts.get(action, 0) + 1
+
+        elif action == "replace_file_with_notice":
+            path = rule.get("path", "")
+            if path in entries and path not in ("manifest.json", "checksums.sha256"):
+                original_sha256 = sha256_hexdigest(entries[path])
+                notice = (
+                    f"This file has been replaced by a redaction notice.\n"
+                    f"source_path: {path}\n"
+                    f"source_sha256: {original_sha256}\n"
+                    f"redaction_policy_id: {policy.id}\n"
+                    f"rule_id: {rule_id}\n"
+                ).encode("utf-8")
+                entries[path] = notice
+                transformed_paths.append({"path": path, "rule_id": rule_id, "replaced": True})
+                redaction_counts[action] = redaction_counts.get(action, 0) + 1
+
+    redaction_summary = {
+        "redacted": True,
+        "policy_id": str(policy.id),
+        "policy_sha256": policy.rules_sha256,
+        "rules_applied": len(policy.rules),
+        "omitted_paths": omitted_paths,
+        "transformed_paths": transformed_paths,
+        "redaction_counts": redaction_counts,
+    }
+    return entries, redaction_summary
+
+
+def _apply_json_pointer_redaction(data, pointer: str) -> int:
+    """Apply [REDACTED] at the given JSON Pointer (RFC 6901). Returns replacement count."""
+    if not pointer or not pointer.startswith("/"):
+        return 0
+    parts = pointer.lstrip("/").split("/")
+    parts = [p.replace("~1", "/").replace("~0", "~") for p in parts]
+
+    def _redact(obj, keys):
+        if not keys:
+            return 0
+        key = keys[0]
+        remaining = keys[1:]
+        if isinstance(obj, dict):
+            if key in obj:
+                if not remaining:
+                    obj[key] = "[REDACTED]"
+                    return 1
+                return _redact(obj[key], remaining)
+        elif isinstance(obj, list):
+            try:
+                idx = int(key)
+                if 0 <= idx < len(obj):
+                    if not remaining:
+                        obj[idx] = "[REDACTED]"
+                        return 1
+                    return _redact(obj[idx], remaining)
+            except ValueError:
+                pass
+        return 0
+
+    return _redact(data, parts)
+
+
+def _apply_ndjson_field_redaction(raw: str, field: str) -> tuple[int, bytes]:
+    """Replace field in every NDJSON event. Preserves order. Returns (count, bytes)."""
+    count = 0
+    out_lines = []
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+            if isinstance(event, dict) and field in event:
+                event[field] = "[REDACTED]"
+                count += 1
+            out_lines.append(canonical_json_bytes(event).decode("utf-8"))
+        except json.JSONDecodeError:
+            out_lines.append(stripped)
+    result = "\n".join(out_lines)
+    if out_lines:
+        result += "\n"
+    return count, result.encode("utf-8")
+
+
+def _build_export_receipt(*, bundle, export, redaction_policy, redaction_summary) -> dict:
+    return {
+        "receipt_schema_version": SCHEMA_VERSION,
+        "receipt_type": "evidence_export",
+        "export_id": export.id,
+        "bundle_id": bundle.id,
+        "bundle_version": bundle.version,
+        "change_record_id": bundle.change_record_id,
+        "organization_id": bundle.organization_id,
+        "requested_by_user_id": export.requested_by_id,
+        "requested_at": export.requested_at,
+        "source_manifest_sha256": bundle.manifest_sha256,
+        "source_bundle_content_sha256": bundle.content_sha256,
+        "redaction_policy_id": str(redaction_policy.id) if redaction_policy else None,
+        "redaction_policy_sha256": redaction_policy.rules_sha256 if redaction_policy else None,
+        "redaction_summary": redaction_summary,
+    }
+
+
+def _build_export_manifest(
+    *,
+    bundle,
+    export,
+    entries_by_path: dict[str, bytes],
+    redaction_summary: dict,
+    receipt_sha256: str,
+) -> dict:
+    entries = []
+    for path in sorted(entries_by_path):
+        if path in ("manifest.json", "checksums.sha256"):
+            continue
+        content = entries_by_path[path]
+        if path.endswith(".ndjson"):
+            media_type = "application/x-ndjson"
+        elif path.endswith(".json"):
+            media_type = "application/json"
+        else:
+            media_type = "application/octet-stream"
+        entries.append(
+            {
+                "path": path,
+                "media_type": media_type,
+                "size_bytes": len(content),
+                "sha256": sha256_hexdigest(content),
+                "required": True,
+                "source_refs": [],
+                "redaction_state": "redacted" if redaction_summary["redacted"] else "original",
+            }
+        )
+    return {
+        "manifest_schema_version": SCHEMA_VERSION,
+        "package_type": "evidence_export",
+        "bundle": {
+            "id": bundle.id,
+            "version": bundle.version,
+            "status": bundle.status,
+            "manifest_sha256": bundle.manifest_sha256,
+            "content_sha256": bundle.content_sha256,
+        },
+        "export": {
+            "id": export.id,
+            "requested_at": export.requested_at,
+            "redaction_policy_id": str(export.redaction_policy_id) if export.redaction_policy_id else None,
+        },
+        "source": {
+            "source_manifest_sha256": bundle.manifest_sha256,
+            "source_bundle_content_sha256": bundle.content_sha256,
+        },
+        "redaction_summary": redaction_summary,
+        "receipt_sha256": receipt_sha256,
+        "algorithms": {
+            "content_hash": "sha256",
+            "manifest_hash": "sha256",
+            "zip_method": "zip-stored",
+        },
+        "entries": entries,
+    }
+
+
+def _export_storage_key(export: EvidenceExport) -> str:
+    bundle = export.bundle
+    return (
+        f"evidence/org/{bundle.organization_id}/change/{bundle.change_record_id}/"
+        f"bundle/{bundle.id}/exports/{export.id}/export.zip"
+    )
+
+
+def _export_retention_days(bundle: EvidenceBundle) -> int:
+    if bundle.retention_policy_id and bundle.retention_policy is not None:
+        return bundle.retention_policy.export_retention_days
+    return getattr(settings, "EVIDENCE_EXPORT_RETENTION_DAYS", 30)
+
+
+# ---------------------------------------------------------------------------
+# Legal hold
+# ---------------------------------------------------------------------------
+
+
+def create_legal_hold(
+    bundle: EvidenceBundle,
+    *,
+    reason: str,
+    external_reference: str = "",
+    actor: AuditActor | None = None,
+    placed_by=None,
+) -> LegalHold:
+    """Place an active legal hold on a bundle and its source change."""
+    if not reason or not reason.strip():
+        raise DomainValidationError(
+            code="legal_hold_reason_required",
+            detail="Legal hold reason is required.",
+        )
+
+    with transaction.atomic():
+        locked_bundle = (
+            EvidenceBundle.objects.select_for_update()
+            .select_related("change_record", "organization")
+            .get(pk=bundle.pk)
+        )
+        existing = LegalHold.objects.filter(
+            change_record=locked_bundle.change_record,
+            evidence_bundle=locked_bundle,
+            status=LegalHold.Status.ACTIVE,
+        ).first()
+        if existing:
+            raise DomainConflictError(
+                code="legal_hold_already_active",
+                detail="An active legal hold already exists for this bundle.",
+            )
+
+        hold = LegalHold.objects.create(
+            organization=locked_bundle.organization,
+            change_record=locked_bundle.change_record,
+            evidence_bundle=locked_bundle,
+            status=LegalHold.Status.ACTIVE,
+            reason=reason.strip(),
+            external_reference=(external_reference or "").strip()[:512],
+            placed_by=placed_by,
+            placed_at=timezone.now(),
+        )
+
+        hold_id = hold.id
+        transaction.on_commit(lambda: _emit_legal_hold_created(hold_id=hold_id, actor=actor))
+        return hold
+
+
+# ---------------------------------------------------------------------------
+# Retention cleanup
+# ---------------------------------------------------------------------------
+
+
+def assert_no_active_legal_hold(change_record, *, bundle=None, export=None) -> None:
+    """Raise DomainValidationError if any active legal hold covers the target."""
+    query = Q(change_record=change_record, status=LegalHold.Status.ACTIVE)
+    if bundle is not None:
+        query |= Q(evidence_bundle=bundle, status=LegalHold.Status.ACTIVE)
+    if export is not None:
+        query |= Q(evidence_export=export, status=LegalHold.Status.ACTIVE)
+    hold = LegalHold.objects.filter(query).first()
+    if hold is not None:
+        raise DomainValidationError(
+            code="legal_hold_blocks_cleanup",
+            detail=f"Active legal hold {hold.id} blocks cleanup.",
+        )
+
+
+def cleanup_expired_bundle_storage(
+    bundle: EvidenceBundle,
+    actor: AuditActor | None = None,
+    now=None,
+    storage: EvidenceStorage | None = None,
+) -> EvidenceBundle:
+    """Delete stored ZIP bytes for an expired bundle. Keeps DB row and hashes."""
+    storage = storage or EvidenceStorage()
+    now = now or timezone.now()
+
+    with transaction.atomic():
+        locked = (
+            EvidenceBundle.objects.select_for_update()
+            .select_related("change_record", "organization")
+            .get(pk=bundle.pk)
+        )
+        if locked.storage_deleted_at is not None:
+            return locked
+        if locked.retention_expires_at is None or locked.retention_expires_at > now:
+            raise DomainValidationError(
+                code="retention_not_expired",
+                detail="Bundle retention period has not expired.",
+            )
+        assert_no_active_legal_hold(locked.change_record, bundle=locked)
+
+        if locked.storage_key and storage.exists(locked.storage_key):
+            storage.delete(locked.storage_key)
+
+        locked.storage_deleted_at = now
+        locked.storage_delete_reason = "retention_expired"
+        locked.save(update_fields=["storage_deleted_at", "storage_delete_reason", "updated_at"])
+
+        bundle_id = locked.id
+        transaction.on_commit(
+            lambda: _emit_bundle_retention_deleted(bundle_id=bundle_id, actor=actor)
+        )
+        return locked
+
+
+def cleanup_expired_export_storage(
+    export: EvidenceExport,
+    actor: AuditActor | None = None,
+    now=None,
+    storage: EvidenceStorage | None = None,
+) -> EvidenceExport:
+    """Delete stored ZIP bytes for an expired export. Keeps DB row and hashes."""
+    storage = storage or EvidenceStorage()
+    now = now or timezone.now()
+
+    with transaction.atomic():
+        locked = (
+            EvidenceExport.objects.select_for_update()
+            .select_related("bundle__change_record", "organization")
+            .get(pk=export.pk)
+        )
+        if locked.storage_deleted_at is not None:
+            return locked
+        if locked.expires_at is None or locked.expires_at > now:
+            raise DomainValidationError(
+                code="retention_not_expired",
+                detail="Export retention period has not expired.",
+            )
+        assert_no_active_legal_hold(
+            locked.bundle.change_record,
+            bundle=locked.bundle,
+            export=locked,
+        )
+
+        if locked.storage_key and storage.exists(locked.storage_key):
+            storage.delete(locked.storage_key)
+
+        locked.storage_deleted_at = now
+        locked.save(update_fields=["storage_deleted_at", "updated_at"])
+
+        export_id = locked.id
+        transaction.on_commit(
+            lambda: _emit_export_retention_deleted(export_id=export_id, actor=actor)
+        )
+        return locked
+
+
+# ---------------------------------------------------------------------------
+# Audit emitters for new event types
+# ---------------------------------------------------------------------------
+
+
+def _emit_export_created(*, export_id, actor: AuditActor | None) -> None:
+    export = EvidenceExport.objects.select_related("bundle").get(pk=export_id)
+    actor = actor or system_actor("Evidence export creation")
+    AuditService.emit(
+        organization_id=export.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_export.created",
+        object_type=AuditEvent.ObjectType.EVIDENCE_EXPORT,
+        object_id=export.id,
+        metadata={
+            "bundle_id": str(export.bundle_id),
+            "redaction_policy_id": str(export.redaction_policy_id) if export.redaction_policy_id else None,
+            "source_manifest_sha256": export.source_manifest_sha256,
+            "content_sha256": export.content_sha256,
+            "content_size_bytes": export.content_size_bytes,
+            "redaction_counts": export.redaction_summary.get("redaction_counts", {}),
+        },
+    )
+
+
+def _emit_legal_hold_created(*, hold_id, actor: AuditActor | None) -> None:
+    hold = LegalHold.objects.select_related("change_record", "evidence_bundle").get(pk=hold_id)
+    actor = actor or system_actor("Legal hold creation")
+    AuditService.emit(
+        organization_id=hold.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="legal_hold.created",
+        object_type=AuditEvent.ObjectType.LEGAL_HOLD,
+        object_id=hold.id,
+        metadata={
+            "change_record_id": str(hold.change_record_id),
+            "evidence_bundle_id": str(hold.evidence_bundle_id) if hold.evidence_bundle_id else None,
+            "external_reference_sha256": _hash_text(hold.external_reference),
+        },
+    )
+
+
+def _emit_bundle_retention_deleted(*, bundle_id, actor: AuditActor | None) -> None:
+    bundle = EvidenceBundle.objects.get(pk=bundle_id)
+    actor = actor or system_actor("Retention cleanup")
+    AuditService.emit(
+        organization_id=bundle.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_bundle.retention_deleted",
+        object_type=AuditEvent.ObjectType.EVIDENCE_BUNDLE,
+        object_id=bundle.id,
+        metadata={
+            "content_sha256": bundle.content_sha256,
+            "retention_policy_id": str(bundle.retention_policy_id) if bundle.retention_policy_id else None,
+        },
+    )
+
+
+def _emit_export_retention_deleted(*, export_id, actor: AuditActor | None) -> None:
+    export = EvidenceExport.objects.get(pk=export_id)
+    actor = actor or system_actor("Retention cleanup")
+    AuditService.emit(
+        organization_id=export.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence_export.retention_deleted",
+        object_type=AuditEvent.ObjectType.EVIDENCE_EXPORT,
+        object_id=export.id,
+        metadata={
+            "content_sha256": export.content_sha256,
+        },
+    )

@@ -76,6 +76,16 @@ FORBIDDEN_METADATA_KEYS = {
     "cloud_account",
     "kubeconfig",
     "kube_config_file",
+    "checksums",
+    "zip_bytes",
+    "export_bytes",
+    "redacted_value",
+    "original_value",
+    "redaction_payload",
+    "receipt_payload",
+    "legal_hold_reason_raw",
+    "external_reference_raw",
+    "artifact_bytes",
 }
 
 REJECTED_METADATA_KEYS = {
