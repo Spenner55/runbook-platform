@@ -44,13 +44,11 @@ def active_legal_holds_for_change(change_record):
 
 
 def default_retention_policy_for_organization(organization):
-    return (
-        EvidenceRetentionPolicy.objects.filter(
-            organization=organization,
-            is_default=True,
-            is_active=True,
-        ).first()
-    )
+    return EvidenceRetentionPolicy.objects.filter(
+        organization=organization,
+        is_default=True,
+        is_active=True,
+    ).first()
 
 
 def closed_change_records_for_organization(organization):

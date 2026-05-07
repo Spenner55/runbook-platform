@@ -234,6 +234,7 @@ def test_download_grant_allows_sealed_bundle_content(
     assert content_response.status_code == 200
     body = b"".join(content_response.streaming_content)
     assert len(body) == sealed["content_size_bytes"]
-    assert EvidenceStorage().size(
-        EvidenceBundle.objects.get(pk=bundle.id).storage_key
-    ) == sealed["content_size_bytes"]
+    assert (
+        EvidenceStorage().size(EvidenceBundle.objects.get(pk=bundle.id).storage_key)
+        == sealed["content_size_bytes"]
+    )

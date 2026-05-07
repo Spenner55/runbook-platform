@@ -70,18 +70,15 @@ class Command(BaseCommand):
         skipped_exports = 0
 
         if do_bundles:
-            candidates = (
-                EvidenceBundle.objects.filter(
-                    storage_deleted_at__isnull=True,
-                    storage_key__gt="",
-                    retention_expires_at__lte=now,
-                    status__in=[
-                        EvidenceBundle.Status.SEALED,
-                        EvidenceBundle.Status.INVALIDATED,
-                    ],
-                )
-                .order_by("retention_expires_at", "id")[:batch_size]
-            )
+            candidates = EvidenceBundle.objects.filter(
+                storage_deleted_at__isnull=True,
+                storage_key__gt="",
+                retention_expires_at__lte=now,
+                status__in=[
+                    EvidenceBundle.Status.SEALED,
+                    EvidenceBundle.Status.INVALIDATED,
+                ],
+            ).order_by("retention_expires_at", "id")[:batch_size]
             for bundle in candidates:
                 if dry_run:
                     self.stdout.write(
@@ -91,11 +88,11 @@ class Command(BaseCommand):
                     deleted_bundles += 1
                     continue
                 try:
-                    services.cleanup_expired_bundle_storage(bundle, actor=actor, now=now)
-                    deleted_bundles += 1
-                    self.stdout.write(
-                        self.style.SUCCESS(f"Cleaned bundle {bundle.id}")
+                    services.cleanup_expired_bundle_storage(
+                        bundle, actor=actor, now=now
                     )
+                    deleted_bundles += 1
+                    self.stdout.write(self.style.SUCCESS(f"Cleaned bundle {bundle.id}"))
                 except DomainValidationError as exc:
                     skipped_bundles += 1
                     self.stdout.write(
@@ -105,15 +102,12 @@ class Command(BaseCommand):
                     )
 
         if do_exports:
-            candidates = (
-                EvidenceExport.objects.filter(
-                    storage_deleted_at__isnull=True,
-                    storage_key__gt="",
-                    expires_at__lte=now,
-                    status=EvidenceExport.Status.READY,
-                )
-                .order_by("expires_at", "id")[:batch_size]
-            )
+            candidates = EvidenceExport.objects.filter(
+                storage_deleted_at__isnull=True,
+                storage_key__gt="",
+                expires_at__lte=now,
+                status=EvidenceExport.Status.READY,
+            ).order_by("expires_at", "id")[:batch_size]
             for export in candidates:
                 if dry_run:
                     self.stdout.write(
@@ -123,11 +117,11 @@ class Command(BaseCommand):
                     deleted_exports += 1
                     continue
                 try:
-                    services.cleanup_expired_export_storage(export, actor=actor, now=now)
-                    deleted_exports += 1
-                    self.stdout.write(
-                        self.style.SUCCESS(f"Cleaned export {export.id}")
+                    services.cleanup_expired_export_storage(
+                        export, actor=actor, now=now
                     )
+                    deleted_exports += 1
+                    self.stdout.write(self.style.SUCCESS(f"Cleaned export {export.id}"))
                 except DomainValidationError as exc:
                     skipped_exports += 1
                     self.stdout.write(

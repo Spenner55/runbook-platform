@@ -133,9 +133,11 @@ class ChangeEvidenceBundleLatestView(APIView):
             organization=org,
             change_record=change,
         )
-        bundle = base_qs.exclude(
-            status=EvidenceBundle.Status.INVALIDATED
-        ).order_by("-version", "-created_at").first()
+        bundle = (
+            base_qs.exclude(status=EvidenceBundle.Status.INVALIDATED)
+            .order_by("-version", "-created_at")
+            .first()
+        )
         if bundle is None:
             bundle = base_qs.order_by("-version", "-created_at").first()
         if bundle is None:
@@ -339,9 +341,7 @@ class EvidenceBundleExportListCreateView(APIView):
             organization=org,
             bundle=bundle,
         ).order_by("-requested_at")
-        return Response(
-            {"results": EvidenceExportSerializer(exports, many=True).data}
-        )
+        return Response({"results": EvidenceExportSerializer(exports, many=True).data})
 
     def post(self, request, bundle_id):
         org = _get_org(request)
@@ -430,7 +430,9 @@ class EvidenceExportDownloadView(APIView):
 
         if export.status != EvidenceExport.Status.READY:
             return _error_response(
-                DomainValidationError(code="export_not_ready", detail="Export is not ready."),
+                DomainValidationError(
+                    code="export_not_ready", detail="Export is not ready."
+                ),
                 status=http_status.HTTP_409_CONFLICT,
             )
         if export.storage_deleted_at is not None or not export.storage_key:
@@ -451,6 +453,7 @@ class EvidenceExportDownloadView(APIView):
             return _error_response(exc, status=http_status.HTTP_409_CONFLICT)
 
         import io
+
         file_obj = io.BytesIO(export_bytes)
         filename = f"evidence-export-{export.bundle.change_record_id}-{export.id}.zip"
         response = FileResponse(file_obj, content_type="application/zip")

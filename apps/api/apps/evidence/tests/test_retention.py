@@ -91,7 +91,9 @@ def test_seal_sets_retention_policy_and_expires_at_when_default_exists(
 
     assert sealed.retention_policy_id == default_retention_policy.id
     assert sealed.retention_expires_at is not None
-    expected = sealed.sealed_at + timedelta(days=default_retention_policy.sealed_bundle_retention_days)
+    expected = sealed.sealed_at + timedelta(
+        days=default_retention_policy.sealed_bundle_retention_days
+    )
     assert abs((sealed.retention_expires_at - expected).total_seconds()) < 5
 
 
@@ -305,7 +307,10 @@ def test_released_hold_permits_bundle_cleanup_after_expiry(
 
 @pytest.mark.django_db
 def test_bundle_cleanup_emits_retention_deleted_event(
-    evidence_change, user, default_retention_policy, storage_root,
+    evidence_change,
+    user,
+    default_retention_policy,
+    storage_root,
     django_capture_on_commit_callbacks,
 ):
     _complete_closed_change(evidence_change, user)
@@ -328,7 +333,10 @@ def test_bundle_cleanup_emits_retention_deleted_event(
 
 @pytest.mark.django_db
 def test_export_cleanup_emits_retention_deleted_event(
-    evidence_change, user, default_retention_policy, storage_root,
+    evidence_change,
+    user,
+    default_retention_policy,
+    storage_root,
     django_capture_on_commit_callbacks,
 ):
     _complete_closed_change(evidence_change, user)

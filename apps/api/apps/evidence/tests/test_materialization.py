@@ -79,7 +79,9 @@ def _verification(change, user=None, *, with_result=True, artifact=None):
         change_record=change,
         operation_profile=change.operation_profile,
         mode=VerificationPlan.Mode.MIXED,
-        status=VerificationPlan.Status.SATISFIED if with_result else VerificationPlan.Status.ACTIVE,
+        status=VerificationPlan.Status.SATISFIED
+        if with_result
+        else VerificationPlan.Status.ACTIVE,
         generated_from_profile_snapshot={"verification_mode": "mixed"},
         generated_from_profile_sha256="a" * 64,
         required_check_count=1,
@@ -97,7 +99,9 @@ def _verification(change, user=None, *, with_result=True, artifact=None):
         name="Runner health check",
         check_type=VerificationCheck.CheckType.RUNNER_STEP,
         required=True,
-        status=VerificationCheck.Status.PASSED if with_result else VerificationCheck.Status.PENDING,
+        status=VerificationCheck.Status.PASSED
+        if with_result
+        else VerificationCheck.Status.PENDING,
         verification_key="postdeploy.health.ok",
         source_step_key="health-check",
     )
@@ -164,7 +168,9 @@ def _complete_closed_change(change, user, *, artifact=None):
 def test_closed_change_can_produce_bundle(evidence_change, user):
     _complete_closed_change(evidence_change, user)
 
-    bundle = create_evidence_bundle_for_change(change_record=evidence_change, created_by=user)
+    bundle = create_evidence_bundle_for_change(
+        change_record=evidence_change, created_by=user
+    )
 
     assert bundle.status == EvidenceBundle.Status.COMPILING
     assert bundle.completeness_status == EvidenceBundle.CompletenessStatus.COMPLETE

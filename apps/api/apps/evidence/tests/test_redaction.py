@@ -5,6 +5,7 @@ Hard rules enforced here:
 - Redacted export omits configured sensitive fields.
 - NDJSON redaction preserves event order.
 """
+
 import json
 
 from apps.evidence.services import (
@@ -24,13 +25,17 @@ from apps.evidence.services import (
 def test_redaction_policy_sha256_is_canonical():
     rules_a = [{"action": "omit_path", "id": "r1", "path": "audit/audit_trail.ndjson"}]
     rules_b = [{"id": "r1", "action": "omit_path", "path": "audit/audit_trail.ndjson"}]
-    assert compute_redaction_policy_sha256(rules_a) == compute_redaction_policy_sha256(rules_b)
+    assert compute_redaction_policy_sha256(rules_a) == compute_redaction_policy_sha256(
+        rules_b
+    )
 
 
 def test_redaction_policy_sha256_differs_for_different_rules():
     rules_a = [{"action": "omit_path", "id": "r1", "path": "audit/audit_trail.ndjson"}]
     rules_b = [{"action": "omit_path", "id": "r2", "path": "change/change_record.json"}]
-    assert compute_redaction_policy_sha256(rules_a) != compute_redaction_policy_sha256(rules_b)
+    assert compute_redaction_policy_sha256(rules_a) != compute_redaction_policy_sha256(
+        rules_b
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +185,7 @@ def test_omit_path_cannot_remove_manifest():
         "manifest.json": b"{}",
         "checksums.sha256": b"...",
     }
-    policy = _FakePolicy(
-        [{"action": "omit_path", "id": "r1", "path": "manifest.json"}]
-    )
+    policy = _FakePolicy([{"action": "omit_path", "id": "r1", "path": "manifest.json"}])
     entries, summary = _apply_redaction_policy(source, policy=policy)
     assert "manifest.json" in entries
     assert len(summary["omitted_paths"]) == 0
@@ -194,7 +197,10 @@ def test_omit_path_cannot_remove_manifest():
 
 
 def test_redact_json_pointer_in_json_file():
-    payload = {"schema_version": "1", "items": [{"actor_label": "alice", "event_type": "x"}]}
+    payload = {
+        "schema_version": "1",
+        "items": [{"actor_label": "alice", "event_type": "x"}],
+    }
     source = {
         "change/change_record.json": canonical_json_bytes(payload),
     }
@@ -220,7 +226,14 @@ def test_redact_json_pointer_does_not_mutate_source_bytes():
     source_bytes = canonical_json_bytes(payload)
     source = {"change/change_record.json": source_bytes}
     policy = _FakePolicy(
-        [{"action": "redact_json_pointer", "id": "r1", "path": "change/change_record.json", "pointer": "/actor"}]
+        [
+            {
+                "action": "redact_json_pointer",
+                "id": "r1",
+                "path": "change/change_record.json",
+                "pointer": "/actor",
+            }
+        ]
     )
     _apply_redaction_policy(source, policy=policy)
     assert source["change/change_record.json"] == source_bytes
@@ -263,7 +276,14 @@ def test_redact_ndjson_field_preserves_event_order():
     raw = "".join(json.dumps(e) + "\n" for e in events)
     source = {"audit/audit_trail.ndjson": raw.encode("utf-8")}
     policy = _FakePolicy(
-        [{"action": "redact_ndjson_field", "id": "r1", "path": "audit/audit_trail.ndjson", "field": "actor_label"}]
+        [
+            {
+                "action": "redact_ndjson_field",
+                "id": "r1",
+                "path": "audit/audit_trail.ndjson",
+                "field": "actor_label",
+            }
+        ]
     )
     entries, _ = _apply_redaction_policy(source, policy=policy)
     lines = entries["audit/audit_trail.ndjson"].decode("utf-8").rstrip("\n").split("\n")
@@ -301,7 +321,13 @@ def test_replace_file_with_notice_replaces_bytes():
     original_sha256 = sha256_hexdigest(original)
     source = {"change/change_record.json": original}
     policy = _FakePolicy(
-        [{"action": "replace_file_with_notice", "id": "notice-r1", "path": "change/change_record.json"}]
+        [
+            {
+                "action": "replace_file_with_notice",
+                "id": "notice-r1",
+                "path": "change/change_record.json",
+            }
+        ]
     )
     entries, summary = _apply_redaction_policy(source, policy=policy)
     notice = entries["change/change_record.json"]
@@ -331,8 +357,18 @@ def test_redaction_does_not_mutate_canonical_bundle_bytes():
 
     policy = _FakePolicy(
         [
-            {"action": "redact_json_pointer", "id": "r1", "path": "change/change_record.json", "pointer": "/actor"},
-            {"action": "redact_ndjson_field", "id": "r2", "path": "audit/audit_trail.ndjson", "field": "actor_label"},
+            {
+                "action": "redact_json_pointer",
+                "id": "r1",
+                "path": "change/change_record.json",
+                "pointer": "/actor",
+            },
+            {
+                "action": "redact_ndjson_field",
+                "id": "r2",
+                "path": "audit/audit_trail.ndjson",
+                "field": "actor_label",
+            },
             {"action": "artifact_metadata_only", "id": "r3"},
         ]
     )

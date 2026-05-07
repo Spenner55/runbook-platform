@@ -176,7 +176,11 @@ def seal_bundle(
                 .select_related("change_record", "organization")
                 .get(pk=bundle.pk)
             )
-            list(EvidenceBundleItem.objects.select_for_update().filter(bundle=locked_bundle))
+            list(
+                EvidenceBundleItem.objects.select_for_update().filter(
+                    bundle=locked_bundle
+                )
+            )
             if locked_bundle.status != EvidenceBundle.Status.COMPILING:
                 raise DomainValidationError(
                     code="evidence_bundle_not_compiling",
@@ -201,7 +205,9 @@ def seal_bundle(
             storage.save_bytes(storage_key, package["zip_bytes"])
             wrote_storage = True
 
-            retention_policy = _resolve_default_retention_policy(locked_bundle.organization)
+            retention_policy = _resolve_default_retention_policy(
+                locked_bundle.organization
+            )
             retention_expires_at = None
             if retention_policy is not None:
                 retention_expires_at = locked_bundle.sealed_at + timedelta(
@@ -210,9 +216,7 @@ def seal_bundle(
 
             locked_bundle.manifest = _normalize(package["manifest"])
             locked_bundle.manifest_sha256 = package["manifest_sha256"]
-            locked_bundle.payload_checksums_sha256 = package[
-                "payload_checksums_sha256"
-            ]
+            locked_bundle.payload_checksums_sha256 = package["payload_checksums_sha256"]
             locked_bundle.content_sha256 = package["content_sha256"]
             locked_bundle.content_size_bytes = package["content_size_bytes"]
             locked_bundle.storage_key = storage_key
@@ -343,9 +347,7 @@ def create_bundle_download_url(
     ttl = settings.ARTIFACT_DOWNLOAD_URL_TTL_SECONDS
     expires_at = timezone.now() + timedelta(seconds=ttl)
     token = create_bundle_download_token(bundle=bundle, expires_at=expires_at)
-    query = urlencode(
-        {"organization_id": str(bundle.organization_id), "token": token}
-    )
+    query = urlencode({"organization_id": str(bundle.organization_id), "token": token})
     download_url = f"/api/v1/evidence-bundles/{bundle.id}/content/?{query}"
     filename = f"evidence-bundle-{bundle.change_record_id}-v{bundle.version}.zip"
 
@@ -438,9 +440,8 @@ def build_sealed_bundle_package(
     """Build deterministic sealed bundle bytes without writing storage or status."""
 
     storage = storage or EvidenceStorage()
-    bundle = (
-        EvidenceBundle.objects.select_related("change_record", "organization")
-        .get(pk=bundle.pk)
+    bundle = EvidenceBundle.objects.select_related("change_record", "organization").get(
+        pk=bundle.pk
     )
     if bundle.sealed_at is None:
         raise DomainValidationError(
@@ -454,9 +455,7 @@ def build_sealed_bundle_package(
     manifest_bytes = canonical_json_bytes(manifest)
     manifest_sha256 = sha256_hexdigest(manifest_bytes)
 
-    entries_by_path = {
-        entry.path: entry.content for entry in payload_entries
-    }
+    entries_by_path = {entry.path: entry.content for entry in payload_entries}
     entries_by_path["manifest.json"] = manifest_bytes
     checksums_bytes = canonical_checksums_bytes(entries_by_path)
     entries_by_path["checksums.sha256"] = checksums_bytes
@@ -615,9 +614,8 @@ def _payload_entries_for_bundle(
 
 
 def _source_sections_for_bundle(bundle: EvidenceBundle) -> list[_Section]:
-    change = (
-        ChangeRecord.objects.select_related("operation_profile", "workflow")
-        .get(pk=bundle.change_record_id)
+    change = ChangeRecord.objects.select_related("operation_profile", "workflow").get(
+        pk=bundle.change_record_id
     )
     targets = list(selectors.change_targets_for_bundle(change))
     verification_plan = selectors.verification_plan_for_bundle(change)
@@ -686,7 +684,9 @@ def _source_sections_for_bundle(bundle: EvidenceBundle) -> list[_Section]:
         _targets_section(bundle, change, targets),
         _approvals_section(bundle, change, approvals),
         _policy_decisions_section(bundle, change, policy_evaluations),
-        _execution_section(bundle, change, execution_binding, execution, execution_steps),
+        _execution_section(
+            bundle, change, execution_binding, execution, execution_steps
+        ),
         _audit_section(bundle, change, audit_events),
         _artifacts_section(bundle, change, artifacts),
         _verification_plan_section(
@@ -789,7 +789,9 @@ def _sync_compiling_item_content(item: EvidenceBundleItem, content: bytes) -> No
     item.save(update_fields=["content_sha256", "content_size_bytes", "updated_at"])
 
 
-def _refresh_bundle_source_snapshot_from_items(bundle: EvidenceBundle) -> EvidenceBundle:
+def _refresh_bundle_source_snapshot_from_items(
+    bundle: EvidenceBundle,
+) -> EvidenceBundle:
     items = list(
         EvidenceBundleItem.objects.filter(bundle=bundle).order_by(
             "position", "item_type", "item_key"
@@ -843,10 +845,9 @@ def _source_refs_for_path(
     path: str,
 ) -> tuple[dict, ...]:
     refs = []
-    for item in (
-        EvidenceBundleItem.objects.filter(bundle=bundle, canonical_path=path)
-        .order_by("position", "item_type", "item_key", "id")
-    ):
+    for item in EvidenceBundleItem.objects.filter(
+        bundle=bundle, canonical_path=path
+    ).order_by("position", "item_type", "item_key", "id"):
         refs.extend(_source_refs_for_item(item))
     return tuple(refs)
 
@@ -961,7 +962,9 @@ def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
         _targets_section(bundle, change, targets),
         _approvals_section(bundle, change, approvals),
         _policy_decisions_section(bundle, change, policy_evaluations),
-        _execution_section(bundle, change, execution_binding, execution, execution_steps),
+        _execution_section(
+            bundle, change, execution_binding, execution, execution_steps
+        ),
         _audit_section(bundle, change, audit_events),
         _artifacts_section(bundle, change, artifacts),
         _verification_plan_section(
@@ -1006,7 +1009,9 @@ def _materialize_items(*, bundle: EvidenceBundle, change: ChangeRecord) -> None:
 
     for event_position, event in enumerate(audit_events, start=1):
         position += 1
-        _create_audit_event_item(bundle, event, position=position, event_position=event_position)
+        _create_audit_event_item(
+            bundle, event, position=position, event_position=event_position
+        )
 
     for artifact in artifacts:
         position += 1
@@ -1198,7 +1203,10 @@ def _execution_section(bundle, change, binding, execution, steps):
         source_type="executions.Execution" if execution is not None else "",
         source_id=str(execution.id) if execution is not None else "",
         source_updated_at=execution.updated_at if execution is not None else None,
-        source_metadata={"step_count": len(steps), "status": getattr(execution, "status", None)},
+        source_metadata={
+            "step_count": len(steps),
+            "status": getattr(execution, "status", None),
+        },
     )
 
 
@@ -1260,8 +1268,12 @@ def _verification_results_section(
 ):
     items = {
         "plan": None,
-        "checks": [_serialize_verification_check(check) for check in verification_checks],
-        "results": [_serialize_verification_result(result) for result in verification_results],
+        "checks": [
+            _serialize_verification_check(check) for check in verification_checks
+        ],
+        "results": [
+            _serialize_verification_result(result) for result in verification_results
+        ],
     }
     if verification_plan is not None:
         items["plan"] = {
@@ -1284,12 +1296,18 @@ def _verification_results_section(
         canonical_path="verification/results.json",
         payload=_section_payload(bundle, change, items=[items]),
         present=verification_plan is not None,
-        missing_reason="" if verification_plan is not None else "missing_verification_plan",
+        missing_reason=""
+        if verification_plan is not None
+        else "missing_verification_plan",
         source_type="changes.VerificationPlan" if verification_plan is not None else "",
         source_id=str(verification_plan.id) if verification_plan is not None else "",
-        source_updated_at=verification_plan.updated_at if verification_plan is not None else None,
+        source_updated_at=verification_plan.updated_at
+        if verification_plan is not None
+        else None,
         source_metadata={
-            "required_check_count": len([check for check in verification_checks if check.required]),
+            "required_check_count": len(
+                [check for check in verification_checks if check.required]
+            ),
             "result_count": len(verification_results),
         },
     )
@@ -1298,7 +1316,9 @@ def _verification_results_section(
 def _verification_plan_section(bundle, change, verification_plan, verification_checks):
     items = {
         "plan": None,
-        "checks": [_serialize_verification_check(check) for check in verification_checks],
+        "checks": [
+            _serialize_verification_check(check) for check in verification_checks
+        ],
     }
     if verification_plan is not None:
         items["plan"] = {
@@ -1321,12 +1341,18 @@ def _verification_plan_section(bundle, change, verification_plan, verification_c
         canonical_path="verification/plan.json",
         payload=_section_payload(bundle, change, items=[items]),
         present=verification_plan is not None,
-        missing_reason="" if verification_plan is not None else "missing_verification_plan",
+        missing_reason=""
+        if verification_plan is not None
+        else "missing_verification_plan",
         source_type="changes.VerificationPlan" if verification_plan is not None else "",
         source_id=str(verification_plan.id) if verification_plan is not None else "",
-        source_updated_at=verification_plan.updated_at if verification_plan is not None else None,
+        source_updated_at=verification_plan.updated_at
+        if verification_plan is not None
+        else None,
         source_metadata={
-            "required_check_count": len([check for check in verification_checks if check.required]),
+            "required_check_count": len(
+                [check for check in verification_checks if check.required]
+            ),
             "check_count": len(verification_checks),
         },
     )
@@ -1376,7 +1402,9 @@ def _exceptions_section(
             "retro_review_blocking_status": change.retro_review_blocking_status,
         },
         "exceptions": [_serialize_exception(exc) for exc in exceptions],
-        "breakglass_sessions": [_serialize_breakglass(session) for session in breakglass_sessions],
+        "breakglass_sessions": [
+            _serialize_breakglass(session) for session in breakglass_sessions
+        ],
         "retro_reviews": [_serialize_retro_review(review) for review in retro_reviews],
     }
     return _Section(
@@ -1461,7 +1489,9 @@ def _external_references_section(
     )
 
 
-def _create_section_item(bundle, section: _Section, *, position: int) -> EvidenceBundleItem:
+def _create_section_item(
+    bundle, section: _Section, *, position: int
+) -> EvidenceBundleItem:
     payload_bytes = (
         canonical_ndjson_bytes(section.payload)
         if section.canonical_path.endswith(".ndjson")
@@ -1542,8 +1572,12 @@ def _create_artifact_item(bundle, change, artifact, *, position: int):
             "checksum_sha256": artifact.checksum_sha256,
             "upload_status": artifact.upload_status,
         },
-        artifact=artifact if artifact.organization_id == bundle.organization_id else None,
-        content_sha256=artifact.checksum_sha256 if _checksum_is_valid(artifact.checksum_sha256) else "",
+        artifact=artifact
+        if artifact.organization_id == bundle.organization_id
+        else None,
+        content_sha256=artifact.checksum_sha256
+        if _checksum_is_valid(artifact.checksum_sha256)
+        else "",
         content_size_bytes=artifact.size_bytes,
         mime_type=artifact.mime_type,
     )
@@ -1582,7 +1616,9 @@ def _create_missing_verification_items(
             source_id=str(check.id),
             source_updated_at=check.updated_at,
             source_metadata={"check_key": check.key, "check_type": check.check_type},
-            content_sha256=sha256_hexdigest(canonical_json_bytes({"missing": str(check.id)})),
+            content_sha256=sha256_hexdigest(
+                canonical_json_bytes({"missing": str(check.id)})
+            ),
             content_size_bytes=len(canonical_json_bytes({"missing": str(check.id)})),
             mime_type="application/json",
         )
@@ -1606,7 +1642,9 @@ def _finalize_bundle_materialization(bundle, audit_events) -> None:
         }
     bundle.completeness_report = completeness_report
     bundle.completeness_status = completeness_status
-    bundle.source_snapshot_sha256 = sha256_hexdigest(canonical_json_bytes(snapshot_payload))
+    bundle.source_snapshot_sha256 = sha256_hexdigest(
+        canonical_json_bytes(snapshot_payload)
+    )
     bundle.source_high_watermark = {"audit": audit_high_watermark}
     bundle.save(
         update_fields=[
@@ -2020,8 +2058,11 @@ def _artifact_bundle_path(artifact):
 
 
 def _checksum_is_valid(value):
-    return isinstance(value, str) and len(value) == 64 and value == value.lower() and all(
-        char in "0123456789abcdef" for char in value
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and value == value.lower()
+        and all(char in "0123456789abcdef" for char in value)
     )
 
 
@@ -2053,7 +2094,9 @@ def canonical_ndjson_bytes(values) -> bytes:
 
 def _normalize(value):
     if isinstance(value, dict):
-        return {str(key): _normalize(value[key]) for key in sorted(value.keys(), key=str)}
+        return {
+            str(key): _normalize(value[key]) for key in sorted(value.keys(), key=str)
+        }
     if isinstance(value, (list, tuple)):
         return [_normalize(item) for item in value]
     if isinstance(value, UUID):
@@ -2096,10 +2139,9 @@ def create_export(
     """Create a derived export ZIP from a sealed bundle."""
     storage = storage or EvidenceStorage()
 
-    bundle = (
-        EvidenceBundle.objects.select_related("change_record", "organization", "retention_policy")
-        .get(pk=bundle.pk)
-    )
+    bundle = EvidenceBundle.objects.select_related(
+        "change_record", "organization", "retention_policy"
+    ).get(pk=bundle.pk)
     if bundle.status != EvidenceBundle.Status.SEALED:
         raise DomainValidationError(
             code="bundle_not_sealed",
@@ -2204,7 +2246,9 @@ def create_export(
         export.save()
 
         export_id = export.id
-        transaction.on_commit(lambda: _emit_export_created(export_id=export_id, actor=actor))
+        transaction.on_commit(
+            lambda: _emit_export_created(export_id=export_id, actor=actor)
+        )
         return export
     except Exception as exc:
         if wrote_storage and storage_key:
@@ -2230,7 +2274,9 @@ def download_export(
 ) -> bytes:
     """Return export ZIP bytes and emit a download audit event."""
     storage = storage or EvidenceStorage()
-    export = EvidenceExport.objects.select_related("bundle", "organization").get(pk=export.pk)
+    export = EvidenceExport.objects.select_related("bundle", "organization").get(
+        pk=export.pk
+    )
 
     if export.status != EvidenceExport.Status.READY:
         raise DomainValidationError(
@@ -2273,6 +2319,7 @@ def download_export(
     )
 
     from django.db.models import F
+
     EvidenceExport.objects.filter(pk=export.pk).update(
         download_count=F("download_count") + 1,
         last_downloaded_at=timezone.now(),
@@ -2339,9 +2386,16 @@ def _apply_redaction_policy(
                     if count > 0:
                         entries[path] = canonical_json_bytes(data)
                         transformed_paths.append(
-                            {"path": path, "pointer": pointer, "rule_id": rule_id, "count": count}
+                            {
+                                "path": path,
+                                "pointer": pointer,
+                                "rule_id": rule_id,
+                                "count": count,
+                            }
                         )
-                        redaction_counts[action] = redaction_counts.get(action, 0) + count
+                        redaction_counts[action] = (
+                            redaction_counts.get(action, 0) + count
+                        )
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
 
@@ -2355,9 +2409,16 @@ def _apply_redaction_policy(
                     if count > 0:
                         entries[path] = new_bytes
                         transformed_paths.append(
-                            {"path": path, "field": field, "rule_id": rule_id, "count": count}
+                            {
+                                "path": path,
+                                "field": field,
+                                "rule_id": rule_id,
+                                "count": count,
+                            }
                         )
-                        redaction_counts[action] = redaction_counts.get(action, 0) + count
+                        redaction_counts[action] = (
+                            redaction_counts.get(action, 0) + count
+                        )
                 except UnicodeDecodeError:
                     pass
 
@@ -2367,7 +2428,9 @@ def _apply_redaction_policy(
             ]
             for p in keys_to_remove:
                 del entries[p]
-                omitted_paths.append({"path": p, "rule_id": rule_id, "reason": "artifact_metadata_only"})
+                omitted_paths.append(
+                    {"path": p, "rule_id": rule_id, "reason": "artifact_metadata_only"}
+                )
                 redaction_counts[action] = redaction_counts.get(action, 0) + 1
 
         elif action == "replace_file_with_notice":
@@ -2382,7 +2445,9 @@ def _apply_redaction_policy(
                     f"rule_id: {rule_id}\n"
                 ).encode()
                 entries[path] = notice
-                transformed_paths.append({"path": path, "rule_id": rule_id, "replaced": True})
+                transformed_paths.append(
+                    {"path": path, "rule_id": rule_id, "replaced": True}
+                )
                 redaction_counts[action] = redaction_counts.get(action, 0) + 1
 
     redaction_summary = {
@@ -2452,7 +2517,9 @@ def _apply_ndjson_field_redaction(raw: str, field: str) -> tuple[int, bytes]:
     return count, result.encode("utf-8")
 
 
-def _build_export_receipt(*, bundle, export, redaction_policy, redaction_summary) -> dict:
+def _build_export_receipt(
+    *, bundle, export, redaction_policy, redaction_summary
+) -> dict:
     return {
         "receipt_schema_version": SCHEMA_VERSION,
         "receipt_type": "evidence_export",
@@ -2466,7 +2533,9 @@ def _build_export_receipt(*, bundle, export, redaction_policy, redaction_summary
         "source_manifest_sha256": bundle.manifest_sha256,
         "source_bundle_content_sha256": bundle.content_sha256,
         "redaction_policy_id": str(redaction_policy.id) if redaction_policy else None,
-        "redaction_policy_sha256": redaction_policy.rules_sha256 if redaction_policy else None,
+        "redaction_policy_sha256": redaction_policy.rules_sha256
+        if redaction_policy
+        else None,
         "redaction_summary": redaction_summary,
     }
 
@@ -2498,7 +2567,9 @@ def _build_export_manifest(
                 "sha256": sha256_hexdigest(content),
                 "required": True,
                 "source_refs": [],
-                "redaction_state": "redacted" if redaction_summary["redacted"] else "original",
+                "redaction_state": "redacted"
+                if redaction_summary["redacted"]
+                else "original",
             }
         )
     return {
@@ -2514,7 +2585,9 @@ def _build_export_manifest(
         "export": {
             "id": export.id,
             "requested_at": export.requested_at,
-            "redaction_policy_id": str(export.redaction_policy_id) if export.redaction_policy_id else None,
+            "redaction_policy_id": str(export.redaction_policy_id)
+            if export.redaction_policy_id
+            else None,
         },
         "source": {
             "source_manifest_sha256": bundle.manifest_sha256,
@@ -2540,13 +2613,11 @@ def _export_storage_key(export: EvidenceExport) -> str:
 
 
 def _resolve_default_retention_policy(organization) -> EvidenceRetentionPolicy | None:
-    return (
-        EvidenceRetentionPolicy.objects.filter(
-            organization=organization,
-            is_default=True,
-            is_active=True,
-        ).first()
-    )
+    return EvidenceRetentionPolicy.objects.filter(
+        organization=organization,
+        is_default=True,
+        is_active=True,
+    ).first()
 
 
 def _bundle_retention_days(bundle: EvidenceBundle, *, invalidated: bool = False) -> int:
@@ -2624,7 +2695,9 @@ def create_legal_hold(
         )
 
         hold_id = hold.id
-        transaction.on_commit(lambda: _emit_legal_hold_created(hold_id=hold_id, actor=actor))
+        transaction.on_commit(
+            lambda: _emit_legal_hold_created(hold_id=hold_id, actor=actor)
+        )
         return hold
 
 
@@ -2633,7 +2706,9 @@ def create_legal_hold(
 # ---------------------------------------------------------------------------
 
 
-def _find_active_legal_hold(change_record, *, bundle=None, export=None) -> LegalHold | None:
+def _find_active_legal_hold(
+    change_record, *, bundle=None, export=None
+) -> LegalHold | None:
     """Return the first active legal hold covering the target, or None."""
     query = Q(change_record=change_record, status=LegalHold.Status.ACTIVE)
     if bundle is not None:
@@ -2691,7 +2766,13 @@ def cleanup_expired_bundle_storage(
 
             locked.storage_deleted_at = now
             locked.storage_delete_reason = "retention_expired"
-            locked.save(update_fields=["storage_deleted_at", "storage_delete_reason", "updated_at"])
+            locked.save(
+                update_fields=[
+                    "storage_deleted_at",
+                    "storage_delete_reason",
+                    "updated_at",
+                ]
+            )
 
             bundle_id = locked.id
             transaction.on_commit(
@@ -2799,11 +2880,19 @@ def release_legal_hold(
         locked.released_at = timezone.now()
         locked.release_reason = release_reason.strip()
         locked.save(
-            update_fields=["status", "released_by", "released_at", "release_reason", "updated_at"]
+            update_fields=[
+                "status",
+                "released_by",
+                "released_at",
+                "release_reason",
+                "updated_at",
+            ]
         )
 
         hold_id = locked.id
-        transaction.on_commit(lambda: _emit_legal_hold_released(hold_id=hold_id, actor=actor))
+        transaction.on_commit(
+            lambda: _emit_legal_hold_released(hold_id=hold_id, actor=actor)
+        )
         return locked
 
 
@@ -2825,7 +2914,9 @@ def _emit_export_created(*, export_id, actor: AuditActor | None) -> None:
         object_id=export.id,
         metadata={
             "bundle_id": str(export.bundle_id),
-            "redaction_policy_id": str(export.redaction_policy_id) if export.redaction_policy_id else None,
+            "redaction_policy_id": str(export.redaction_policy_id)
+            if export.redaction_policy_id
+            else None,
             "source_manifest_sha256": export.source_manifest_sha256,
             "content_sha256": export.content_sha256,
             "content_size_bytes": export.content_size_bytes,
@@ -2835,7 +2926,9 @@ def _emit_export_created(*, export_id, actor: AuditActor | None) -> None:
 
 
 def _emit_legal_hold_created(*, hold_id, actor: AuditActor | None) -> None:
-    hold = LegalHold.objects.select_related("change_record", "evidence_bundle").get(pk=hold_id)
+    hold = LegalHold.objects.select_related("change_record", "evidence_bundle").get(
+        pk=hold_id
+    )
     actor = actor or system_actor("Legal hold creation")
     AuditService.emit(
         organization_id=hold.organization_id,
@@ -2847,7 +2940,9 @@ def _emit_legal_hold_created(*, hold_id, actor: AuditActor | None) -> None:
         object_id=hold.id,
         metadata={
             "change_record_id": str(hold.change_record_id),
-            "evidence_bundle_id": str(hold.evidence_bundle_id) if hold.evidence_bundle_id else None,
+            "evidence_bundle_id": str(hold.evidence_bundle_id)
+            if hold.evidence_bundle_id
+            else None,
             "external_reference_sha256": _hash_text(hold.external_reference),
         },
     )
@@ -2866,7 +2961,9 @@ def _emit_bundle_retention_deleted(*, bundle_id, actor: AuditActor | None) -> No
         object_id=bundle.id,
         metadata={
             "content_sha256": bundle.content_sha256,
-            "retention_policy_id": str(bundle.retention_policy_id) if bundle.retention_policy_id else None,
+            "retention_policy_id": str(bundle.retention_policy_id)
+            if bundle.retention_policy_id
+            else None,
         },
     )
 
@@ -2901,7 +2998,9 @@ def _emit_legal_hold_released(*, hold_id, actor: AuditActor | None) -> None:
         object_id=hold.id,
         metadata={
             "change_record_id": str(hold.change_record_id),
-            "evidence_bundle_id": str(hold.evidence_bundle_id) if hold.evidence_bundle_id else None,
+            "evidence_bundle_id": str(hold.evidence_bundle_id)
+            if hold.evidence_bundle_id
+            else None,
         },
     )
 

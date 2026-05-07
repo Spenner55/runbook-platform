@@ -234,7 +234,9 @@ class EvidenceExportSerializer(serializers.ModelSerializer):
 
 
 class EvidenceExportCreateSerializer(serializers.Serializer):
-    redaction_policy_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    redaction_policy_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
 
 
 class LegalHoldSerializer(serializers.ModelSerializer):

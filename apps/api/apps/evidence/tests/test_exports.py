@@ -7,6 +7,7 @@ Enforces:
 - Export receipt is stable/safe.
 - Redacted export omits configured sensitive fields.
 """
+
 import json
 import zipfile
 from io import BytesIO
@@ -136,8 +137,13 @@ def test_export_receipt_does_not_expose_raw_tokens(
     export = create_export(sealed, requested_by=user, storage=storage)
     receipt_str = json.dumps(export.receipt)
     for forbidden in ("password", "token", "secret", "dispatch_token", "claim_token"):
-        assert forbidden not in receipt_str.lower() or receipt_str.lower().count(forbidden) == 0 or \
-            all(val not in receipt_str for val in [f'"{forbidden}":', f"'{forbidden}':"])
+        assert (
+            forbidden not in receipt_str.lower()
+            or receipt_str.lower().count(forbidden) == 0
+            or all(
+                val not in receipt_str for val in [f'"{forbidden}":', f"'{forbidden}':"]
+            )
+        )
 
 
 @pytest.mark.django_db
@@ -160,21 +166,30 @@ def test_export_receipt_sha256_matches_canonical_bytes(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_export_creation_emits_audit_event(evidence_change, user, evidence_storage_root):
+def test_export_creation_emits_audit_event(
+    evidence_change, user, evidence_storage_root
+):
     storage = EvidenceStorage()
     sealed = _sealed_bundle(evidence_change, user, storage)
 
     before = AuditEvent.objects.filter(event_type="evidence_export.created").count()
     create_export(sealed, requested_by=user, storage=storage)
 
-    assert AuditEvent.objects.filter(event_type="evidence_export.created").count() == before + 1
-    event = AuditEvent.objects.filter(event_type="evidence_export.created").latest("occurred_at")
+    assert (
+        AuditEvent.objects.filter(event_type="evidence_export.created").count()
+        == before + 1
+    )
+    event = AuditEvent.objects.filter(event_type="evidence_export.created").latest(
+        "occurred_at"
+    )
     assert event.object_type == AuditEvent.ObjectType.EVIDENCE_EXPORT
     assert str(event.organization_id) == str(sealed.organization_id)
 
 
 @pytest.mark.django_db
-def test_export_download_emits_audit_event(evidence_change, user, evidence_storage_root):
+def test_export_download_emits_audit_event(
+    evidence_change, user, evidence_storage_root
+):
     from apps.evidence.services import download_export
 
     storage = EvidenceStorage()
@@ -184,11 +199,16 @@ def test_export_download_emits_audit_event(evidence_change, user, evidence_stora
     actor = system_actor("Test download")
     before = AuditEvent.objects.filter(event_type="evidence_export.downloaded").count()
     download_export(export, actor=actor, storage=storage)
-    assert AuditEvent.objects.filter(event_type="evidence_export.downloaded").count() == before + 1
+    assert (
+        AuditEvent.objects.filter(event_type="evidence_export.downloaded").count()
+        == before + 1
+    )
 
 
 @pytest.mark.django_db
-def test_export_download_rejects_expired_export(evidence_change, user, evidence_storage_root):
+def test_export_download_rejects_expired_export(
+    evidence_change, user, evidence_storage_root
+):
     from datetime import timedelta
 
     from apps.evidence.services import download_export
@@ -225,7 +245,9 @@ def test_export_audit_metadata_does_not_contain_redacted_values(
     )
     create_export(sealed, redaction_policy=policy, requested_by=user, storage=storage)
 
-    event = AuditEvent.objects.filter(event_type="evidence_export.created").latest("occurred_at")
+    event = AuditEvent.objects.filter(event_type="evidence_export.created").latest(
+        "occurred_at"
+    )
     meta_str = json.dumps(event.metadata)
     assert "[REDACTED]" not in meta_str
     assert "redacted_value" not in meta_str
@@ -267,6 +289,7 @@ def test_redacted_export_does_not_mutate_canonical_bundle(
 
     canonical_bytes = storage.read_bytes(sealed.storage_key)
     from apps.evidence.services import sha256_hexdigest
+
     assert sha256_hexdigest(canonical_bytes) == original_content_sha256
 
 
@@ -281,7 +304,9 @@ def test_redacted_export_has_different_content_hash_than_canonical(
         org,
         rules=[{"action": "artifact_metadata_only", "id": "r1"}],
     )
-    export = create_export(sealed, redaction_policy=policy, requested_by=user, storage=storage)
+    export = create_export(
+        sealed, redaction_policy=policy, requested_by=user, storage=storage
+    )
 
     assert export.content_sha256 != sealed.content_sha256
 
@@ -297,11 +322,15 @@ def test_redacted_export_omits_artifact_bytes(
         org,
         rules=[{"action": "artifact_metadata_only", "id": "r1"}],
     )
-    export = create_export(sealed, redaction_policy=policy, requested_by=user, storage=storage)
+    export = create_export(
+        sealed, redaction_policy=policy, requested_by=user, storage=storage
+    )
 
     export_bytes = storage.read_bytes(export.storage_key)
     with zipfile.ZipFile(BytesIO(export_bytes)) as zf:
-        artifact_file_entries = [n for n in zf.namelist() if n.startswith("artifacts/files/")]
+        artifact_file_entries = [
+            n for n in zf.namelist() if n.startswith("artifacts/files/")
+        ]
     assert len(artifact_file_entries) == 0
 
 
@@ -312,7 +341,9 @@ def test_unredacted_export_matches_source_structure(
     storage = EvidenceStorage()
     sealed = _sealed_bundle(evidence_change, user, storage)
 
-    export = create_export(sealed, redaction_policy=None, requested_by=user, storage=storage)
+    export = create_export(
+        sealed, redaction_policy=None, requested_by=user, storage=storage
+    )
 
     assert export.redaction_summary["redacted"] is False
     assert export.status == EvidenceExport.Status.READY
@@ -355,12 +386,16 @@ def test_export_zip_receipt_has_correct_receipt_type(
 
 
 @pytest.mark.django_db
-def test_create_export_rejects_unsealed_bundle(evidence_change, user, evidence_storage_root):
+def test_create_export_rejects_unsealed_bundle(
+    evidence_change, user, evidence_storage_root
+):
     from apps.evidence.services import create_evidence_bundle_for_change
 
     storage = EvidenceStorage()
     _complete_closed_change(evidence_change, user)
-    bundle = create_evidence_bundle_for_change(change_record=evidence_change, created_by=user)
+    bundle = create_evidence_bundle_for_change(
+        change_record=evidence_change, created_by=user
+    )
 
     with pytest.raises(DomainValidationError) as exc_info:
         create_export(bundle, requested_by=user, storage=storage)
@@ -378,7 +413,9 @@ def test_create_export_rejects_inactive_redaction_policy(
     policy.save(update_fields=["is_active", "updated_at"])
 
     with pytest.raises(DomainValidationError) as exc_info:
-        create_export(sealed, redaction_policy=policy, requested_by=user, storage=storage)
+        create_export(
+            sealed, redaction_policy=policy, requested_by=user, storage=storage
+        )
     assert exc_info.value.code == "redaction_policy_inactive"
 
 
@@ -388,7 +425,9 @@ def test_create_export_rejects_inactive_redaction_policy(
 
 
 @pytest.mark.django_db
-def test_create_legal_hold_creates_active_hold(evidence_change, user, evidence_storage_root):
+def test_create_legal_hold_creates_active_hold(
+    evidence_change, user, evidence_storage_root
+):
     storage = EvidenceStorage()
     sealed = _sealed_bundle(evidence_change, user, storage)
 
@@ -405,7 +444,9 @@ def test_create_legal_hold_creates_active_hold(evidence_change, user, evidence_s
 
 
 @pytest.mark.django_db
-def test_create_legal_hold_rejects_duplicate(evidence_change, user, evidence_storage_root):
+def test_create_legal_hold_rejects_duplicate(
+    evidence_change, user, evidence_storage_root
+):
     storage = EvidenceStorage()
     sealed = _sealed_bundle(evidence_change, user, storage)
 

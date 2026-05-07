@@ -138,7 +138,9 @@ def test_release_legal_hold_succeeds_with_actor_and_reason(evidence_change, user
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
     hold = create_legal_hold(bundle, reason="Hold for release test")
 
-    released = release_legal_hold(hold, released_by=user, release_reason="Matter resolved.")
+    released = release_legal_hold(
+        hold, released_by=user, release_reason="Matter resolved."
+    )
 
     assert released.status == LegalHold.Status.RELEASED
     assert released.released_by_id == user.id
@@ -274,7 +276,9 @@ def test_active_hold_blocks_bundle_cleanup_emits_blocked_event(
 
 
 @pytest.mark.django_db
-def test_released_hold_permits_bundle_cleanup(evidence_change, user, tmp_path, settings):
+def test_released_hold_permits_bundle_cleanup(
+    evidence_change, user, tmp_path, settings
+):
     settings.ARTIFACT_MEDIA_ROOT = str(tmp_path / "artifacts")
     _complete_closed_change(evidence_change, user)
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
@@ -300,7 +304,9 @@ def test_released_hold_permits_bundle_cleanup(evidence_change, user, tmp_path, s
 
 
 @pytest.mark.django_db
-def test_released_hold_permits_export_cleanup(evidence_change, user, tmp_path, settings):
+def test_released_hold_permits_export_cleanup(
+    evidence_change, user, tmp_path, settings
+):
     settings.ARTIFACT_MEDIA_ROOT = str(tmp_path / "artifacts")
     _complete_closed_change(evidence_change, user)
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
@@ -387,7 +393,9 @@ def test_cross_tenant_hold_does_not_block_other_org_cleanup(
 @pytest.mark.django_db
 def test_assert_no_active_legal_hold_is_org_scoped(evidence_change, user):
     """assert_no_active_legal_hold does not cross org boundaries."""
-    other_org = Organization.objects.create(name="Hold Isolation Org", slug="hold-iso-org")
+    other_org = Organization.objects.create(
+        name="Hold Isolation Org", slug="hold-iso-org"
+    )
     _complete_closed_change(evidence_change, user)
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
     create_legal_hold(bundle, reason="Org A hold.")
@@ -434,9 +442,7 @@ def test_assert_no_active_legal_hold_is_org_scoped(evidence_change, user):
 
 
 @pytest.mark.django_db
-def test_legal_hold_api_creates_active_hold(
-    evidence_change, user, api_client_for_org
-):
+def test_legal_hold_api_creates_active_hold(evidence_change, user, api_client_for_org):
     _complete_closed_change(evidence_change, user)
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
     client = api_client_for_org(evidence_change.organization)
@@ -504,9 +510,7 @@ def test_release_api_succeeds_for_admin(evidence_change, user, api_client_for_or
     bundle = create_evidence_bundle_for_change(change_record=evidence_change)
     hold = create_legal_hold(bundle, reason="Admin release test hold")
 
-    client = api_client_for_org(
-        evidence_change.organization, role=MembershipRole.ADMIN
-    )
+    client = api_client_for_org(evidence_change.organization, role=MembershipRole.ADMIN)
 
     response = client.post(
         f"/api/v1/legal-holds/{hold.id}/release/",
