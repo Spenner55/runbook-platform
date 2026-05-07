@@ -36,4 +36,6 @@ export const queryKeys = {
   changeExceptions: (changeId: string) => ['change', changeId, 'exceptions'] as const,
   changeRetroReviews: (changeId: string) => ['change', changeId, 'retro-reviews'] as const,
   retroReviewInbox: ['retro-review-inbox'] as const,
+  latestEvidenceBundle: (changeId: string) => ['evidence-bundle', 'latest', changeId] as const,
+  evidenceExports: (bundleId: string) => ['evidence-exports', bundleId] as const,
 }
