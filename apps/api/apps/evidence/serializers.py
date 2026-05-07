@@ -218,3 +218,7 @@ class LegalHoldCreateSerializer(serializers.Serializer):
     external_reference = serializers.CharField(
         max_length=512, required=False, allow_blank=True, default=""
     )
+
+
+class LegalHoldReleaseSerializer(serializers.Serializer):
+    release_reason = serializers.CharField(max_length=2000)

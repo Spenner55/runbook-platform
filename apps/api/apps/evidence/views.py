@@ -19,7 +19,7 @@ from apps.common.permissions import (
     assert_organization_role,
 )
 from apps.evidence import services
-from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRedactionPolicy
+from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRedactionPolicy, LegalHold
 from apps.evidence.serializers import (
     EvidenceBundleCompletenessSerializer,
     EvidenceBundleCreateSerializer,
@@ -31,6 +31,7 @@ from apps.evidence.serializers import (
     EvidenceExportCreateSerializer,
     EvidenceExportSerializer,
     LegalHoldCreateSerializer,
+    LegalHoldReleaseSerializer,
     LegalHoldSerializer,
 )
 from apps.evidence.storage import EvidenceStorage
@@ -486,3 +487,39 @@ class EvidenceBundleLegalHoldView(APIView):
             LegalHoldSerializer(hold).data,
             status=http_status.HTTP_201_CREATED,
         )
+
+
+def _get_legal_hold(hold_id, org):
+    return get_object_or_404(LegalHold, pk=hold_id, organization=org)
+
+
+class LegalHoldReleaseView(APIView):
+    """POST /api/v1/legal-holds/{hold_id}/release/ — admin-only."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, hold_id):
+        from apps.common.permissions import ADMIN_ROLES, assert_organization_role
+
+        org = _get_org(request)
+        assert_organization_role(
+            user=request.user, organization_id=org.id, roles=ADMIN_ROLES
+        )
+        hold = _get_legal_hold(hold_id, org)
+
+        serializer = LegalHoldReleaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+
+        try:
+            released = services.release_legal_hold(
+                hold,
+                released_by=request.user,
+                release_reason=d["release_reason"],
+                actor=actor_from_request(request),
+            )
+        except (ValidationError, DomainValidationError) as exc:
+            return _error_response(exc)
+
+        return Response(LegalHoldSerializer(released).data)

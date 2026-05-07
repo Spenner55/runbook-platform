@@ -15,7 +15,7 @@ from apps.changes.models import (
     VerificationPlan,
     VerificationResult,
 )
-from apps.evidence.models import EvidenceBundle, EvidenceExport, LegalHold
+from apps.evidence.models import EvidenceBundle, EvidenceExport, EvidenceRetentionPolicy, LegalHold
 from apps.policies.models import PolicyEvaluation
 
 
@@ -29,6 +29,23 @@ def evidence_exports_for_organization(organization):
 
 def legal_holds_for_organization(organization):
     return LegalHold.objects.filter(organization=organization)
+
+
+def active_legal_holds_for_change(change_record):
+    return LegalHold.objects.filter(
+        change_record=change_record,
+        status=LegalHold.Status.ACTIVE,
+    ).order_by("placed_at", "id")
+
+
+def default_retention_policy_for_organization(organization):
+    return (
+        EvidenceRetentionPolicy.objects.filter(
+            organization=organization,
+            is_default=True,
+            is_active=True,
+        ).first()
+    )
 
 
 def closed_change_records_for_organization(organization):

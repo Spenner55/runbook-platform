@@ -36,6 +36,7 @@ from apps.evidence.models import (
     EvidenceBundleItem,
     EvidenceExport,
     EvidenceRedactionPolicy,
+    EvidenceRetentionPolicy,
     LegalHold,
 )
 from apps.evidence.storage import EvidenceStorage
@@ -202,6 +203,13 @@ def seal_bundle(
             storage.save_bytes(storage_key, package["zip_bytes"])
             wrote_storage = True
 
+            retention_policy = _resolve_default_retention_policy(locked_bundle.organization)
+            retention_expires_at = None
+            if retention_policy is not None:
+                retention_expires_at = locked_bundle.sealed_at + timedelta(
+                    days=retention_policy.sealed_bundle_retention_days
+                )
+
             locked_bundle.manifest = _normalize(package["manifest"])
             locked_bundle.manifest_sha256 = package["manifest_sha256"]
             locked_bundle.payload_checksums_sha256 = package[
@@ -212,6 +220,9 @@ def seal_bundle(
             locked_bundle.storage_key = storage_key
             locked_bundle.mime_type = "application/zip"
             locked_bundle.status = EvidenceBundle.Status.SEALED
+            if retention_policy is not None:
+                locked_bundle.retention_policy = retention_policy
+                locked_bundle.retention_expires_at = retention_expires_at
             locked_bundle.save(
                 update_fields=[
                     "manifest",
@@ -222,6 +233,8 @@ def seal_bundle(
                     "storage_key",
                     "mime_type",
                     "status",
+                    "retention_policy",
+                    "retention_expires_at",
                     "updated_at",
                 ]
             )
@@ -2523,9 +2536,39 @@ def _export_storage_key(export: EvidenceExport) -> str:
     )
 
 
-def _export_retention_days(bundle: EvidenceBundle) -> int:
+def _resolve_default_retention_policy(organization) -> EvidenceRetentionPolicy | None:
+    return (
+        EvidenceRetentionPolicy.objects.filter(
+            organization=organization,
+            is_default=True,
+            is_active=True,
+        ).first()
+    )
+
+
+def _bundle_retention_days(bundle: EvidenceBundle, *, invalidated: bool = False) -> int:
+    policy = None
     if bundle.retention_policy_id and bundle.retention_policy is not None:
-        return bundle.retention_policy.export_retention_days
+        policy = bundle.retention_policy
+    if policy is None:
+        policy = _resolve_default_retention_policy(bundle.organization)
+    if policy is not None:
+        return (
+            policy.invalidated_bundle_retention_days
+            if invalidated
+            else policy.sealed_bundle_retention_days
+        )
+    return getattr(settings, "EVIDENCE_BUNDLE_RETENTION_DAYS", 2557)  # ~7 years
+
+
+def _export_retention_days(bundle: EvidenceBundle) -> int:
+    policy = None
+    if bundle.retention_policy_id and bundle.retention_policy is not None:
+        policy = bundle.retention_policy
+    if policy is None:
+        policy = _resolve_default_retention_policy(bundle.organization)
+    if policy is not None:
+        return policy.export_retention_days
     return getattr(settings, "EVIDENCE_EXPORT_RETENTION_DAYS", 30)
 
 
@@ -2587,14 +2630,19 @@ def create_legal_hold(
 # ---------------------------------------------------------------------------
 
 
-def assert_no_active_legal_hold(change_record, *, bundle=None, export=None) -> None:
-    """Raise DomainValidationError if any active legal hold covers the target."""
+def _find_active_legal_hold(change_record, *, bundle=None, export=None) -> LegalHold | None:
+    """Return the first active legal hold covering the target, or None."""
     query = Q(change_record=change_record, status=LegalHold.Status.ACTIVE)
     if bundle is not None:
         query |= Q(evidence_bundle=bundle, status=LegalHold.Status.ACTIVE)
     if export is not None:
         query |= Q(evidence_export=export, status=LegalHold.Status.ACTIVE)
-    hold = LegalHold.objects.filter(query).first()
+    return LegalHold.objects.filter(query).first()
+
+
+def assert_no_active_legal_hold(change_record, *, bundle=None, export=None) -> None:
+    """Raise DomainValidationError if any active legal hold covers the target."""
+    hold = _find_active_legal_hold(change_record, bundle=bundle, export=export)
     if hold is not None:
         raise DomainValidationError(
             code="legal_hold_blocks_cleanup",
@@ -2612,33 +2660,50 @@ def cleanup_expired_bundle_storage(
     storage = storage or EvidenceStorage()
     now = now or timezone.now()
 
-    with transaction.atomic():
-        locked = (
-            EvidenceBundle.objects.select_for_update()
-            .select_related("change_record", "organization")
-            .get(pk=bundle.pk)
-        )
-        if locked.storage_deleted_at is not None:
-            return locked
-        if locked.retention_expires_at is None or locked.retention_expires_at > now:
-            raise DomainValidationError(
-                code="retention_not_expired",
-                detail="Bundle retention period has not expired.",
+    blocking_hold_id = None
+    try:
+        with transaction.atomic():
+            locked = (
+                EvidenceBundle.objects.select_for_update()
+                .select_related("change_record", "organization")
+                .get(pk=bundle.pk)
             )
-        assert_no_active_legal_hold(locked.change_record, bundle=locked)
+            if locked.storage_deleted_at is not None:
+                return locked
+            if locked.retention_expires_at is None or locked.retention_expires_at > now:
+                raise DomainValidationError(
+                    code="retention_not_expired",
+                    detail="Bundle retention period has not expired.",
+                )
+            hold = _find_active_legal_hold(locked.change_record, bundle=locked)
+            if hold is not None:
+                blocking_hold_id = hold.id
+                raise DomainValidationError(
+                    code="legal_hold_blocks_cleanup",
+                    detail=f"Active legal hold {hold.id} blocks cleanup.",
+                )
 
-        if locked.storage_key and storage.exists(locked.storage_key):
-            storage.delete(locked.storage_key)
+            if locked.storage_key and storage.exists(locked.storage_key):
+                storage.delete(locked.storage_key)
 
-        locked.storage_deleted_at = now
-        locked.storage_delete_reason = "retention_expired"
-        locked.save(update_fields=["storage_deleted_at", "storage_delete_reason", "updated_at"])
+            locked.storage_deleted_at = now
+            locked.storage_delete_reason = "retention_expired"
+            locked.save(update_fields=["storage_deleted_at", "storage_delete_reason", "updated_at"])
 
-        bundle_id = locked.id
-        transaction.on_commit(
-            lambda: _emit_bundle_retention_deleted(bundle_id=bundle_id, actor=actor)
-        )
-        return locked
+            bundle_id = locked.id
+            transaction.on_commit(
+                lambda: _emit_bundle_retention_deleted(bundle_id=bundle_id, actor=actor)
+            )
+            return locked
+    except DomainValidationError as exc:
+        if exc.code == "legal_hold_blocks_cleanup" and blocking_hold_id is not None:
+            _emit_retention_cleanup_blocked(
+                hold_id=blocking_hold_id,
+                target_type="evidence_bundle",
+                target_id=str(bundle.pk),
+                actor=actor,
+            )
+        raise
 
 
 def cleanup_expired_export_storage(
@@ -2651,35 +2716,91 @@ def cleanup_expired_export_storage(
     storage = storage or EvidenceStorage()
     now = now or timezone.now()
 
+    blocking_hold_id = None
+    try:
+        with transaction.atomic():
+            locked = (
+                EvidenceExport.objects.select_for_update()
+                .select_related("bundle__change_record", "organization")
+                .get(pk=export.pk)
+            )
+            if locked.storage_deleted_at is not None:
+                return locked
+            if locked.expires_at is None or locked.expires_at > now:
+                raise DomainValidationError(
+                    code="retention_not_expired",
+                    detail="Export retention period has not expired.",
+                )
+            hold = _find_active_legal_hold(
+                locked.bundle.change_record,
+                bundle=locked.bundle,
+                export=locked,
+            )
+            if hold is not None:
+                blocking_hold_id = hold.id
+                raise DomainValidationError(
+                    code="legal_hold_blocks_cleanup",
+                    detail=f"Active legal hold {hold.id} blocks cleanup.",
+                )
+
+            if locked.storage_key and storage.exists(locked.storage_key):
+                storage.delete(locked.storage_key)
+
+            locked.storage_deleted_at = now
+            locked.save(update_fields=["storage_deleted_at", "updated_at"])
+
+            export_id = locked.id
+            transaction.on_commit(
+                lambda: _emit_export_retention_deleted(export_id=export_id, actor=actor)
+            )
+            return locked
+    except DomainValidationError as exc:
+        if exc.code == "legal_hold_blocks_cleanup" and blocking_hold_id is not None:
+            _emit_retention_cleanup_blocked(
+                hold_id=blocking_hold_id,
+                target_type="evidence_export",
+                target_id=str(export.pk),
+                actor=actor,
+            )
+        raise
+
+
+def release_legal_hold(
+    hold: LegalHold,
+    *,
+    released_by,
+    release_reason: str,
+    actor: AuditActor | None = None,
+) -> LegalHold:
+    """Release an active legal hold. Requires actor, timestamp, and nonblank reason."""
+    if not release_reason or not release_reason.strip():
+        raise DomainValidationError(
+            code="release_reason_required",
+            detail="A nonblank release reason is required.",
+        )
+
     with transaction.atomic():
         locked = (
-            EvidenceExport.objects.select_for_update()
-            .select_related("bundle__change_record", "organization")
-            .get(pk=export.pk)
+            LegalHold.objects.select_for_update()
+            .select_related("organization", "change_record")
+            .get(pk=hold.pk)
         )
-        if locked.storage_deleted_at is not None:
-            return locked
-        if locked.expires_at is None or locked.expires_at > now:
+        if locked.status != LegalHold.Status.ACTIVE:
             raise DomainValidationError(
-                code="retention_not_expired",
-                detail="Export retention period has not expired.",
+                code="legal_hold_not_active",
+                detail="Only active legal holds can be released.",
             )
-        assert_no_active_legal_hold(
-            locked.bundle.change_record,
-            bundle=locked.bundle,
-            export=locked,
+
+        locked.status = LegalHold.Status.RELEASED
+        locked.released_by = released_by
+        locked.released_at = timezone.now()
+        locked.release_reason = release_reason.strip()
+        locked.save(
+            update_fields=["status", "released_by", "released_at", "release_reason", "updated_at"]
         )
 
-        if locked.storage_key and storage.exists(locked.storage_key):
-            storage.delete(locked.storage_key)
-
-        locked.storage_deleted_at = now
-        locked.save(update_fields=["storage_deleted_at", "updated_at"])
-
-        export_id = locked.id
-        transaction.on_commit(
-            lambda: _emit_export_retention_deleted(export_id=export_id, actor=actor)
-        )
+        hold_id = locked.id
+        transaction.on_commit(lambda: _emit_legal_hold_released(hold_id=hold_id, actor=actor))
         return locked
 
 
@@ -2760,5 +2881,43 @@ def _emit_export_retention_deleted(*, export_id, actor: AuditActor | None) -> No
         object_id=export.id,
         metadata={
             "content_sha256": export.content_sha256,
+        },
+    )
+
+
+def _emit_legal_hold_released(*, hold_id, actor: AuditActor | None) -> None:
+    hold = LegalHold.objects.select_related("change_record").get(pk=hold_id)
+    actor = actor or system_actor("Legal hold release")
+    AuditService.emit(
+        organization_id=hold.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="legal_hold.released",
+        object_type=AuditEvent.ObjectType.LEGAL_HOLD,
+        object_id=hold.id,
+        metadata={
+            "change_record_id": str(hold.change_record_id),
+            "evidence_bundle_id": str(hold.evidence_bundle_id) if hold.evidence_bundle_id else None,
+        },
+    )
+
+
+def _emit_retention_cleanup_blocked(
+    *, hold_id, target_type: str, target_id: str, actor: AuditActor | None
+) -> None:
+    hold = LegalHold.objects.select_related("organization").get(pk=hold_id)
+    actor = actor or system_actor("Retention cleanup")
+    AuditService.emit(
+        organization_id=hold.organization_id,
+        actor_type=actor.actor_type,
+        actor_id=actor.actor_id,
+        actor_label=actor.actor_label,
+        event_type="evidence.retention_cleanup_blocked",
+        object_type=AuditEvent.ObjectType.LEGAL_HOLD,
+        object_id=hold.id,
+        metadata={
+            "target_type": target_type,
+            "target_id": target_id,
         },
     )

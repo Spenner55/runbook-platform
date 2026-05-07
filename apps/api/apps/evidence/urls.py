@@ -15,6 +15,7 @@ from apps.evidence.views import (
     EvidenceExportDetailView,
     EvidenceExportDownloadView,
     EvidenceExportReceiptView,
+    LegalHoldReleaseView,
 )
 
 app_name = "evidence"
@@ -89,5 +90,10 @@ urlpatterns = [
         "evidence-exports/<uuid:export_id>/download/",
         EvidenceExportDownloadView.as_view(),
         name="evidence-export-download",
+    ),
+    path(
+        "legal-holds/<uuid:hold_id>/release/",
+        LegalHoldReleaseView.as_view(),
+        name="legal-hold-release",
     ),
 ]
