@@ -125,6 +125,43 @@ const INVALID_BUNDLE = {
   },
 }
 
+const BACKEND_SHAPE_BUNDLE = {
+  ...BASE_BUNDLE,
+  completeness_report: {
+    schema_version: '1',
+    status: 'incomplete',
+    summary: {
+      total_items: 2,
+      missing_required_count: 1,
+      invalid_count: 0,
+    },
+    missing_required: [],
+    invalid: [],
+    sections: [
+      {
+        item_type: 'change_snapshot',
+        item_key: 'change_snapshot',
+        canonical_path: 'change/change_record.json',
+        required: true,
+        present: true,
+        valid: true,
+        missing_reason: '',
+        validation_errors: [],
+      },
+      {
+        item_type: 'closure',
+        item_key: 'closure',
+        canonical_path: 'closure/closure.json',
+        required: true,
+        present: false,
+        valid: true,
+        missing_reason: 'missing_closure',
+        validation_errors: [],
+      },
+    ],
+  },
+}
+
 const SEALED_BUNDLE = {
   ...COMPLETE_BUNDLE,
   status: 'sealed',
@@ -237,6 +274,17 @@ describe('EvidencePanel', () => {
       expect(screen.getByText('change snapshot')).toBeInTheDocument()
     })
     expect(screen.getByText('closure')).toBeInTheDocument()
+  })
+
+  it('renders backend item-level completeness reports without crashing', async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(BACKEND_SHAPE_BUNDLE))
+    renderPanel()
+
+    await waitFor(() => {
+      expect(screen.getByText('change snapshot')).toBeInTheDocument()
+    })
+    expect(screen.getByText('closure')).toBeInTheDocument()
+    expect(screen.getByText(/1\/2 required present/i)).toBeInTheDocument()
   })
 
   // ── Seal action ────────────────────────────────────────────────────────────

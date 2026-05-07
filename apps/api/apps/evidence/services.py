@@ -2244,6 +2244,11 @@ def download_export(
             code="export_storage_missing",
             detail="Export storage is not available.",
         )
+    if export.expires_at is not None and export.expires_at <= timezone.now():
+        raise DomainValidationError(
+            code="export_expired",
+            detail="Export has expired.",
+        )
     if not storage.exists(export.storage_key):
         raise DomainValidationError(
             code="export_storage_missing",

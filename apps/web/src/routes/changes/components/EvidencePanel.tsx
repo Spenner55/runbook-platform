@@ -7,6 +7,7 @@ import { useEvidenceExportDownload } from '../../../features/evidence/hooks/useE
 import { useLatestEvidenceBundle } from '../../../features/evidence/hooks/useLatestEvidenceBundle'
 import { useSealEvidenceBundle } from '../../../features/evidence/hooks/useSealEvidenceBundle'
 import type {
+  CompletenessItemEntry,
   CompletenessReport,
   CompletenessSection,
   EvidenceBundle,
@@ -43,6 +44,80 @@ function getCompletenessStatusPillClass(status: string) {
   if (status === 'incomplete') return 'pill pill--warn'
   if (status === 'invalid') return 'pill pill--danger'
   return 'pill'
+}
+
+function normalizeCompletenessReport(
+  report: CompletenessReport | Record<string, unknown>
+): CompletenessReport {
+  const rawSections = Array.isArray((report as { sections?: unknown[] }).sections)
+    ? ((report as { sections: unknown[] }).sections as Array<Record<string, unknown>>)
+    : []
+
+  if (rawSections.length > 0 && typeof rawSections[0].section === 'string') {
+    return report as CompletenessReport
+  }
+
+  const groups = new Map<string, CompletenessItemEntry[]>()
+  for (const item of rawSections) {
+    const entry: CompletenessItemEntry = {
+      item_type: String(item.item_type ?? 'unknown'),
+      item_key: String(item.item_key ?? ''),
+      canonical_path: String(item.canonical_path ?? ''),
+      required: Boolean(item.required),
+      present: Boolean(item.present),
+      valid: item.valid !== false,
+      missing_reason: String(item.missing_reason ?? ''),
+      validation_errors: Array.isArray(item.validation_errors)
+        ? item.validation_errors
+        : [],
+    }
+    const section = entry.item_type
+    groups.set(section, [...(groups.get(section) ?? []), entry])
+  }
+
+  const sections: CompletenessSection[] = Array.from(groups.entries()).map(
+    ([section, items]) => {
+      const requiredItems = items.filter((item) => item.required)
+      const required_count = requiredItems.length
+      const present_count = requiredItems.filter((item) => item.present).length
+      const invalid_count = items.filter((item) => !item.valid).length
+      const status: CompletenessSection['status'] =
+        invalid_count > 0
+          ? 'invalid'
+          : present_count < required_count
+            ? 'incomplete'
+            : 'complete'
+
+      return {
+        section,
+        status,
+        items,
+        required_count,
+        present_count,
+        invalid_count,
+      }
+    }
+  )
+
+  const summary = (report as { summary?: Record<string, unknown> }).summary ?? {}
+  const required_total = sections.reduce((count, section) => count + section.required_count, 0)
+  const present_total = sections.reduce((count, section) => count + section.present_count, 0)
+  const invalid_total =
+    typeof summary.invalid_count === 'number'
+      ? summary.invalid_count
+      : sections.reduce((count, section) => count + section.invalid_count, 0)
+  const missing_total =
+    typeof summary.missing_required_count === 'number'
+      ? summary.missing_required_count
+      : required_total - present_total
+
+  return {
+    sections,
+    required_total,
+    present_total,
+    invalid_total,
+    missing_total,
+  }
 }
 
 // ─── Completeness Checklist ───────────────────────────────────────────────────
@@ -547,7 +622,7 @@ function BundleCard({ bundle, changeId }: { bundle: EvidenceBundle; changeId: st
   const [showExportDialog, setShowExportDialog] = useState(false)
   const report =
     bundle.completeness_report && Object.keys(bundle.completeness_report).length > 0
-      ? (bundle.completeness_report as unknown as CompletenessReport)
+      ? normalizeCompletenessReport(bundle.completeness_report)
       : null
 
   const canExport =

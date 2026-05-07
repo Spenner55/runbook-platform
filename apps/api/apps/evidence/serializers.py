@@ -13,6 +13,8 @@ class EvidenceBundleSerializer(serializers.ModelSerializer):
     sealed_by_id = serializers.UUIDField(read_only=True)
     invalidated_by_id = serializers.UUIDField(read_only=True)
     download_available = serializers.SerializerMethodField()
+    is_current = serializers.SerializerMethodField()
+    legal_hold_active = serializers.SerializerMethodField()
 
     class Meta:
         model = EvidenceBundle
@@ -41,6 +43,10 @@ class EvidenceBundleSerializer(serializers.ModelSerializer):
             "created_by_id",
             "sealed_by_id",
             "invalidated_by_id",
+            "retention_expires_at",
+            "storage_deleted_at",
+            "is_current",
+            "legal_hold_active",
             "download_available",
             "created_at",
             "updated_at",
@@ -54,12 +60,42 @@ class EvidenceBundleSerializer(serializers.ModelSerializer):
             and obj.content_sha256
         )
 
+    def get_is_current(self, obj):
+        latest = (
+            EvidenceBundle.objects.filter(
+                organization_id=obj.organization_id,
+                change_record_id=obj.change_record_id,
+            )
+            .exclude(status=EvidenceBundle.Status.INVALIDATED)
+            .order_by("-version", "-created_at")
+            .values_list("id", flat=True)
+            .first()
+        )
+        if latest is None:
+            latest = (
+                EvidenceBundle.objects.filter(
+                    organization_id=obj.organization_id,
+                    change_record_id=obj.change_record_id,
+                )
+                .order_by("-version", "-created_at")
+                .values_list("id", flat=True)
+                .first()
+            )
+        return latest == obj.id
+
+    def get_legal_hold_active(self, obj):
+        return LegalHold.objects.filter(
+            change_record_id=obj.change_record_id,
+            status=LegalHold.Status.ACTIVE,
+        ).exists()
+
 
 class EvidenceBundleSummarySerializer(serializers.ModelSerializer):
     """Compact list/latest representation."""
 
     change_record_id = serializers.UUIDField(read_only=True)
     download_available = serializers.SerializerMethodField()
+    legal_hold_active = serializers.SerializerMethodField()
 
     class Meta:
         model = EvidenceBundle
@@ -77,6 +113,9 @@ class EvidenceBundleSummarySerializer(serializers.ModelSerializer):
             "sealed_at",
             "invalidated_at",
             "invalidation_reason",
+            "retention_expires_at",
+            "storage_deleted_at",
+            "legal_hold_active",
             "download_available",
             "created_at",
             "updated_at",
@@ -89,6 +128,12 @@ class EvidenceBundleSummarySerializer(serializers.ModelSerializer):
             and obj.storage_deleted_at is None
             and obj.content_sha256
         )
+
+    def get_legal_hold_active(self, obj):
+        return LegalHold.objects.filter(
+            change_record_id=obj.change_record_id,
+            status=LegalHold.Status.ACTIVE,
+        ).exists()
 
 
 class EvidenceBundleCreateSerializer(serializers.Serializer):

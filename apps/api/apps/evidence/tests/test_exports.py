@@ -188,6 +188,25 @@ def test_export_download_emits_audit_event(evidence_change, user, evidence_stora
     assert AuditEvent.objects.filter(event_type="evidence_export.downloaded").count() == before + 1
 
 
+@pytest.mark.django_db
+def test_export_download_rejects_expired_export(evidence_change, user, evidence_storage_root):
+    from datetime import timedelta
+
+    from apps.evidence.services import download_export
+
+    storage = EvidenceStorage()
+    sealed = _sealed_bundle(evidence_change, user, storage)
+    export = create_export(sealed, requested_by=user, storage=storage)
+    EvidenceExport.objects.filter(pk=export.pk).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    export.refresh_from_db()
+
+    with pytest.raises(DomainValidationError) as exc_info:
+        download_export(export, actor=system_actor("Expired export"), storage=storage)
+    assert exc_info.value.code == "export_expired"
+
+
 @pytest.mark.django_db(transaction=True)
 def test_export_audit_metadata_does_not_contain_redacted_values(
     evidence_change, user, evidence_storage_root, org
