@@ -109,6 +109,36 @@ def test_emit_scrubs_phase_113_verification_closure_keys(org, key):
 
 
 @pytest.mark.django_db
+def test_emit_scrubs_phase_116_external_reference_metadata(org):
+    event = AuditService.emit(
+        organization_id=org.id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        event_type="external_change_reference.linked",
+        object_type=AuditEvent.ObjectType.EXTERNAL_CHANGE_REFERENCE,
+        object_id=org.id,
+        metadata={
+            "system": "jira",
+            "external_key": "PROJ-123",
+            "external_snapshot": {"title": "raw copied snapshot"},
+            "raw_external_payload": {"authorization": "Bearer secret"},
+            "ticket_url": "https://token@example.com/ticket/PROJ-123",
+            "external_url": "https://jira.example.com/browse/PROJ-123",
+            "reference_url": "https://jira.example.com/browse/PROJ-123",
+            "source_url": "https://jira.example.com/browse/PROJ-123",
+            "url": "https://jira.example.com/browse/PROJ-123",
+            "headers": {"Authorization": "Bearer secret"},
+            "credentials": {"password": "secret"},
+            "grant_scope": {"service_keys": ["payments"]},
+            "grant_scope_raw": {"service_keys": ["payments"], "token": "secret"},
+            "auditor_grant_scope": {"statuses": ["closed"]},
+            "artifact_bytes": "abc123",
+        },
+    )
+
+    assert event.metadata == {"system": "jira", "external_key": "PROJ-123"}
+
+
+@pytest.mark.django_db
 def test_emit_rejects_non_json_serializable_metadata(org):
     with pytest.raises(ValidationError):
         AuditService.emit(

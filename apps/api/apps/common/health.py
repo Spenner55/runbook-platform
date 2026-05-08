@@ -37,6 +37,9 @@ def _check_migrations() -> dict[str, object]:
     try:
         call_command("migrate", "--check", verbosity=0)
         return _healthy_check()
+    except SystemExit as exc:
+        logger.error("health.migration_check_failed", exc_info=True)
+        return _unhealthy_check(f"migrate --check exited with status {exc.code}")
     except Exception as exc:
         logger.error("health.migration_check_failed", exc_info=True)
         return _unhealthy_check(str(exc))

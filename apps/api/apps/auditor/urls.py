@@ -1,0 +1,80 @@
+from django.urls import path
+
+from apps.auditor.views import (
+    AuditChangeDetailView,
+    AuditChangeListView,
+    AuditorAccessGrantListCreateView,
+    AuditorAccessGrantRevokeView,
+    ChangeControlCoverageRecomputeView,
+    ChangeExternalReferenceListCreateView,
+    ControlMappingProfileDetailView,
+    ControlMappingProfileListCreateView,
+    ExternalReferenceDetailView,
+    ExternalReferenceRefreshView,
+    ServiceCatalogEntryDetailView,
+    ServiceCatalogEntryListCreateView,
+)
+
+urlpatterns = [
+    path("audit/changes/", AuditChangeListView.as_view(), name="audit-change-list"),
+    path(
+        "audit/changes/<uuid:change_id>/",
+        AuditChangeDetailView.as_view(),
+        name="audit-change-detail",
+    ),
+    path(
+        "changes/<uuid:change_id>/external-references/",
+        ChangeExternalReferenceListCreateView.as_view(),
+        name="change-external-reference-list-create",
+    ),
+    path(
+        "external-references/<uuid:reference_id>/",
+        ExternalReferenceDetailView.as_view(),
+        name="external-reference-detail",
+    ),
+    path(
+        "external-references/<uuid:reference_id>/refresh/",
+        ExternalReferenceRefreshView.as_view(),
+        name="external-reference-refresh",
+    ),
+    path(
+        "audit/service-catalog/",
+        ServiceCatalogEntryListCreateView.as_view(),
+        name="service-catalog-list-create",
+    ),
+    path(
+        "audit/service-catalog/<uuid:service_id>/",
+        ServiceCatalogEntryDetailView.as_view(),
+        name="service-catalog-detail",
+    ),
+    path(
+        "audit/control-mapping-profiles/",
+        ControlMappingProfileListCreateView.as_view(),
+        name="control-mapping-profile-list-create",
+    ),
+    path(
+        "audit/control-mapping-profiles/<uuid:profile_id>/",
+        ControlMappingProfileDetailView.as_view(),
+        name="control-mapping-profile-detail",
+    ),
+    path(
+        "changes/<uuid:change_id>/control-coverage/recompute/",
+        ChangeControlCoverageRecomputeView.as_view(),
+        name="change-control-coverage-recompute",
+    ),
+    path(
+        "audit/access-grants/",
+        AuditorAccessGrantListCreateView.as_view(),
+        name="auditor-access-grant-list-create",
+    ),
+    path(
+        "auditor-access-grants/",
+        AuditorAccessGrantListCreateView.as_view(),
+        name="auditor-access-grant-list-create-alias",
+    ),
+    path(
+        "audit/access-grants/<uuid:grant_id>/revoke/",
+        AuditorAccessGrantRevokeView.as_view(),
+        name="auditor-access-grant-revoke",
+    ),
+]
