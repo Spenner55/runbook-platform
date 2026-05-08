@@ -11,6 +11,7 @@ from rest_framework.routers import SimpleRouter
 
 from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
+from apps.auditor.urls import urlpatterns as auditor_public_urlpatterns
 from apps.audit.views import ExecutionAuditEventListView
 from apps.changes.urls import (
     freeze_rule_urlpatterns as change_freeze_rule_urlpatterns,
@@ -51,6 +52,7 @@ urlpatterns = [
     path("integrations/", include("apps.integrations.urls")),
     path("changes/", include((change_public_urlpatterns, "changes"))),
     path("", include((evidence_public_urlpatterns, "evidence"))),
+    path("", include((auditor_public_urlpatterns, "auditor"))),
     path("freeze-rules/", include((change_freeze_rule_urlpatterns, "freeze-rules"))),
     *artifact_public_urlpatterns,
     path(
