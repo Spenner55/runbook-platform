@@ -18,7 +18,9 @@ function formatDateTime(value: string | null | undefined) {
 
 function cleanFilters(filters: AuditChangeSearchFilters) {
   return Object.fromEntries(
-    Object.entries(filters).filter(([, value]) => value !== undefined && String(value).trim() !== '')
+    Object.entries(filters).filter(
+      ([, value]) => value !== undefined && String(value).trim() !== ''
+    )
   ) as AuditChangeSearchFilters
 }
 
@@ -222,7 +224,11 @@ export function AuditorSearchPage() {
               </tbody>
             </table>
             <div className="actions-row">
-              <button className="btn" disabled={offset === 0} onClick={() => setPage(offset - limit)}>
+              <button
+                className="btn"
+                disabled={offset === 0}
+                onClick={() => setPage(offset - limit)}
+              >
                 Previous
               </button>
               <button

@@ -11,8 +11,8 @@ from rest_framework.routers import SimpleRouter
 
 from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
-from apps.auditor.urls import urlpatterns as auditor_public_urlpatterns
 from apps.audit.views import ExecutionAuditEventListView
+from apps.auditor.urls import urlpatterns as auditor_public_urlpatterns
 from apps.changes.urls import (
     freeze_rule_urlpatterns as change_freeze_rule_urlpatterns,
 )

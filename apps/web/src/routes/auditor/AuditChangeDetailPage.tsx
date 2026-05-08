@@ -182,7 +182,9 @@ function ExternalReferencesPanel({ change }: { change: AuditChangeDetail }) {
             <li className="step-list__item" key={reference.id}>
               <div className="stack-md" style={{ width: '100%' }}>
                 <div className="actions-row">
-                  <strong>{reference.display_label || reference.external_key || reference.external_id}</strong>
+                  <strong>
+                    {reference.display_label || reference.external_key || reference.external_id}
+                  </strong>
                   <span className="pill">{reference.system}</span>
                   <span className="pill">{reference.snapshot_status}</span>
                 </div>

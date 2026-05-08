@@ -13,7 +13,9 @@ const detail = {
   status: 'closed',
   risk: 'high',
   change_type: 'standard',
-  targets: [{ id: 'target-1', label: 'payments-prod', type: 'service', identifier: 'payments-prod' }],
+  targets: [
+    { id: 'target-1', label: 'payments-prod', type: 'service', identifier: 'payments-prod' },
+  ],
   submitted_at: '2026-05-02T10:00:00Z',
   audit_date: '2026-05-02T10:00:00Z',
   audit_date_basis: 'submitted_at',
@@ -123,7 +125,9 @@ describe('AuditChangeDetailPage', () => {
     renderPage()
 
     await screen.findByText('No target context is available.')
-    expect(screen.getByText('No control coverage has been computed for this change.')).toBeInTheDocument()
+    expect(
+      screen.getByText('No control coverage has been computed for this change.')
+    ).toBeInTheDocument()
     expect(screen.getByText('No control coverage details are available.')).toBeInTheDocument()
     expect(screen.getByText('No external reference snapshots are linked.')).toBeInTheDocument()
   })

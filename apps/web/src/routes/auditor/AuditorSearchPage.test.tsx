@@ -26,7 +26,9 @@ const searchResult = {
       status: 'closed',
       risk: 'high',
       change_type: 'standard',
-      targets: [{ id: 'target-1', label: 'payments-prod', type: 'service', identifier: 'payments-prod' }],
+      targets: [
+        { id: 'target-1', label: 'payments-prod', type: 'service', identifier: 'payments-prod' },
+      ],
       submitted_at: '2026-05-02T10:00:00Z',
       audit_date: '2026-05-02T10:00:00Z',
       audit_date_basis: 'submitted_at',
