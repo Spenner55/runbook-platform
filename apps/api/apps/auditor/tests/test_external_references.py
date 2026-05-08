@@ -1,5 +1,7 @@
 import pytest
 
+from apps.audit.models import AuditEvent
+from apps.audit.services import system_actor
 from apps.auditor import selectors
 from apps.auditor.external_clients import ExternalSnapshot
 from apps.auditor.models import ExternalReferenceType, ExternalSystem
@@ -77,6 +79,7 @@ def test_link_external_reference_sanitizes_bounded_snapshot(org):
             "attachments": [{"name": "secret.txt"}],
             "source_fields": {"state": "Done", "api_token": "secret"},
         },
+        actor=system_actor("external reference test"),
     )
 
     assert reference.snapshot == {
@@ -85,6 +88,18 @@ def test_link_external_reference_sanitizes_bounded_snapshot(org):
     }
     assert len(reference.snapshot_sha256) == 64
     assert reference.snapshot_taken_at is not None
+    event = AuditEvent.objects.get(
+        event_type="external_change_reference.linked",
+        object_type=AuditEvent.ObjectType.EXTERNAL_CHANGE_REFERENCE,
+        object_id=reference.id,
+    )
+    assert event.metadata == {
+        "change_record_id": str(change.id),
+        "system": "jira",
+        "reference_type": "ticket",
+        "external_key": "PROJ-123",
+        "snapshot_sha256": reference.snapshot_sha256,
+    }
 
 
 @pytest.mark.django_db
@@ -172,6 +187,16 @@ def test_refresh_is_explicit_only_and_selectors_do_not_call_external_clients(
         def fetch_snapshot(self, *, reference):
             return ExternalSnapshot(snapshot={"title": "Refreshed"})
 
-    refreshed = refresh_external_change_reference(reference=reference, client=Client())
+    refreshed = refresh_external_change_reference(
+        reference=reference,
+        client=Client(),
+        actor=system_actor("external reference refresh test"),
+    )
 
     assert refreshed.snapshot == {"title": "Refreshed"}
+    event = AuditEvent.objects.get(
+        event_type="external_change_reference.refreshed",
+        object_type=AuditEvent.ObjectType.EXTERNAL_CHANGE_REFERENCE,
+        object_id=reference.id,
+    )
+    assert event.metadata["snapshot_sha256"] == refreshed.snapshot_sha256

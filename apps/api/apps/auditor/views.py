@@ -363,11 +363,15 @@ class ControlMappingProfileListCreateView(APIView):
         )
         serializer = ControlMappingProfileSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        profile = serializer.save(
-            organization=org,
-            created_by=request.user,
-            updated_by=request.user,
-        )
+        try:
+            profile = services.create_control_mapping_profile(
+                organization=org,
+                actor=actor_from_request(request),
+                created_by=request.user,
+                **serializer.validated_data,
+            )
+        except (DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
         return Response(
             ControlMappingProfileSerializer(profile).data,
             status=http_status.HTTP_201_CREATED,
@@ -398,7 +402,15 @@ class ControlMappingProfileDetailView(APIView):
             profile, data=request.data, partial=True
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save(updated_by=request.user)
+        try:
+            profile = services.update_control_mapping_profile(
+                profile=profile,
+                actor=actor_from_request(request),
+                updated_by=request.user,
+                **serializer.validated_data,
+            )
+        except (DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
         return Response(ControlMappingProfileSerializer(profile).data)
 
     def delete(self, request, profile_id):
@@ -407,9 +419,15 @@ class ControlMappingProfileDetailView(APIView):
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
         profile = get_object_or_404(ControlMappingProfile, pk=profile_id, organization=org)
-        profile.is_active = False
-        profile.updated_by = request.user
-        profile.save()
+        try:
+            services.update_control_mapping_profile(
+                profile=profile,
+                actor=actor_from_request(request),
+                updated_by=request.user,
+                is_active=False,
+            )
+        except (DomainValidationError, DomainConflictError) as exc:
+            return _error_response(exc)
         return Response(status=http_status.HTTP_204_NO_CONTENT)
 
 

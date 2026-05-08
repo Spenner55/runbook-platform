@@ -4,12 +4,18 @@ import pytest
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
+from apps.audit.models import AuditEvent
+from apps.audit.services import system_actor
 from apps.auditor import selectors
 from apps.auditor.access import assert_auditor_read_only_method
 from apps.auditor.models import (
     AuditorAccessGrant,
     AuditorGrantStatus,
     ServiceCatalogEntry,
+)
+from apps.auditor.services import (
+    create_auditor_access_grant,
+    revoke_auditor_access_grant,
 )
 from apps.changes.models import ChangeRecord, ChangeTarget, OperationProfile
 from apps.organizations.models import Membership, MembershipRole, Organization
@@ -250,3 +256,37 @@ def test_auditor_read_only_method_guard():
     assert_auditor_read_only_method("GET")
     with pytest.raises(PermissionDenied):
         assert_auditor_read_only_method("POST")
+
+
+@pytest.mark.django_db
+def test_grant_creation_and_revocation_emit_append_only_audit_events(org):
+    admin = _user("grant-admin@example.com")
+    auditor = _user("grant-auditor@example.com")
+
+    grant = create_auditor_access_grant(
+        organization=org,
+        user=auditor,
+        scope={"statuses": ["closed"], "service_keys": ["payments-api"]},
+        actor=system_actor("grant audit test"),
+        created_by=admin,
+        reason="annual audit",
+    )
+    revoke_auditor_access_grant(
+        grant=grant,
+        actor=system_actor("grant audit test"),
+        revoked_by=admin,
+    )
+
+    events = list(
+        AuditEvent.objects.filter(
+            object_type=AuditEvent.ObjectType.AUDITOR_ACCESS_GRANT,
+            object_id=grant.id,
+        ).order_by("occurred_at")
+    )
+
+    assert [event.event_type for event in events] == [
+        "auditor_access_grant.created",
+        "auditor_access_grant.revoked",
+    ]
+    assert events[0].metadata == {"scope_keys": ["service_keys", "statuses"]}
+    assert events[1].metadata == {"scope_keys": ["service_keys", "statuses"]}

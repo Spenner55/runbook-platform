@@ -1,6 +1,8 @@
 import pytest
 from django.utils import timezone
 
+from apps.audit.models import AuditEvent
+from apps.audit.services import system_actor
 from apps.auditor.models import (
     ControlCoverageStatus,
     ControlMappingProfile,
@@ -175,6 +177,52 @@ def test_recompute_control_coverage_is_deterministic_for_sealed_bundle(org):
     assert first_payload == second_payload
     assert first[0].coverage_status == ControlCoverageStatus.COVERED
     assert first[1].coverage_status == ControlCoverageStatus.NOT_APPLICABLE
+
+
+@pytest.mark.django_db
+def test_recompute_control_coverage_emits_audit_event_without_mutating_bundle(org):
+    change = _change(org)
+    bundle = _bundle(change)
+    profile = _profile(org)
+    before = {
+        "manifest": bundle.manifest,
+        "manifest_sha256": bundle.manifest_sha256,
+        "content_sha256": bundle.content_sha256,
+        "content_size_bytes": bundle.content_size_bytes,
+        "storage_key": bundle.storage_key,
+        "status": bundle.status,
+    }
+
+    rows = recompute_change_control_coverage(
+        change_record=change,
+        evidence_bundle=bundle,
+        mapping_profile=profile,
+        actor=system_actor("coverage audit test"),
+    )
+
+    bundle.refresh_from_db()
+    after = {
+        "manifest": bundle.manifest,
+        "manifest_sha256": bundle.manifest_sha256,
+        "content_sha256": bundle.content_sha256,
+        "content_size_bytes": bundle.content_size_bytes,
+        "storage_key": bundle.storage_key,
+        "status": bundle.status,
+    }
+    event = AuditEvent.objects.get(
+        event_type="control_coverage.recomputed",
+        object_type=AuditEvent.ObjectType.CHANGE_CONTROL_COVERAGE,
+        object_id=change.id,
+    )
+
+    assert after == before
+    assert event.metadata["change_record_id"] == str(change.id)
+    assert event.metadata["evidence_bundle_id"] == str(bundle.id)
+    assert event.metadata["mapping_profile_id"] == str(profile.id)
+    assert event.metadata["coverage_count"] == len(rows)
+    assert event.metadata["fingerprints"] == [
+        row.coverage_fingerprint_sha256 for row in rows
+    ]
 
 
 @pytest.mark.django_db

@@ -11,6 +11,7 @@ from apps.auditor.external_clients import get_refresh_client
 from apps.auditor.models import (
     AuditorAccessGrant,
     AuditorGrantStatus,
+    ControlMappingProfile,
     ExternalChangeReference,
     ExternalReferenceType,
     ExternalSystem,
@@ -66,6 +67,7 @@ def update_service_catalog_entry(
     updated_by=None,
     **fields,
 ) -> ServiceCatalogEntry:
+    was_active = service.is_active
     allowed_fields = {
         "name",
         "description",
@@ -90,12 +92,112 @@ def update_service_catalog_entry(
     _emit(
         organization_id=service.organization_id,
         actor=actor,
-        event_type="service_catalog_entry.updated",
+        event_type=(
+            "service_catalog_entry.deactivated"
+            if was_active and service.is_active is False
+            else "service_catalog_entry.updated"
+        ),
         object_type=AuditEvent.ObjectType.SERVICE_CATALOG_ENTRY,
         object_id=service.id,
         metadata={"service_key": service.service_key},
     )
     return service
+
+
+def create_control_mapping_profile(
+    *,
+    organization,
+    key: str,
+    name: str,
+    standard: str,
+    mapping_rules: list,
+    actor: AuditActor | None = None,
+    created_by=None,
+    **fields,
+) -> ControlMappingProfile:
+    try:
+        profile = ControlMappingProfile.objects.create(
+            organization=organization,
+            key=key,
+            name=name,
+            standard=standard,
+            mapping_rules=mapping_rules,
+            created_by=created_by,
+            updated_by=created_by,
+            **fields,
+        )
+    except IntegrityError as exc:
+        raise DomainConflictError(
+            code="control_mapping_profile_exists",
+            detail="An active control mapping profile with this key already exists.",
+            attr="key",
+        ) from exc
+    except ValidationError as exc:
+        raise DomainValidationError(
+            code="invalid_control_mapping_profile",
+            detail="Control mapping profile is invalid.",
+            attr=_validation_attr(exc),
+        ) from exc
+
+    _emit_control_mapping_profile_event(
+        profile=profile,
+        actor=actor,
+        event_type="control_mapping_profile.created",
+    )
+    return profile
+
+
+def update_control_mapping_profile(
+    *,
+    profile: ControlMappingProfile,
+    actor: AuditActor | None = None,
+    updated_by=None,
+    **fields,
+) -> ControlMappingProfile:
+    was_active = profile.is_active
+    allowed_fields = {
+        "key",
+        "name",
+        "standard",
+        "version",
+        "description",
+        "mapping_rules",
+        "is_active",
+    }
+    for field, value in fields.items():
+        if field not in allowed_fields:
+            raise DomainValidationError(
+                code="unsupported_control_mapping_profile_field",
+                detail=f"Unsupported control mapping profile field: {field}.",
+                attr=field,
+            )
+        setattr(profile, field, value)
+    profile.updated_by = updated_by
+    try:
+        profile.save()
+    except IntegrityError as exc:
+        raise DomainConflictError(
+            code="control_mapping_profile_exists",
+            detail="An active control mapping profile with this key already exists.",
+            attr="key",
+        ) from exc
+    except ValidationError as exc:
+        raise DomainValidationError(
+            code="invalid_control_mapping_profile",
+            detail="Control mapping profile is invalid.",
+            attr=_validation_attr(exc),
+        ) from exc
+
+    _emit_control_mapping_profile_event(
+        profile=profile,
+        actor=actor,
+        event_type=(
+            "control_mapping_profile.deactivated"
+            if was_active and profile.is_active is False
+            else "control_mapping_profile.updated"
+        ),
+    )
+    return profile
 
 
 def list_service_catalog_entries(*, organization, include_inactive: bool = False):
@@ -358,6 +460,27 @@ def _emit(*, actor: AuditActor | None, **kwargs):
         actor_id=actor.actor_id,
         actor_label=actor.actor_label,
         **kwargs,
+    )
+
+
+def _emit_control_mapping_profile_event(
+    *,
+    profile: ControlMappingProfile,
+    actor: AuditActor | None,
+    event_type: str,
+):
+    _emit(
+        organization_id=profile.organization_id,
+        actor=actor,
+        event_type=event_type,
+        object_type=AuditEvent.ObjectType.CONTROL_MAPPING_PROFILE,
+        object_id=profile.id,
+        metadata={
+            "key": profile.key,
+            "standard": profile.standard,
+            "version": profile.version,
+            "mapping_rule_count": len(profile.mapping_rules),
+        },
     )
 
 

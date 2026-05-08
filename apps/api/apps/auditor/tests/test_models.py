@@ -17,6 +17,12 @@ from apps.auditor.models import (
     ExternalSystem,
     ServiceCatalogEntry,
 )
+from apps.auditor.services import (
+    create_control_mapping_profile,
+    create_service_catalog_entry,
+    update_control_mapping_profile,
+    update_service_catalog_entry,
+)
 from apps.changes.models import ChangeRecord, OperationProfile
 from apps.evidence.models import EvidenceBundle
 from apps.organizations.models import Organization
@@ -204,6 +210,42 @@ def test_service_catalog_entry_constraints_and_validation(org):
 
 
 @pytest.mark.django_db
+def test_service_catalog_entry_create_update_deactivate_emit_audit_events(org):
+    actor = system_actor("service catalog audit test")
+
+    service = create_service_catalog_entry(
+        organization=org,
+        service_key="checkout-api",
+        name="Checkout API",
+        actor=actor,
+    )
+    update_service_catalog_entry(
+        service=service,
+        actor=actor,
+        owner_team="platform",
+    )
+    update_service_catalog_entry(
+        service=service,
+        actor=actor,
+        is_active=False,
+    )
+
+    events = list(
+        AuditEvent.objects.filter(
+            object_type=AuditEvent.ObjectType.SERVICE_CATALOG_ENTRY,
+            object_id=service.id,
+        ).order_by("occurred_at")
+    )
+
+    assert [event.event_type for event in events] == [
+        "service_catalog_entry.created",
+        "service_catalog_entry.updated",
+        "service_catalog_entry.deactivated",
+    ]
+    assert all(event.metadata == {"service_key": "checkout-api"} for event in events)
+
+
+@pytest.mark.django_db
 def test_control_mapping_profile_enforces_standard_and_active_uniqueness(org):
     _mapping_profile(org)
 
@@ -226,6 +268,53 @@ def test_control_mapping_profile_enforces_standard_and_active_uniqueness(org):
             standard=ControlStandard.SOC2,
             mapping_rules=[{"control_id": "CC8.1", "python": "lambda x: x"}],
         )
+
+
+@pytest.mark.django_db
+def test_control_mapping_profile_create_update_deactivate_emit_audit_events(org):
+    actor = system_actor("control mapping audit test")
+
+    profile = create_control_mapping_profile(
+        organization=org,
+        key="iso-change-controls",
+        name="ISO change controls",
+        standard=ControlStandard.ISO27001,
+        version=1,
+        mapping_rules=[{"control_id": "A.8.32"}],
+        actor=actor,
+    )
+    update_control_mapping_profile(
+        profile=profile,
+        actor=actor,
+        description="Updated profile",
+    )
+    update_control_mapping_profile(
+        profile=profile,
+        actor=actor,
+        is_active=False,
+    )
+
+    events = list(
+        AuditEvent.objects.filter(
+            object_type=AuditEvent.ObjectType.CONTROL_MAPPING_PROFILE,
+            object_id=profile.id,
+        ).order_by("occurred_at")
+    )
+
+    assert [event.event_type for event in events] == [
+        "control_mapping_profile.created",
+        "control_mapping_profile.updated",
+        "control_mapping_profile.deactivated",
+    ]
+    assert all(
+        event.metadata == {
+            "key": "iso-change-controls",
+            "standard": ControlStandard.ISO27001,
+            "version": 1,
+            "mapping_rule_count": 1,
+        }
+        for event in events
+    )
 
 
 @pytest.mark.django_db
@@ -323,17 +412,42 @@ def test_revoked_auditor_grant_requires_revoked_at(org):
 
 
 @pytest.mark.django_db
-def test_audit_service_accepts_auditor_object_types(org):
+@pytest.mark.parametrize(
+    "object_type,event_type",
+    [
+        (
+            AuditEvent.ObjectType.EXTERNAL_CHANGE_REFERENCE,
+            "external_change_reference.linked",
+        ),
+        (
+            AuditEvent.ObjectType.SERVICE_CATALOG_ENTRY,
+            "service_catalog_entry.created",
+        ),
+        (
+            AuditEvent.ObjectType.CONTROL_MAPPING_PROFILE,
+            "control_mapping_profile.created",
+        ),
+        (
+            AuditEvent.ObjectType.CHANGE_CONTROL_COVERAGE,
+            "control_coverage.recomputed",
+        ),
+        (
+            AuditEvent.ObjectType.AUDITOR_ACCESS_GRANT,
+            "auditor_access_grant.created",
+        ),
+    ],
+)
+def test_audit_service_accepts_auditor_object_types(org, object_type, event_type):
     actor = system_actor("auditor model test")
 
     event = AuditService.emit(
         organization_id=org.id,
         actor_type=actor.actor_type,
         actor_label=actor.actor_label,
-        event_type="auditor_access_grant.created",
-        object_type=AuditEvent.ObjectType.AUDITOR_ACCESS_GRANT,
+        event_type=event_type,
+        object_type=object_type,
         object_id=org.id,
         metadata={"scope_summary": "soc2"},
     )
 
-    assert event.object_type == AuditEvent.ObjectType.AUDITOR_ACCESS_GRANT
+    assert event.object_type == object_type
