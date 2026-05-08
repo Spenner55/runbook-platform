@@ -116,7 +116,9 @@ class ExternalChangeReferenceCreateSerializer(serializers.Serializer):
     system = serializers.CharField(max_length=32)
     reference_type = serializers.CharField(max_length=32)
     external_id = serializers.CharField(max_length=255)
-    external_key = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    external_key = serializers.CharField(
+        max_length=255, allow_blank=True, required=False
+    )
     display_label = serializers.CharField(
         max_length=255, allow_blank=True, required=False
     )

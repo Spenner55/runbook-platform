@@ -244,28 +244,44 @@ def test_auditor_search_filters_by_approver_and_executor(org, api_client_for_org
     approver = _user("approval-filter@example.com")
     executor = _user("executor-filter@example.com")
     client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
-    Membership.objects.create(organization=org, user=approver, role=MembershipRole.OPERATOR)
-    Membership.objects.create(organization=org, user=executor, role=MembershipRole.OPERATOR)
+    Membership.objects.create(
+        organization=org, user=approver, role=MembershipRole.OPERATOR
+    )
+    Membership.objects.create(
+        organization=org, user=executor, role=MembershipRole.OPERATOR
+    )
     approved = _change(org, title="Approved by user", target="payments-prod")
     runner_executed = _change(org, title="Executed by runner", target="search-prod")
     user_executed = _change(org, title="Executed by user", target="ledger-prod")
     _approve_change(approved, approver=approver)
     _bind_runner(runner_executed, runner_id="runner-prod-7")
     _add_user_verification(user_executed, user=executor)
-    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+    AuditorAccessGrant.objects.create(
+        organization=org, user=auditor, scope={"all": True}
+    )
 
-    approver_response = client.get("/api/v1/audit/changes/", {"approver": "approval-filter"})
-    runner_response = client.get("/api/v1/audit/changes/", {"executor": "runner-prod-7"})
-    user_response = client.get("/api/v1/audit/changes/", {"executor": "executor-filter"})
+    approver_response = client.get(
+        "/api/v1/audit/changes/", {"approver": "approval-filter"}
+    )
+    runner_response = client.get(
+        "/api/v1/audit/changes/", {"executor": "runner-prod-7"}
+    )
+    user_response = client.get(
+        "/api/v1/audit/changes/", {"executor": "executor-filter"}
+    )
 
     assert approver_response.status_code == 200
-    assert [row["id"] for row in approver_response.data["results"]] == [str(approved.id)]
+    assert [row["id"] for row in approver_response.data["results"]] == [
+        str(approved.id)
+    ]
     assert runner_response.status_code == 200
     assert [row["id"] for row in runner_response.data["results"]] == [
         str(runner_executed.id)
     ]
     assert user_response.status_code == 200
-    assert [row["id"] for row in user_response.data["results"]] == [str(user_executed.id)]
+    assert [row["id"] for row in user_response.data["results"]] == [
+        str(user_executed.id)
+    ]
 
 
 @pytest.mark.django_db
@@ -275,15 +291,21 @@ def test_auditor_search_approver_executor_filters_do_not_widen_grant_scope(
     auditor = _user("api-filter-scoped-auditor@example.com")
     approver = _user("approver-out-of-scope@example.com")
     client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
-    Membership.objects.create(organization=org, user=approver, role=MembershipRole.OPERATOR)
-    _approve_change(_change(org, title="Out of scope", target="search-prod"), approver=approver)
+    Membership.objects.create(
+        organization=org, user=approver, role=MembershipRole.OPERATOR
+    )
+    _approve_change(
+        _change(org, title="Out of scope", target="search-prod"), approver=approver
+    )
     AuditorAccessGrant.objects.create(
         organization=org,
         user=auditor,
         scope={"target_ids": ["payments-prod"]},
     )
 
-    response = client.get("/api/v1/audit/changes/", {"approver": "approver-out-of-scope"})
+    response = client.get(
+        "/api/v1/audit/changes/", {"approver": "approver-out-of-scope"}
+    )
 
     assert response.status_code == 200
     assert response.data["count"] == 0
@@ -318,7 +340,9 @@ def test_auditor_search_date_filters_use_submitted_at_with_created_at_fallback(
         submitted_at=None,
         created_at=window_end + timezone.timedelta(seconds=1),
     )
-    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+    AuditorAccessGrant.objects.create(
+        organization=org, user=auditor, scope={"all": True}
+    )
 
     response = client.get(
         "/api/v1/audit/changes/",
@@ -326,12 +350,16 @@ def test_auditor_search_date_filters_use_submitted_at_with_created_at_fallback(
     )
 
     assert response.status_code == 200
-    assert response.data["meta"]["date_basis"] == "submitted_at_with_created_at_fallback"
+    assert (
+        response.data["meta"]["date_basis"] == "submitted_at_with_created_at_fallback"
+    )
     assert {row["id"] for row in response.data["results"]} == {
         str(submitted_inside.id),
         str(fallback_inside.id),
     }
-    basis_by_id = {row["id"]: row["audit_date_basis"] for row in response.data["results"]}
+    basis_by_id = {
+        row["id"]: row["audit_date_basis"] for row in response.data["results"]
+    }
     assert basis_by_id[str(submitted_inside.id)] == "submitted_at"
     assert basis_by_id[str(fallback_inside.id)] == "created_at"
 
@@ -372,7 +400,9 @@ def test_auditor_detail_returns_projection_snapshots_bundle_and_coverage(
         external_key="PROJ-123",
         snapshot={"title": "Ticket"},
     )
-    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+    AuditorAccessGrant.objects.create(
+        organization=org, user=auditor, scope={"all": True}
+    )
 
     response = client.get(f"/api/v1/audit/changes/{change.id}/")
 
@@ -405,7 +435,9 @@ def test_auditor_detail_returns_404_outside_grant_scope(org, api_client_for_org)
 def test_auditor_cannot_mutate_admin_operator_resources(org, api_client_for_org):
     auditor = _user("api-readonly-auditor@example.com")
     client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
-    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+    AuditorAccessGrant.objects.create(
+        organization=org, user=auditor, scope={"all": True}
+    )
     change = _change(org, title="Readonly change", target="payments-prod")
 
     service_response = client.post(
@@ -437,7 +469,9 @@ def test_auditor_cannot_mutate_admin_operator_resources(org, api_client_for_org)
 def test_admin_can_create_and_revoke_auditor_grant(org, api_client_for_org):
     admin = _user("api-admin@example.com")
     auditor = _user("api-new-auditor@example.com")
-    Membership.objects.create(organization=org, user=auditor, role=MembershipRole.VIEWER)
+    Membership.objects.create(
+        organization=org, user=auditor, role=MembershipRole.VIEWER
+    )
     client = api_client_for_org(org, role=MembershipRole.ADMIN, user=admin)
 
     response = client.post(
@@ -465,7 +499,9 @@ def test_admin_can_create_and_revoke_auditor_grant(org, api_client_for_org):
 def test_admin_can_use_blueprint_alias_for_auditor_grants(org, api_client_for_org):
     admin = _user("api-admin-alias@example.com")
     auditor = _user("api-alias-auditor@example.com")
-    Membership.objects.create(organization=org, user=auditor, role=MembershipRole.VIEWER)
+    Membership.objects.create(
+        organization=org, user=auditor, role=MembershipRole.VIEWER
+    )
     client = api_client_for_org(org, role=MembershipRole.ADMIN, user=admin)
 
     create_response = client.post(

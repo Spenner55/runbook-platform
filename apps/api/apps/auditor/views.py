@@ -298,7 +298,9 @@ class ServiceCatalogEntryDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        service = get_object_or_404(ServiceCatalogEntry, pk=service_id, organization=org)
+        service = get_object_or_404(
+            ServiceCatalogEntry, pk=service_id, organization=org
+        )
         return Response(ServiceCatalogEntrySerializer(service).data)
 
     def patch(self, request, service_id):
@@ -306,7 +308,9 @@ class ServiceCatalogEntryDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        service = get_object_or_404(ServiceCatalogEntry, pk=service_id, organization=org)
+        service = get_object_or_404(
+            ServiceCatalogEntry, pk=service_id, organization=org
+        )
         serializer = ServiceCatalogEntrySerializer(
             service, data=request.data, partial=True
         )
@@ -327,7 +331,9 @@ class ServiceCatalogEntryDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        service = get_object_or_404(ServiceCatalogEntry, pk=service_id, organization=org)
+        service = get_object_or_404(
+            ServiceCatalogEntry, pk=service_id, organization=org
+        )
         try:
             services.update_service_catalog_entry(
                 service=service,
@@ -393,7 +399,9 @@ class ControlMappingProfileDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        profile = get_object_or_404(ControlMappingProfile, pk=profile_id, organization=org)
+        profile = get_object_or_404(
+            ControlMappingProfile, pk=profile_id, organization=org
+        )
         return Response(ControlMappingProfileSerializer(profile).data)
 
     def patch(self, request, profile_id):
@@ -401,7 +409,9 @@ class ControlMappingProfileDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        profile = get_object_or_404(ControlMappingProfile, pk=profile_id, organization=org)
+        profile = get_object_or_404(
+            ControlMappingProfile, pk=profile_id, organization=org
+        )
         serializer = ControlMappingProfileSerializer(
             profile, data=request.data, partial=True
         )
@@ -422,7 +432,9 @@ class ControlMappingProfileDetailView(APIView):
         assert_organization_role(
             user=request.user, organization_id=org.id, roles=OPERATOR_ROLES
         )
-        profile = get_object_or_404(ControlMappingProfile, pk=profile_id, organization=org)
+        profile = get_object_or_404(
+            ControlMappingProfile, pk=profile_id, organization=org
+        )
         try:
             services.update_control_mapping_profile(
                 profile=profile,

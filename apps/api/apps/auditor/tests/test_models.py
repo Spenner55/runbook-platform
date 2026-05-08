@@ -307,7 +307,8 @@ def test_control_mapping_profile_create_update_deactivate_emit_audit_events(org)
         "control_mapping_profile.deactivated",
     ]
     assert all(
-        event.metadata == {
+        event.metadata
+        == {
             "key": "iso-change-controls",
             "standard": ControlStandard.ISO27001,
             "version": 1,

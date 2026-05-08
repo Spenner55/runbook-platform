@@ -275,12 +275,16 @@ def test_grant_date_scope_uses_submitted_at_with_created_at_fallback(org):
         created_at=window_start - timedelta(days=30),
     )
     fallback_inside = _set_audit_dates(
-        _change(org, title="Fallback grant inside", status="closed", target="search-prod"),
+        _change(
+            org, title="Fallback grant inside", status="closed", target="search-prod"
+        ),
         submitted_at=None,
         created_at=window_start + timedelta(hours=1),
     )
     _set_audit_dates(
-        _change(org, title="Submitted grant outside", status="closed", target="ledger-prod"),
+        _change(
+            org, title="Submitted grant outside", status="closed", target="ledger-prod"
+        ),
         submitted_at=window_start - timedelta(seconds=1),
         created_at=window_start + timedelta(hours=2),
     )

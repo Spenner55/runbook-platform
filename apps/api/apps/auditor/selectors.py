@@ -291,9 +291,8 @@ def _approver_filter_q(value: str) -> Q:
     lookup = value.strip()
     if not lookup:
         return Q(pk__in=[])
-    q = (
-        Q(approval_request__decision__decided_by_user__email__icontains=lookup)
-        | Q(approval_request__decision__decided_by_label__icontains=lookup)
+    q = Q(approval_request__decision__decided_by_user__email__icontains=lookup) | Q(
+        approval_request__decision__decided_by_label__icontains=lookup
     )
     if uuid_value := _parse_uuid(lookup):
         q |= Q(approval_request__decision__decided_by_user__id=uuid_value)
