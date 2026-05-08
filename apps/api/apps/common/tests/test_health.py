@@ -167,3 +167,15 @@ def test_migration_check_reports_unhealthy_when_migrations_are_pending():
         result = _check_migrations()
 
     assert result == {"status": "unhealthy", "detail": "pending"}
+
+
+def test_migration_check_reports_unhealthy_when_migrate_check_exits():
+    from apps.common.health import _check_migrations
+
+    with patch("apps.common.health.call_command", side_effect=SystemExit(1)):
+        result = _check_migrations()
+
+    assert result == {
+        "status": "unhealthy",
+        "detail": "migrate --check exited with status 1",
+    }
