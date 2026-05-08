@@ -239,7 +239,9 @@ def _item_is_eligible(item, manifest_paths: set[str]) -> bool:
         return False
     if not item.canonical_path:
         return False
-    if manifest_paths and item.canonical_path not in manifest_paths:
+    if not manifest_paths:
+        return False
+    if item.canonical_path not in manifest_paths:
         return False
     return True
 

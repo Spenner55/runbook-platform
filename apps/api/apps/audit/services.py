@@ -115,7 +115,19 @@ FORBIDDEN_METADATA_KEYS = {
     "receipt_payload",
     "legal_hold_reason_raw",
     "external_reference_raw",
+    "external_url",
+    "external_urls",
     "artifact_bytes",
+    "auditor_grant_scope",
+    "auditor_scope",
+    "grant_scope",
+    "reference_url",
+    "reference_urls",
+    "scope",
+    "source_url",
+    "source_urls",
+    "url",
+    "urls",
 }
 
 REJECTED_METADATA_KEYS = {

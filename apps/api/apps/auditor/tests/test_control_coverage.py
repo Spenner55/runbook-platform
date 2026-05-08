@@ -109,6 +109,37 @@ def _bundle(change, *, complete=True, seal=True, include_approval=True):
     return bundle
 
 
+def _bundle_without_manifest_paths(change):
+    now = timezone.now()
+    bundle = EvidenceBundle.objects.create(
+        organization=change.organization,
+        change_record=change,
+        version=1,
+        status=EvidenceBundle.Status.COMPILING,
+        completeness_status=EvidenceBundle.CompletenessStatus.COMPLETE,
+        source_cutoff_at=now,
+        manifest={"items": []},
+        manifest_sha256="a" * 64,
+        content_sha256="b" * 64,
+        content_size_bytes=128,
+        storage_key=f"evidence/{change.organization_id}/{change.id}/bundle-empty.zip",
+    )
+    EvidenceBundleItem.objects.create(
+        organization=change.organization,
+        bundle=bundle,
+        item_type=EvidenceBundleItem.ItemType.CHANGE_SNAPSHOT,
+        item_key="change",
+        canonical_path="request/change_record.json",
+        position=1,
+        present=True,
+        valid=True,
+    )
+    bundle.status = EvidenceBundle.Status.SEALED
+    bundle.sealed_at = now
+    bundle.save()
+    return bundle
+
+
 def _profile(org, *, active=True):
     return ControlMappingProfile.objects.create(
         organization=org,
@@ -274,6 +305,38 @@ def test_missing_required_items_are_partial_not_covered(org):
     assert row.coverage_status == ControlCoverageStatus.PARTIALLY_COVERED
     assert row.matched_sections == ["item_type:change_snapshot", "section:request"]
     assert row.missing_sections == ["item_type:approval", "section:approval"]
+
+
+@pytest.mark.django_db
+def test_items_not_in_sealed_manifest_do_not_satisfy_coverage(org):
+    change = _change(org)
+    bundle = _bundle_without_manifest_paths(change)
+    profile = ControlMappingProfile.objects.create(
+        organization=org,
+        key="manifest-boundary-controls",
+        name="Manifest boundary controls",
+        standard=ControlStandard.SOC2,
+        mapping_rules=[
+            {
+                "control_id": "CC8.3",
+                "required_sections": ["request"],
+                "required_item_types": ["change_snapshot"],
+            }
+        ],
+    )
+
+    rows = recompute_change_control_coverage(
+        change_record=change,
+        evidence_bundle=bundle,
+        mapping_profile=profile,
+    )
+
+    assert rows[0].coverage_status == ControlCoverageStatus.NOT_COVERED
+    assert rows[0].matched_sections == []
+    assert rows[0].missing_sections == [
+        "item_type:change_snapshot",
+        "section:request",
+    ]
 
 
 @pytest.mark.django_db
