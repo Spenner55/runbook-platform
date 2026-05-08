@@ -66,6 +66,20 @@ class AuditEvent(BaseModel):
             "Evidence Retention Policy",
         )
         LEGAL_HOLD = "legal_hold", "Legal Hold"
+        EXTERNAL_CHANGE_REFERENCE = (
+            "external_change_reference",
+            "External Change Reference",
+        )
+        SERVICE_CATALOG_ENTRY = "service_catalog_entry", "Service Catalog Entry"
+        CONTROL_MAPPING_PROFILE = (
+            "control_mapping_profile",
+            "Control Mapping Profile",
+        )
+        CHANGE_CONTROL_COVERAGE = (
+            "change_control_coverage",
+            "Change Control Coverage",
+        )
+        AUDITOR_ACCESS_GRANT = "auditor_access_grant", "Auditor Access Grant"
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)
     actor_id = models.CharField(max_length=255, blank=True)
@@ -156,6 +170,11 @@ class AuditEvent(BaseModel):
                         "evidence_export",
                         "evidence_retention_policy",
                         "legal_hold",
+                        "external_change_reference",
+                        "service_catalog_entry",
+                        "control_mapping_profile",
+                        "change_control_coverage",
+                        "auditor_access_grant",
                     ]
                 ),
                 name="audit_object_type_valid_chk",

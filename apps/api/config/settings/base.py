@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "apps.integrations.apps.IntegrationsConfig",
     "apps.changes.apps.ChangesConfig",
     "apps.evidence.apps.EvidenceConfig",
+    "apps.auditor.apps.AuditorConfig",
 ]
 
 MIDDLEWARE = [
