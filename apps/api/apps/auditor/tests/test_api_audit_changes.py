@@ -1,6 +1,7 @@
 import pytest
 from django.utils import timezone
 
+from apps.approvals.models import ApprovalDecision, ApprovalRequest
 from apps.auditor.models import (
     AuditorAccessGrant,
     ControlCoverageStatus,
@@ -11,8 +12,17 @@ from apps.auditor.models import (
     ServiceCatalogEntry,
 )
 from apps.auditor.services import link_external_change_reference
-from apps.changes.models import ChangeRecord, ChangeTarget, OperationProfile
+from apps.changes.models import (
+    ChangeExecutionBinding,
+    ChangeRecord,
+    ChangeTarget,
+    OperationProfile,
+    VerificationCheck,
+    VerificationPlan,
+    VerificationResult,
+)
 from apps.evidence.models import EvidenceBundle, EvidenceBundleItem
+from apps.executions.models import Execution
 from apps.organizations.models import Membership, MembershipRole
 from apps.runbooks.models import Runbook
 from apps.users.models import User
@@ -69,6 +79,101 @@ def _change(org, *, title, status="closed", risk="high", target="payments-prod")
     )
     change.refresh_from_db()
     return change
+
+
+def _set_audit_dates(change, *, submitted_at=None, created_at=None):
+    updates = {}
+    if submitted_at is not None:
+        updates["submitted_at"] = submitted_at
+    else:
+        updates["submitted_at"] = None
+    if created_at is not None:
+        updates["created_at"] = created_at
+    ChangeRecord.objects.filter(pk=change.pk).update(**updates)
+    change.refresh_from_db()
+    return change
+
+
+def _approve_change(change, *, approver=None, label=""):
+    request = ApprovalRequest.objects.create(
+        organization=change.organization,
+        subject_type=ApprovalRequest.SubjectType.CHANGE_RECORD,
+        subject_id=change.id,
+        status=ApprovalRequest.Status.APPROVED,
+        requested_by_runner_id="runner-a",
+        requested_at=timezone.now(),
+        resolved_at=timezone.now(),
+    )
+    ApprovalDecision.objects.create(
+        approval_request=request,
+        decision=ApprovalDecision.Decision.APPROVED,
+        source_type=ApprovalDecision.SourceType.HUMAN,
+        decided_by_user=approver,
+        decided_by_label=label,
+        decided_at=timezone.now(),
+    )
+    ChangeRecord.objects.filter(pk=change.pk).update(
+        approval_request=request,
+        approved_at=timezone.now(),
+    )
+    change.refresh_from_db()
+    return request
+
+
+def _bind_runner(change, *, runner_id):
+    execution = Execution.objects.create(
+        organization=change.organization,
+        workflow=change.workflow,
+        workflow_version=change.workflow.version,
+        workflow_snapshot={"name": change.workflow.name},
+        status=Execution.Status.CLAIMED,
+        claimed_by_runner_id=runner_id,
+        claimed_at=timezone.now(),
+    )
+    ChangeExecutionBinding.objects.create(
+        organization=change.organization,
+        change_record=change,
+        execution=execution,
+        operation_profile_key=change.operation_profile.key,
+        requested_inputs_sha256=change.requested_inputs_sha256 or "0" * 64,
+        dispatch_token_nonce=f"nonce-{change.id}",
+        dispatch_token_hash="hash",
+        dispatch_token_expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        reserved_at=timezone.now(),
+        bound_at=timezone.now(),
+        bound_by_runner_id=runner_id,
+    )
+
+
+def _add_user_verification(change, *, user):
+    plan = VerificationPlan.objects.create(
+        organization=change.organization,
+        change_record=change,
+        operation_profile=change.operation_profile,
+        mode=VerificationPlan.Mode.MANUAL,
+        status=VerificationPlan.Status.ACTIVE,
+        generated_from_profile_sha256="1" * 64,
+    )
+    check = VerificationCheck.objects.create(
+        organization=change.organization,
+        plan=plan,
+        change_record=change,
+        position=1,
+        key=f"manual-{change.id}",
+        name="Manual verification",
+        check_type=VerificationCheck.CheckType.MANUAL_ATTESTATION,
+        verification_key="manual.operator",
+    )
+    return VerificationResult.objects.create(
+        organization=change.organization,
+        change_record=change,
+        plan=plan,
+        verification_check=check,
+        source=VerificationResult.Source.USER,
+        outcome=VerificationResult.Outcome.PASSED,
+        validation_status=VerificationResult.ValidationStatus.ACCEPTED,
+        submitted_by=user,
+    )
 
 
 def _sealed_bundle(change):
@@ -131,6 +236,104 @@ def test_auditor_search_is_grant_scoped_and_filterable(org, api_client_for_org):
     assert response.status_code == 200
     assert response.data["count"] == 0
     assert response.data["results"] == []
+
+
+@pytest.mark.django_db
+def test_auditor_search_filters_by_approver_and_executor(org, api_client_for_org):
+    auditor = _user("api-filter-auditor@example.com")
+    approver = _user("approval-filter@example.com")
+    executor = _user("executor-filter@example.com")
+    client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
+    Membership.objects.create(organization=org, user=approver, role=MembershipRole.OPERATOR)
+    Membership.objects.create(organization=org, user=executor, role=MembershipRole.OPERATOR)
+    approved = _change(org, title="Approved by user", target="payments-prod")
+    runner_executed = _change(org, title="Executed by runner", target="search-prod")
+    user_executed = _change(org, title="Executed by user", target="ledger-prod")
+    _approve_change(approved, approver=approver)
+    _bind_runner(runner_executed, runner_id="runner-prod-7")
+    _add_user_verification(user_executed, user=executor)
+    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+
+    approver_response = client.get("/api/v1/audit/changes/", {"approver": "approval-filter"})
+    runner_response = client.get("/api/v1/audit/changes/", {"executor": "runner-prod-7"})
+    user_response = client.get("/api/v1/audit/changes/", {"executor": "executor-filter"})
+
+    assert approver_response.status_code == 200
+    assert [row["id"] for row in approver_response.data["results"]] == [str(approved.id)]
+    assert runner_response.status_code == 200
+    assert [row["id"] for row in runner_response.data["results"]] == [
+        str(runner_executed.id)
+    ]
+    assert user_response.status_code == 200
+    assert [row["id"] for row in user_response.data["results"]] == [str(user_executed.id)]
+
+
+@pytest.mark.django_db
+def test_auditor_search_approver_executor_filters_do_not_widen_grant_scope(
+    org, api_client_for_org
+):
+    auditor = _user("api-filter-scoped-auditor@example.com")
+    approver = _user("approver-out-of-scope@example.com")
+    client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
+    Membership.objects.create(organization=org, user=approver, role=MembershipRole.OPERATOR)
+    _approve_change(_change(org, title="Out of scope", target="search-prod"), approver=approver)
+    AuditorAccessGrant.objects.create(
+        organization=org,
+        user=auditor,
+        scope={"target_ids": ["payments-prod"]},
+    )
+
+    response = client.get("/api/v1/audit/changes/", {"approver": "approver-out-of-scope"})
+
+    assert response.status_code == 200
+    assert response.data["count"] == 0
+    assert response.data["results"] == []
+
+
+@pytest.mark.django_db
+def test_auditor_search_date_filters_use_submitted_at_with_created_at_fallback(
+    org, api_client_for_org
+):
+    auditor = _user("api-date-auditor@example.com")
+    client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
+    window_start = timezone.datetime(2026, 5, 2, tzinfo=timezone.get_current_timezone())
+    window_end = timezone.datetime(2026, 5, 3, tzinfo=timezone.get_current_timezone())
+    submitted_inside = _set_audit_dates(
+        _change(org, title="Submitted inside", target="payments-prod"),
+        submitted_at=window_start,
+        created_at=window_start - timezone.timedelta(days=30),
+    )
+    fallback_inside = _set_audit_dates(
+        _change(org, title="Fallback inside", target="search-prod"),
+        submitted_at=None,
+        created_at=window_start + timezone.timedelta(hours=1),
+    )
+    _set_audit_dates(
+        _change(org, title="Submitted outside", target="ledger-prod"),
+        submitted_at=window_start - timezone.timedelta(seconds=1),
+        created_at=window_start + timezone.timedelta(hours=2),
+    )
+    _set_audit_dates(
+        _change(org, title="Fallback outside", target="billing-prod"),
+        submitted_at=None,
+        created_at=window_end + timezone.timedelta(seconds=1),
+    )
+    AuditorAccessGrant.objects.create(organization=org, user=auditor, scope={"all": True})
+
+    response = client.get(
+        "/api/v1/audit/changes/",
+        {"start_date": window_start.isoformat(), "end_date": window_end.isoformat()},
+    )
+
+    assert response.status_code == 200
+    assert response.data["meta"]["date_basis"] == "submitted_at_with_created_at_fallback"
+    assert {row["id"] for row in response.data["results"]} == {
+        str(submitted_inside.id),
+        str(fallback_inside.id),
+    }
+    basis_by_id = {row["id"]: row["audit_date_basis"] for row in response.data["results"]}
+    assert basis_by_id[str(submitted_inside.id)] == "submitted_at"
+    assert basis_by_id[str(fallback_inside.id)] == "created_at"
 
 
 @pytest.mark.django_db
@@ -256,3 +459,80 @@ def test_admin_can_create_and_revoke_auditor_grant(org, api_client_for_org):
 
     assert revoke_response.status_code == 200
     assert revoke_response.data["status"] == "revoked"
+
+
+@pytest.mark.django_db
+def test_admin_can_use_blueprint_alias_for_auditor_grants(org, api_client_for_org):
+    admin = _user("api-admin-alias@example.com")
+    auditor = _user("api-alias-auditor@example.com")
+    Membership.objects.create(organization=org, user=auditor, role=MembershipRole.VIEWER)
+    client = api_client_for_org(org, role=MembershipRole.ADMIN, user=admin)
+
+    create_response = client.post(
+        "/api/v1/auditor-access-grants/",
+        {"user_id": str(auditor.id), "scope": {"all": True}},
+        format="json",
+    )
+    list_response = client.get("/api/v1/auditor-access-grants/")
+
+    assert create_response.status_code == 201
+    assert list_response.status_code == 200
+    assert [row["id"] for row in list_response.data["results"]] == [
+        create_response.data["id"]
+    ]
+
+
+@pytest.mark.django_db
+def test_auditor_grant_alias_enforces_same_permissions(org, api_client_for_org):
+    auditor = _user("api-alias-denied-auditor@example.com")
+    client = api_client_for_org(org, role=MembershipRole.VIEWER, user=auditor)
+
+    list_response = client.get("/api/v1/auditor-access-grants/")
+    create_response = client.post(
+        "/api/v1/auditor-access-grants/",
+        {"user_id": str(auditor.id), "scope": {"all": True}},
+        format="json",
+    )
+
+    assert list_response.status_code == 403
+    assert create_response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_admin_cannot_create_auditor_grant_for_non_member(org, api_client_for_org):
+    admin = _user("api-admin-non-member@example.com")
+    outsider = _user("api-outsider@example.com")
+    client = api_client_for_org(org, role=MembershipRole.ADMIN, user=admin)
+
+    response = client.post(
+        "/api/v1/audit/access-grants/",
+        {"user_id": str(outsider.id), "scope": {"all": True}},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.data["errors"][0]["code"] == "auditor_user_not_organization_member"
+
+
+@pytest.mark.django_db
+def test_admin_cannot_create_auditor_grant_for_member_of_different_org(
+    org, api_client_for_org
+):
+    admin = _user("api-admin-other-member@example.com")
+    other_org = org.__class__.objects.create(name="Other Org", slug="other-grants")
+    other_member = _user("api-other-member@example.com")
+    Membership.objects.create(
+        organization=other_org,
+        user=other_member,
+        role=MembershipRole.VIEWER,
+    )
+    client = api_client_for_org(org, role=MembershipRole.ADMIN, user=admin)
+
+    response = client.post(
+        "/api/v1/audit/access-grants/",
+        {"user_id": str(other_member.id), "scope": {"all": True}},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.data["errors"][0]["code"] == "auditor_user_not_organization_member"

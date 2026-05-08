@@ -91,9 +91,9 @@ def _scope_to_change_q(scope: dict, *, organization) -> Q:
     date_from = _parse_scope_datetime(scope.get("date_from"))
     date_to = _parse_scope_datetime(scope.get("date_to"))
     if date_from is not None:
-        q &= Q(created_at__gte=date_from)
+        q &= _audit_date_gte_q(date_from)
     if date_to is not None:
-        q &= Q(created_at__lte=date_to)
+        q &= _audit_date_lte_q(date_to)
     if scope.get("include_exceptions") is False:
         q &= Q(exceptions__isnull=True) & Q(freeze_exception_reference="")
     return q
@@ -220,6 +220,20 @@ def _parse_scope_datetime(value) -> datetime | None:
     if timezone.is_naive(parsed):
         return timezone.make_aware(parsed, UTC)
     return parsed
+
+
+def _audit_date_gte_q(value) -> Q:
+    return Q(submitted_at__isnull=False, submitted_at__gte=value) | Q(
+        submitted_at__isnull=True,
+        created_at__gte=value,
+    )
+
+
+def _audit_date_lte_q(value) -> Q:
+    return Q(submitted_at__isnull=False, submitted_at__lte=value) | Q(
+        submitted_at__isnull=True,
+        created_at__lte=value,
+    )
 
 
 def _is_uuid(value: str) -> bool:

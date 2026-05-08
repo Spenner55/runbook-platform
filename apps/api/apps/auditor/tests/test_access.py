@@ -85,6 +85,15 @@ def _grant(org, user, scope, **kwargs):
     )
 
 
+def _set_audit_dates(change, *, submitted_at=None, created_at=None):
+    ChangeRecord.objects.filter(pk=change.pk).update(
+        submitted_at=submitted_at,
+        created_at=created_at or change.created_at,
+    )
+    change.refresh_from_db()
+    return change
+
+
 @pytest.mark.django_db
 def test_active_grant_intersects_with_membership_and_scope(org):
     auditor = _user("scoped-auditor@example.com")
@@ -252,6 +261,43 @@ def test_grants_are_org_scoped(org):
     assert primary_rows == []
 
 
+@pytest.mark.django_db
+def test_grant_date_scope_uses_submitted_at_with_created_at_fallback(org):
+    auditor = _user("date-scope-auditor@example.com")
+    Membership.objects.create(
+        organization=org, user=auditor, role=MembershipRole.VIEWER
+    )
+    window_start = timezone.now().replace(microsecond=0) - timedelta(days=1)
+    window_end = window_start + timedelta(days=1)
+    submitted_inside = _set_audit_dates(
+        _change(org, title="Submitted grant inside", status="closed"),
+        submitted_at=window_start,
+        created_at=window_start - timedelta(days=30),
+    )
+    fallback_inside = _set_audit_dates(
+        _change(org, title="Fallback grant inside", status="closed", target="search-prod"),
+        submitted_at=None,
+        created_at=window_start + timedelta(hours=1),
+    )
+    _set_audit_dates(
+        _change(org, title="Submitted grant outside", status="closed", target="ledger-prod"),
+        submitted_at=window_start - timedelta(seconds=1),
+        created_at=window_start + timedelta(hours=2),
+    )
+    _grant(
+        org,
+        auditor,
+        {
+            "date_from": window_start.isoformat(),
+            "date_to": window_end.isoformat(),
+        },
+    )
+
+    rows = list(selectors.audit_change_queryset(organization=org, user=auditor))
+
+    assert {row.id for row in rows} == {submitted_inside.id, fallback_inside.id}
+
+
 def test_auditor_read_only_method_guard():
     assert_auditor_read_only_method("GET")
     with pytest.raises(PermissionDenied):
@@ -262,6 +308,9 @@ def test_auditor_read_only_method_guard():
 def test_grant_creation_and_revocation_emit_append_only_audit_events(org):
     admin = _user("grant-admin@example.com")
     auditor = _user("grant-auditor@example.com")
+    Membership.objects.create(
+        organization=org, user=auditor, role=MembershipRole.VIEWER
+    )
 
     grant = create_auditor_access_grant(
         organization=org,

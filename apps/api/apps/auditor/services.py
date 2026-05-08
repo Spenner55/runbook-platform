@@ -22,6 +22,7 @@ from apps.auditor.models import (
     sanitize_external_snapshot,
 )
 from apps.common.exceptions import DomainConflictError, DomainValidationError
+from apps.common.permissions import get_user_membership
 from apps.evidence.models import EvidenceBundle
 
 
@@ -354,6 +355,12 @@ def create_auditor_access_grant(
     starts_at=None,
     expires_at=None,
 ) -> AuditorAccessGrant:
+    if get_user_membership(user=user, organization_id=organization.id) is None:
+        raise DomainValidationError(
+            code="auditor_user_not_organization_member",
+            detail="Auditor access grants can only be created for current organization members.",
+            attr="user_id",
+        )
     grant = AuditorAccessGrant.objects.create(
         organization=organization,
         user=user,

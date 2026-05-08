@@ -38,4 +38,10 @@ export const queryKeys = {
   retroReviewInbox: ['retro-review-inbox'] as const,
   latestEvidenceBundle: (changeId: string) => ['evidence-bundle', 'latest', changeId] as const,
   evidenceExports: (bundleId: string) => ['evidence-exports', bundleId] as const,
+  auditChanges: (organizationId: string, filters: unknown) =>
+    ['audit-changes', organizationId, filters] as const,
+  auditChange: (organizationId: string, changeId: string) =>
+    ['audit-change', organizationId, changeId] as const,
+  auditorAccessGrants: (organizationId: string) =>
+    ['auditor-access-grants', organizationId] as const,
 }

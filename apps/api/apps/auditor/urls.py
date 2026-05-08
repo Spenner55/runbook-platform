@@ -68,6 +68,11 @@ urlpatterns = [
         name="auditor-access-grant-list-create",
     ),
     path(
+        "auditor-access-grants/",
+        AuditorAccessGrantListCreateView.as_view(),
+        name="auditor-access-grant-list-create-alias",
+    ),
+    path(
         "audit/access-grants/<uuid:grant_id>/revoke/",
         AuditorAccessGrantRevokeView.as_view(),
         name="auditor-access-grant-revoke",

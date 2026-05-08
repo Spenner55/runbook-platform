@@ -115,6 +115,10 @@ class AuditChangeListView(APIView):
                 "previous": _page_url(request, count, limit, offset - limit)
                 if offset > 0
                 else None,
+                "meta": {
+                    "date_basis": selectors.AUDIT_DATE_BASIS,
+                    "date_filter_fields": ["submitted_at", "created_at"],
+                },
                 "results": AuditChangeSummarySerializer(results, many=True).data,
             }
         )

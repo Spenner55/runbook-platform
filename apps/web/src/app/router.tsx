@@ -3,6 +3,9 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppLayout } from './AppLayout'
 import { ProtectedRoute } from '../features/auth/ProtectedRoute'
 import { ApprovalsInboxPage } from '../routes/approvals/ApprovalsInboxPage'
+import { AuditChangeDetailPage } from '../routes/auditor/AuditChangeDetailPage'
+import { AuditorAccessAdminPage } from '../routes/auditor/AuditorAccessAdminPage'
+import { AuditorSearchPage } from '../routes/auditor/AuditorSearchPage'
 import { LoginPage } from '../routes/auth/LoginPage'
 import { ChangeCreatePage } from '../routes/changes/ChangeCreatePage'
 import { ChangeDetailPage } from '../routes/changes/ChangeDetailPage'
@@ -54,6 +57,9 @@ export const router = createBrowserRouter([
           { path: 'changes/new', element: <ChangeCreatePage /> },
           { path: 'changes/new/emergency', element: <ChangeEmergencyCreatePage /> },
           { path: 'changes/:changeId', element: <ChangeDetailPage /> },
+          { path: 'audit/changes', element: <AuditorSearchPage /> },
+          { path: 'audit/changes/:changeId', element: <AuditChangeDetailPage /> },
+          { path: 'audit/access', element: <AuditorAccessAdminPage /> },
           { path: 'retro-reviews', element: <RetroReviewInboxPage /> },
           { path: 'freeze-rules', element: <FreezeRulesPage /> },
           { path: 'settings', element: <SettingsPage /> },

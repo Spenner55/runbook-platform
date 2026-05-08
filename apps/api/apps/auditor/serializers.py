@@ -21,6 +21,8 @@ class AuditChangeListQuerySerializer(serializers.Serializer):
     control_id = serializers.CharField(max_length=128, required=False)
     coverage_status = serializers.CharField(max_length=32, required=False)
     external_system = serializers.CharField(max_length=32, required=False)
+    approver = serializers.CharField(max_length=255, required=False)
+    executor = serializers.CharField(max_length=255, required=False)
     start_date = serializers.DateTimeField(required=False)
     end_date = serializers.DateTimeField(required=False)
     has_exception = serializers.BooleanField(required=False)
@@ -60,6 +62,8 @@ class AuditChangeSummarySerializer(serializers.Serializer):
     change_type = serializers.CharField()
     targets = AuditTargetProjectionSerializer(many=True)
     submitted_at = serializers.DateTimeField(allow_null=True)
+    audit_date = serializers.DateTimeField()
+    audit_date_basis = serializers.CharField()
     approved_at = serializers.DateTimeField(allow_null=True)
     closed_at = serializers.DateTimeField(allow_null=True)
     has_exception = serializers.BooleanField()
@@ -197,6 +201,8 @@ class AuditChangeDetailSerializer(serializers.Serializer):
     change_type = serializers.CharField()
     targets = AuditTargetProjectionSerializer(many=True)
     submitted_at = serializers.DateTimeField(allow_null=True)
+    audit_date = serializers.DateTimeField()
+    audit_date_basis = serializers.CharField()
     approved_at = serializers.DateTimeField(allow_null=True)
     closed_at = serializers.DateTimeField(allow_null=True)
     has_exception = serializers.BooleanField()
@@ -245,4 +251,3 @@ class AuditorAccessGrantSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-

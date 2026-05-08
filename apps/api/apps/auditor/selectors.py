@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from uuid import UUID
+
 from django.db.models import Count, Prefetch, Q
 from django.http import Http404
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.auditor.access import apply_auditor_access_scope
@@ -23,6 +27,8 @@ ALLOWED_ORDERINGS = {
     "risk",
     "-risk",
 }
+
+AUDIT_DATE_BASIS = "submitted_at_with_created_at_fallback"
 
 
 def audit_change_queryset(
@@ -70,7 +76,7 @@ def audit_change_queryset(
     queryset = apply_search_filters(
         queryset, organization=organization, filters=filters or {}
     )
-    ordering = (filters or {}).get("ordering") or "-created_at"
+    ordering = (filters or {}).get("ordering") or "-submitted_at"
     if ordering not in ALLOWED_ORDERINGS:
         ordering = "-created_at"
     if ordering in {"risk", "-risk"}:
@@ -137,10 +143,14 @@ def apply_search_filters(queryset, *, organization, filters: dict):
         queryset = queryset.filter(control_coverages__coverage_status=coverage_status)
     if external_system := filters.get("external_system"):
         queryset = queryset.filter(external_references__system=external_system)
+    if approver := filters.get("approver"):
+        queryset = queryset.filter(_approver_filter_q(str(approver)))
+    if executor := filters.get("executor"):
+        queryset = queryset.filter(_executor_filter_q(str(executor)))
     if start_date := _parse_filter_datetime(filters.get("start_date")):
-        queryset = queryset.filter(created_at__gte=start_date)
+        queryset = queryset.filter(_audit_date_gte_q(start_date))
     if end_date := _parse_filter_datetime(filters.get("end_date")):
-        queryset = queryset.filter(created_at__lte=end_date)
+        queryset = queryset.filter(_audit_date_lte_q(end_date))
     return queryset
 
 
@@ -200,6 +210,8 @@ def _change_projection(change) -> dict:
             for target in targets
         ],
         "submitted_at": change.submitted_at,
+        "audit_date": change.submitted_at or change.created_at,
+        "audit_date_basis": "submitted_at" if change.submitted_at else "created_at",
         "approved_at": change.approved_at,
         "closed_at": change.closed_at,
         "has_exception": bool(change.freeze_exception_reference)
@@ -250,4 +262,64 @@ def _service_filter_q(values: list[str], *, organization) -> Q:
 def _parse_filter_datetime(value):
     if not value:
         return None
-    return parse_datetime(str(value))
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = parse_datetime(str(value))
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        return timezone.make_aware(parsed, UTC)
+    return parsed
+
+
+def _audit_date_gte_q(value) -> Q:
+    return Q(submitted_at__isnull=False, submitted_at__gte=value) | Q(
+        submitted_at__isnull=True,
+        created_at__gte=value,
+    )
+
+
+def _audit_date_lte_q(value) -> Q:
+    return Q(submitted_at__isnull=False, submitted_at__lte=value) | Q(
+        submitted_at__isnull=True,
+        created_at__lte=value,
+    )
+
+
+def _approver_filter_q(value: str) -> Q:
+    lookup = value.strip()
+    if not lookup:
+        return Q(pk__in=[])
+    q = (
+        Q(approval_request__decision__decided_by_user__email__icontains=lookup)
+        | Q(approval_request__decision__decided_by_label__icontains=lookup)
+    )
+    if uuid_value := _parse_uuid(lookup):
+        q |= Q(approval_request__decision__decided_by_user__id=uuid_value)
+    return q
+
+
+def _executor_filter_q(value: str) -> Q:
+    lookup = value.strip()
+    if not lookup:
+        return Q(pk__in=[])
+    # Phase 11 execution ownership is persisted through ChangeExecutionBinding,
+    # Execution runner claims, and accepted verification results. This selector
+    # intentionally reads those Django facts only; it never calls runner APIs.
+    q = (
+        Q(execution_binding__bound_by_runner_id__icontains=lookup)
+        | Q(execution_binding__execution__claimed_by_runner_id__icontains=lookup)
+        | Q(verification_results__runner_id__icontains=lookup)
+        | Q(verification_results__submitted_by__email__icontains=lookup)
+    )
+    if uuid_value := _parse_uuid(lookup):
+        q |= Q(verification_results__submitted_by__id=uuid_value)
+    return q
+
+
+def _parse_uuid(value: str):
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
