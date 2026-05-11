@@ -5,6 +5,7 @@ import pytest
 from django.utils import timezone
 from prometheus_client import REGISTRY
 
+from apps.audit.models import AuditEvent
 from apps.common.exceptions import (
     DomainValidationError,
     InvalidStateTransitionError,
@@ -251,6 +252,110 @@ def test_cancel_non_queued_execution_raises(published_workflow):
     with pytest.raises(InvalidStateTransitionError) as exc_info:
         services.cancel_execution(execution=execution)
     assert exc_info.value.code == "invalid_state_transition"
+
+
+@pytest.mark.django_db
+def test_cancel_claimed_execution_sets_cancellation_intent(published_workflow):
+    services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+
+    result = services.cancel_execution(execution=execution)
+
+    assert result.status == Execution.Status.CLAIMED
+    assert result.cancel_requested_at is not None
+    assert result.cancel_requested_by != ""
+
+
+@pytest.mark.django_db
+def test_cancel_running_execution_sets_cancellation_intent(published_workflow):
+    services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+    execution.status = Execution.Status.RUNNING
+    execution.save(update_fields=["status", "updated_at"])
+
+    result = services.cancel_execution(execution=execution)
+
+    assert result.status == Execution.Status.RUNNING
+    assert result.cancel_requested_at is not None
+
+
+@pytest.mark.django_db
+def test_cancel_claimed_execution_does_not_persist_terminal_status(published_workflow):
+    services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+
+    services.cancel_execution(execution=execution)
+
+    execution.refresh_from_db()
+    assert execution.status == Execution.Status.CLAIMED
+    assert execution.cancel_requested_at is not None
+
+
+@pytest.mark.django_db
+def test_cancel_execution_emits_cancel_requested_audit_event(published_workflow):
+    services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+
+    services.cancel_execution(execution=execution)
+
+    assert AuditEvent.objects.filter(
+        object_id=execution.id,
+        event_type="execution.cancel_requested",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_cancel_queued_execution_emits_cancelled_audit_event(published_workflow):
+    execution = services.create_execution(workflow=published_workflow)
+
+    services.cancel_execution(execution=execution)
+
+    assert AuditEvent.objects.filter(
+        object_id=execution.id,
+        event_type="execution.cancelled",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_cancel_terminal_execution_raises(published_workflow):
+    execution = services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+    services.complete_execution(
+        execution=execution,
+        runner_id="runner-1",
+        claim_token=claimed["claim_token"],
+        outcome=Execution.Status.SUCCEEDED,
+    )
+
+    with pytest.raises(InvalidStateTransitionError) as exc_info:
+        services.cancel_execution(execution=execution)
+    assert exc_info.value.code == "invalid_state_transition"
+
+
+@pytest.mark.django_db
+def test_complete_execution_with_cancelled_outcome(published_workflow):
+    services.create_execution(workflow=published_workflow)
+    claimed = services.claim_next_execution(runner_id="runner-1")
+    execution = claimed["execution"]
+
+    result = services.complete_execution(
+        execution=execution,
+        runner_id="runner-1",
+        claim_token=claimed["claim_token"],
+        outcome=Execution.Status.CANCELLED,
+    )
+
+    assert result.status == Execution.Status.CANCELLED
+    assert result.finished_at is not None
+    assert AuditEvent.objects.filter(
+        object_id=execution.id,
+        event_type="execution.cancelled",
+    ).exists()
 
 
 # ---------------------------------------------------------------------------

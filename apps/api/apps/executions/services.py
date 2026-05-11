@@ -155,67 +155,122 @@ def create_execution_from_workflow(*, workflow: Workflow) -> Execution:
 def cancel_execution(
     *, execution: Execution, actor: AuditActor | None = None
 ) -> Execution:
-    """Cancel a queued execution. Only queued executions may be cancelled."""
+    """
+    Cancel an execution.
+
+    Queued executions transition directly to cancelled.
+    Claimed/running executions record cancellation intent; the runner observes
+    this via heartbeat and is responsible for reporting the terminal status.
+    """
     with transaction.atomic():
         execution = Execution.objects.select_for_update().get(pk=execution.pk)
-        if execution.status != Execution.Status.QUEUED:
+        audit_actor = actor or system_actor()
+        previous_status = execution.status
+
+        if execution.status == Execution.Status.QUEUED:
+            execution.status = Execution.Status.CANCELLED
+            execution.save(update_fields=["status", "updated_at"])
+            AuditService.emit(
+                organization_id=execution.organization_id,
+                actor_type=audit_actor.actor_type,
+                actor_id=audit_actor.actor_id,
+                actor_label=audit_actor.actor_label,
+                event_type="execution.cancelled",
+                object_type=AuditEvent.ObjectType.EXECUTION,
+                object_id=execution.id,
+                metadata={
+                    "previous_status": previous_status,
+                    "new_status": execution.status,
+                },
+            )
+        elif execution.status in (
+            Execution.Status.CLAIMED,
+            Execution.Status.RUNNING,
+        ):
+            now = timezone.now()
+            execution.cancel_requested_at = now
+            execution.cancel_requested_by = audit_actor.actor_label or str(
+                audit_actor.actor_id or "system"
+            )
+            execution.save(
+                update_fields=[
+                    "cancel_requested_at",
+                    "cancel_requested_by",
+                    "updated_at",
+                ]
+            )
+            AuditService.emit(
+                organization_id=execution.organization_id,
+                actor_type=audit_actor.actor_type,
+                actor_id=audit_actor.actor_id,
+                actor_label=audit_actor.actor_label,
+                event_type="execution.cancel_requested",
+                object_type=AuditEvent.ObjectType.EXECUTION,
+                object_id=execution.id,
+                metadata={
+                    "previous_status": previous_status,
+                    "cancel_requested_by": execution.cancel_requested_by,
+                },
+            )
+        else:
             raise InvalidStateTransitionError(
                 code="invalid_state_transition",
-                detail=f"Cannot cancel execution with status '{execution.status}', expected 'queued'.",
+                detail=f"Cannot cancel execution with status '{execution.status}'.",
             )
-        previous_status = execution.status
-        execution.status = Execution.Status.CANCELLED
-        execution.save(update_fields=["status", "updated_at"])
-        audit_actor = actor or system_actor()
-        AuditService.emit(
-            organization_id=execution.organization_id,
-            actor_type=audit_actor.actor_type,
-            actor_id=audit_actor.actor_id,
-            actor_label=audit_actor.actor_label,
-            event_type="execution.cancelled",
-            object_type=AuditEvent.ObjectType.EXECUTION,
-            object_id=execution.id,
-            metadata={
-                "previous_status": previous_status,
-                "new_status": execution.status,
-            },
+
+    if execution.status == Execution.Status.CANCELLED:
+        _ts = execution.updated_at.isoformat()
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": _ts,
+                    "started_at": None,
+                    "finished_at": None,
+                },
+            ),
         )
-    _ts = execution.updated_at.isoformat()
-    _emit_on_commit(
-        str(execution.id),
-        StreamEvent(
-            event_type="execution.status_changed",
-            data={
-                "execution_id": str(execution.id),
-                "status": execution.status,
-                "timestamp": _ts,
-                "started_at": None,
-                "finished_at": None,
-            },
-        ),
-    )
-    _emit_on_commit(
-        str(execution.id),
-        StreamEvent(
-            event_type="stream.closed",
-            data={
-                "execution_id": str(execution.id),
-                "final_status": execution.status,
-                "timestamp": _ts,
-                "reason": "terminal_state",
-            },
-        ),
-    )
-    _safe_notify_integration(
-        event_type="execution.cancelled",
-        organization=execution.organization,
-        context=_execution_context(
-            execution=execution,
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="stream.closed",
+                data={
+                    "execution_id": str(execution.id),
+                    "final_status": execution.status,
+                    "timestamp": _ts,
+                    "reason": "terminal_state",
+                },
+            ),
+        )
+        _safe_notify_integration(
             event_type="execution.cancelled",
-            previous_status=previous_status,
-        ),
-    )
-    record_execution_event(event="cancelled", status=execution.status)
+            organization=execution.organization,
+            context=_execution_context(
+                execution=execution,
+                event_type="execution.cancelled",
+                previous_status=previous_status,
+            ),
+        )
+        record_execution_event(event="cancelled", status=execution.status)
+    else:
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.cancel_requested",
+                data={
+                    "execution_id": str(execution.id),
+                    "cancel_requested_by": execution.cancel_requested_by,
+                    "timestamp": execution.cancel_requested_at.isoformat()
+                    if execution.cancel_requested_at
+                    else None,
+                },
+            ),
+        )
+        record_execution_event(event="cancel_requested", status=execution.status)
+
     return execution
 
 
@@ -974,7 +1029,11 @@ def complete_execution(
                 detail=f"Cannot complete execution with status '{execution.status}'.",
             )
 
-        valid_outcomes = {Execution.Status.SUCCEEDED, Execution.Status.FAILED}
+        valid_outcomes = {
+            Execution.Status.SUCCEEDED,
+            Execution.Status.FAILED,
+            Execution.Status.CANCELLED,
+        }
         if outcome not in valid_outcomes:
             raise InvalidStateTransitionError(
                 code="invalid_state_transition",
@@ -1003,14 +1062,18 @@ def complete_execution(
             update_fields=["status", "finished_at", "started_at", "updated_at"]
         )
         audit_actor = actor_from_runner(runner_id)
+        if outcome == Execution.Status.SUCCEEDED:
+            _completion_audit_event = "execution.completed"
+        elif outcome == Execution.Status.CANCELLED:
+            _completion_audit_event = "execution.cancelled"
+        else:
+            _completion_audit_event = "execution.failed"
         AuditService.emit(
             organization_id=execution.organization_id,
             actor_type=audit_actor.actor_type,
             actor_id=audit_actor.actor_id,
             actor_label=audit_actor.actor_label,
-            event_type="execution.completed"
-            if outcome == Execution.Status.SUCCEEDED
-            else "execution.failed",
+            event_type=_completion_audit_event,
             object_type=AuditEvent.ObjectType.EXECUTION,
             object_id=execution.id,
             metadata={
@@ -1058,11 +1121,12 @@ def complete_execution(
             },
         ),
     )
-    event_type = (
-        "execution.completed"
-        if outcome == Execution.Status.SUCCEEDED
-        else "execution.failed"
-    )
+    if outcome == Execution.Status.SUCCEEDED:
+        event_type = "execution.completed"
+    elif outcome == Execution.Status.CANCELLED:
+        event_type = "execution.cancelled"
+    else:
+        event_type = "execution.failed"
     _safe_notify_integration(
         event_type=event_type,
         organization=execution.organization,

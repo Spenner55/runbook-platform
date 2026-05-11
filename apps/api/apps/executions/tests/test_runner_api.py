@@ -586,7 +586,7 @@ def test_heartbeat_returns_cancel_requested_true_when_intent_set(queued_executio
     execution = claim_result["execution"]
     claim_token = claim_result["claim_token"]
 
-    # Simulate cancellation intent being stored (service-layer wiring comes in a later step)
+    # Retained for backwards compatibility — tests model-layer read path
     execution.cancel_requested_at = timezone.now()
     execution.cancel_requested_by = "user:test"
     execution.cancel_reason = "user requested"
@@ -604,6 +604,26 @@ def test_heartbeat_returns_cancel_requested_true_when_intent_set(queued_executio
     body = response.json()
     assert body["cancel_requested"] is True
     assert body["cancel_reason"] == "user requested"
+
+
+@pytest.mark.django_db
+def test_heartbeat_returns_cancel_requested_after_cancel_execution(queued_execution):
+    """cancel_execution on a claimed execution sets intent visible via heartbeat."""
+    claim_result = execution_services.claim_next_execution(runner_id="runner-1")
+    execution = claim_result["execution"]
+    claim_token = claim_result["claim_token"]
+
+    execution_services.cancel_execution(execution=execution)
+
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        f"/api/v1/internal/executions/{execution.id}/heartbeat/",
+        data={"runner_id": "runner-1", "claim_token": claim_token},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cancel_requested"] is True
 
 
 @pytest.mark.django_db
