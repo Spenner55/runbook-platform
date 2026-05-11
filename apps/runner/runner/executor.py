@@ -49,6 +49,7 @@ class _HeartbeatThread(threading.Thread):
         execution_id: UUID,
         claim_token: UUID,
         interval: float = _HEARTBEAT_INTERVAL_SECONDS,
+        cancellation_event: threading.Event | None = None,
     ) -> None:
         super().__init__(daemon=True, name="heartbeat")
         self._client = client
@@ -57,6 +58,12 @@ class _HeartbeatThread(threading.Thread):
         self._interval = interval
         self._stop_event = threading.Event()
         self._observed_status = "claimed"
+        self._cancellation_event = cancellation_event if cancellation_event is not None else threading.Event()
+        self._cancel_reason = ""
+
+    @property
+    def cancel_reason(self) -> str:
+        return self._cancel_reason
 
     def set_observed_status(self, status: str) -> None:
         self._observed_status = status
@@ -65,12 +72,20 @@ class _HeartbeatThread(threading.Thread):
         logger.debug("Heartbeat thread started for execution %s", self._execution_id)
         while not self._stop_event.wait(self._interval):
             try:
-                self._client.heartbeat(
+                resp = self._client.heartbeat(
                     self._execution_id,
                     self._claim_token,
                     observed_status=self._observed_status,
                 )
                 logger.debug("Heartbeat sent for execution %s", self._execution_id)
+                if resp.cancel_requested and not self._cancellation_event.is_set():
+                    self._cancel_reason = resp.cancel_reason or ""
+                    logger.info(
+                        "Cancellation requested for execution %s: %s",
+                        self._execution_id,
+                        self._cancel_reason,
+                    )
+                    self._cancellation_event.set()
             except httpx.HTTPError as exc:
                 logger.warning(
                     "Heartbeat failed for execution %s: %s", self._execution_id, exc
@@ -145,13 +160,25 @@ class Executor:
             self._notify_execution_started(execution)
             self._observe_breakglass(execution, claim_token)
 
-        heartbeat = _HeartbeatThread(self._client, execution_id, claim_token)
+        cancellation_event = threading.Event()
+        heartbeat = _HeartbeatThread(
+            self._client, execution_id, claim_token, cancellation_event=cancellation_event
+        )
         heartbeat.start()
         uploader = self._make_uploader(execution_id, claim_token)
 
         outcome = "succeeded"
         try:
             for step in sorted(execution.steps, key=lambda s: s.position):
+                if cancellation_event.is_set():
+                    logger.info(
+                        "Execution %s: cancellation requested before step %d '%s' — stopping",
+                        execution_id,
+                        step.position,
+                        step.name,
+                    )
+                    outcome = "cancelled"
+                    break
                 if step.status in {"succeeded", "skipped"}:
                     logger.info(
                         "Step %d/%s '%s': already %s — skipping",
@@ -171,11 +198,13 @@ class Executor:
                     outcome = "failed"
                     break
                 step_failed = self._run_step(
-                    execution, claim_token, step, heartbeat, uploader
+                    execution, claim_token, step, heartbeat, uploader, cancellation_event
                 )
                 if step_failed:
                     outcome = "failed"
                     break
+            if outcome == "failed" and cancellation_event.is_set():
+                outcome = "cancelled"
         except Exception as exc:
             logger.error(
                 "Unexpected error during execution %s: %s",
@@ -297,6 +326,7 @@ class Executor:
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
         uploader: ArtifactUploader,
+        cancellation_event: threading.Event,
     ) -> bool:
         """
         Run a single step. Returns True if the step failed, False if it succeeded.
@@ -320,13 +350,13 @@ class Executor:
             )
             heartbeat.set_observed_status("running")
             return self._execute_command(
-                execution, claim_token, step, heartbeat, uploader
+                execution, claim_token, step, heartbeat, uploader, cancellation_event
             )
 
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
             return self._wait_for_approval(
-                execution, claim_token, step, heartbeat, start_resp, uploader
+                execution, claim_token, step, heartbeat, start_resp, uploader, cancellation_event
             )
 
         # runner_action == "blocked" or unexpected
@@ -346,6 +376,7 @@ class Executor:
         heartbeat: _HeartbeatThread,
         start_resp,
         uploader: ArtifactUploader,
+        cancellation_event: threading.Event,
     ) -> bool:
         """Poll Django until the approval is decided. Returns True if step failed."""
         poll_interval = (
@@ -356,6 +387,14 @@ class Executor:
 
         while True:
             time.sleep(poll_interval)
+
+            if cancellation_event.is_set():
+                logger.info(
+                    "Step %d '%s': cancellation received while waiting for approval — aborting",
+                    step.position,
+                    step.name,
+                )
+                return True
 
             try:
                 status_resp = self._client.get_step_approval_status(
@@ -389,7 +428,7 @@ class Executor:
                 )
                 heartbeat.set_observed_status("running")
                 return self._execute_command(
-                    execution, claim_token, step, heartbeat, uploader
+                    execution, claim_token, step, heartbeat, uploader, cancellation_event
                 )
 
             # runner_action == "fail"
@@ -408,6 +447,7 @@ class Executor:
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
         uploader: ArtifactUploader,
+        cancellation_event: threading.Event,
     ) -> bool:
         """Dispatch to sandboxed or simulated execution based on settings."""
         if (
@@ -415,7 +455,7 @@ class Executor:
             and self._settings.execution_mode == "sandboxed"
         ):
             return self._execute_sandboxed(
-                execution, claim_token, step, heartbeat, uploader
+                execution, claim_token, step, heartbeat, uploader, cancellation_event
             )
         return self._execute_simulated(
             execution, claim_token, step, heartbeat, uploader
@@ -532,6 +572,7 @@ class Executor:
         step: ClaimedStep,
         heartbeat: _HeartbeatThread,
         uploader: ArtifactUploader,
+        cancellation_event: threading.Event,
     ) -> bool:
         """Execute step via the configured sandbox provider. Returns True if failed."""
         settings = self._settings
@@ -607,10 +648,9 @@ class Executor:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
             return True
 
-        cancellation = threading.Event()
         result = None
         try:
-            result = provider.execute(spec, cancellation)
+            result = provider.execute(spec, cancellation_event)
         except SandboxError as exc:
             logger.error(
                 "Step %d '%s': sandbox infrastructure error: %s",

@@ -273,7 +273,7 @@ class StepUpdateSerializer(serializers.Serializer):
 class ExecutionCompleteSerializer(serializers.Serializer):
     runner_id = serializers.CharField(max_length=255)
     claim_token = serializers.UUIDField()
-    final_status = serializers.ChoiceField(choices=["succeeded", "failed"])
+    final_status = serializers.ChoiceField(choices=["succeeded", "failed", "cancelled"])
     finished_at = serializers.DateTimeField(
         required=False, allow_null=True, default=None
     )

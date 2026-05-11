@@ -329,6 +329,8 @@ class HeartbeatResponse(BaseModel):
     execution_id: UUID | None = None
     status: str
     last_heartbeat_at: datetime | None = None
+    cancel_requested: bool = False
+    cancel_reason: str = ""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -382,7 +384,7 @@ class StepUpdateResponse(BaseModel):
 class CompleteExecutionRequest(BaseModel):
     runner_id: str
     claim_token: UUID
-    final_status: Literal["succeeded", "failed"]
+    final_status: Literal["succeeded", "failed", "cancelled"]
     finished_at: datetime | None = None
     error_message: str = ""
 

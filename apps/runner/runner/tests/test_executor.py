@@ -10,11 +10,13 @@ import pytest
 
 from runner.executor import Executor
 from runner.sandbox.base import CapturedStream, SandboxResult
+from runner.executor import _HeartbeatThread
 from runner.schemas import (
     ApprovalStatusResponse,
     BreakglassSessionFacts,
     ClaimedExecution,
     ClaimedStep,
+    HeartbeatResponse,
     RunnerSettings,
     StepStartResponse,
     VerificationResultResponse,
@@ -889,3 +891,205 @@ def test_sandboxed_artifact_upload_failure_does_not_rerun_command(tmp_path):
     # Command ran exactly once despite upload failure
     assert mock_provider.execute.call_count == 1
     assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# Cancellation token tests
+# ---------------------------------------------------------------------------
+
+
+def _heartbeat_cancel_response(reason: str = "user requested") -> HeartbeatResponse:
+    return HeartbeatResponse(
+        execution_id=uuid4(),
+        status="running",
+        cancel_requested=True,
+        cancel_reason=reason,
+    )
+
+
+def _heartbeat_ok_response() -> HeartbeatResponse:
+    return HeartbeatResponse(
+        execution_id=uuid4(),
+        status="running",
+        cancel_requested=False,
+        cancel_reason="",
+    )
+
+
+def test_heartbeat_cancel_response_flips_cancellation_token():
+    """A heartbeat response with cancel_requested=True must set the cancellation event."""
+    import threading
+
+    client = MagicMock()
+    client.heartbeat.return_value = _heartbeat_cancel_response("operator stop")
+    cancellation_event = threading.Event()
+
+    thread = _HeartbeatThread(
+        client,
+        uuid4(),
+        uuid4(),
+        interval=0.01,
+        cancellation_event=cancellation_event,
+    )
+    thread.start()
+    cancellation_event.wait(timeout=1.0)
+    thread.stop()
+    thread.join(timeout=2.0)
+
+    assert cancellation_event.is_set()
+    assert thread.cancel_reason == "operator stop"
+
+
+def test_heartbeat_no_cancel_does_not_set_token():
+    """A normal heartbeat response must not set the cancellation event."""
+    import threading
+
+    client = MagicMock()
+    client.heartbeat.return_value = _heartbeat_ok_response()
+    cancellation_event = threading.Event()
+
+    thread = _HeartbeatThread(
+        client,
+        uuid4(),
+        uuid4(),
+        interval=0.01,
+        cancellation_event=cancellation_event,
+    )
+    thread.start()
+    # Let it fire a couple of heartbeats
+    import time as _time
+    _time.sleep(0.05)
+    thread.stop()
+    thread.join(timeout=2.0)
+
+    assert not cancellation_event.is_set()
+
+
+def test_cancellation_before_step_prevents_execution():
+    """If cancellation is set before the step loop runs, no steps execute."""
+    import threading
+
+    client = make_client()
+    executor = Executor(client)
+    execution = make_execution([make_step(1), make_step(2)])
+
+    original_run = executor.run
+
+    def run_with_pre_cancel(exec_, token):
+        # Inject cancellation into the shared event before steps start.
+        # We do this by patching _HeartbeatThread to immediately set the event.
+        original_init = _HeartbeatThread.__init__
+
+        def patched_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            self._cancellation_event.set()
+
+        with patch.object(_HeartbeatThread, "__init__", patched_init):
+            executor.run(exec_, token)
+
+    run_with_pre_cancel(execution, uuid4())
+
+    client.start_step.assert_not_called()
+    client.complete_execution.assert_called_once()
+    assert client.complete_execution.call_args.kwargs["final_status"] == "cancelled"
+
+
+def test_cancellation_does_not_execute_later_steps():
+    """After step 1 completes, cancellation set at that point must prevent step 2 from running."""
+    import threading
+
+    cancellation_holder: list[threading.Event] = []
+
+    original_hb_init = _HeartbeatThread.__init__
+
+    def patched_hb_init(self, *args, **kwargs):
+        original_hb_init(self, *args, **kwargs)
+        cancellation_holder.append(self._cancellation_event)
+
+    client = make_client()
+
+    # Set cancellation after step 1's update_step is called (simulates heartbeat firing)
+    original_update_step = client.update_step
+
+    def update_step_and_cancel(*args, **kwargs):
+        if cancellation_holder:
+            cancellation_holder[0].set()
+        return MagicMock()
+
+    client.update_step.side_effect = update_step_and_cancel
+
+    executor = Executor(client)
+    execution = make_execution([make_step(1), make_step(2)])
+
+    with patch.object(_HeartbeatThread, "__init__", patched_hb_init):
+        run_execution(executor, execution)
+
+    # Step 1 ran; step 2 must have been skipped
+    assert client.start_step.call_count == 1
+    final_status = client.complete_execution.call_args.kwargs["final_status"]
+    assert final_status == "cancelled"
+
+
+def test_cancelled_sandbox_result_reported_to_django(tmp_path):
+    """When provider returns cancelled=True, update_step must be called with cancelled=True."""
+    client = make_client()
+    mock_provider = make_mock_provider(
+        make_sandbox_result(cancelled=True, exit_code=None, error_message="Step was cancelled")
+    )
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    failed_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("cancelled") is True
+    assert failed_calls[0].kwargs.get("failure_kind") == "cancelled"
+
+
+def test_cancellation_during_approval_wait_stops_execution():
+    """Cancellation set during approval wait must abort the wait and complete as cancelled."""
+    import threading as _threading
+
+    client = MagicMock()
+    client.start_step.return_value = StepStartResponse(
+        execution_id=uuid4(),
+        execution_status="claimed",
+        step={"id": str(uuid4()), "status": "waiting_for_approval"},
+        runner_action="wait_for_approval",
+        poll_after_seconds=0,
+    )
+
+    cancellation_holder: list[_threading.Event] = []
+
+    original_hb_init = _HeartbeatThread.__init__
+
+    def patched_hb_init(self, *args, **kwargs):
+        original_hb_init(self, *args, **kwargs)
+        cancellation_holder.append(self._cancellation_event)
+
+    # We need to set cancellation AFTER the first time.sleep in _wait_for_approval runs.
+    # mock_sleep patches time.sleep to a no-op, so we patch it to also set cancellation.
+    sleep_call_count = {"n": 0}
+
+    def cancel_on_second_sleep(seconds):
+        sleep_call_count["n"] += 1
+        if sleep_call_count["n"] >= 1 and cancellation_holder:
+            cancellation_holder[0].set()
+
+    with patch.object(_HeartbeatThread, "__init__", patched_hb_init):
+        with patch("runner.executor.time.sleep", cancel_on_second_sleep):
+            executor = Executor(client)
+            execution = make_execution([make_step(1, requires_approval=True), make_step(2)])
+            executor.run(execution, uuid4())
+
+    # Approval polling must not have been called (cancellation arrived before first poll)
+    client.get_step_approval_status.assert_not_called()
+    # Step 2 must not have started
+    assert client.start_step.call_count == 1
+    final_status = client.complete_execution.call_args.kwargs["final_status"]
+    assert final_status == "cancelled"

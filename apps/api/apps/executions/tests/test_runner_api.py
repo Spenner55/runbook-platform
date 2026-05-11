@@ -328,7 +328,7 @@ def test_complete_invalid_final_status_returns_400(queued_execution):
         data={
             "runner_id": "runner-1",
             "claim_token": claim_token,
-            "final_status": "cancelled",  # not a valid final_status
+            "final_status": "queued",  # not a valid final_status
         },
         content_type="application/json",
     )
