@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from runner.executor import Executor
+from runner.sandbox.base import CapturedStream, SandboxResult
 from runner.schemas import (
     ApprovalStatusResponse,
     BreakglassSessionFacts,
     ClaimedExecution,
     ClaimedStep,
+    RunnerSettings,
     StepStartResponse,
     VerificationResultResponse,
 )
@@ -590,3 +592,300 @@ def test_executor_does_not_treat_callback_response_as_final_authority():
 
     assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
     assert not hasattr(client, "close_change") or client.close_change.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Sandboxed execution tests
+# ---------------------------------------------------------------------------
+
+
+def _empty_stream(content: bytes = b"") -> CapturedStream:
+    return CapturedStream(
+        content=content,
+        truncated=False,
+        original_size_bytes=len(content),
+        captured_size_bytes=len(content),
+    )
+
+
+def make_sandbox_result(
+    *,
+    exit_code: int = 0,
+    timed_out: bool = False,
+    cancelled: bool = False,
+    failure_kind: str = "",
+    error_message: str = "",
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> SandboxResult:
+    now = datetime.now(tz=UTC)
+    return SandboxResult(
+        provider="local_process",
+        sandbox_run_id="test-run-1",
+        started_at=now,
+        finished_at=now,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        cancelled=cancelled,
+        failure_kind=failure_kind,
+        error_message=error_message,
+        stdout=_empty_stream(stdout),
+        stderr=_empty_stream(stderr),
+        artifacts=[],
+        metadata={},
+    )
+
+
+def make_mock_provider(result: SandboxResult) -> MagicMock:
+    provider = MagicMock()
+    provider.name = "local_process"
+    provider.validate.return_value = None
+    provider.execute.return_value = result
+    provider.cleanup.return_value = None
+    return provider
+
+
+def make_sandboxed_settings(workspace_root: str) -> RunnerSettings:
+    return RunnerSettings(
+        api_base_url="http://api:8000",
+        runner_id="test-runner",
+        registration_token="test-token-secret",
+        execution_mode="sandboxed",
+        sandbox_provider="local_process",
+        sandbox_workspace_root=workspace_root,
+    )
+
+
+def make_command_step(position: int, command: str = "echo hello") -> ClaimedStep:
+    return ClaimedStep(
+        id=uuid4(),
+        position=position,
+        step_key=f"step-{position}",
+        name=f"Step {position}",
+        step_type="command",
+        risk_level="low",
+        command=command,
+        status="pending",
+    )
+
+
+def make_unsupported_step(position: int) -> ClaimedStep:
+    return ClaimedStep(
+        id=uuid4(),
+        position=position,
+        step_key=f"step-{position}",
+        name=f"Step {position}",
+        step_type="manual",
+        risk_level="low",
+        command="",
+        status="pending",
+    )
+
+
+def test_sandboxed_start_gate_called_before_execution(tmp_path):
+    """start_step must be called before provider.execute in sandboxed mode."""
+    call_order = []
+    client = MagicMock()
+    client.start_step.side_effect = lambda *a, **kw: (
+        call_order.append("start_step") or _run_response()
+    )
+    mock_provider = make_mock_provider(make_sandbox_result(stdout=b"ok\n"))
+    mock_provider.execute.side_effect = lambda *a, **kw: (
+        call_order.append("execute") or make_sandbox_result(stdout=b"ok\n")
+    )
+
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    assert "start_step" in call_order
+    assert "execute" in call_order
+    assert call_order.index("start_step") < call_order.index("execute")
+
+
+def test_sandboxed_blocked_step_not_executed(tmp_path):
+    """Blocked step must not call provider.execute."""
+    client = MagicMock()
+    client.start_step.return_value = StepStartResponse(
+        execution_id=uuid4(),
+        execution_status="running",
+        step={"id": str(uuid4()), "status": "failed"},
+        runner_action="blocked",
+        poll_after_seconds=0,
+    )
+    mock_provider = make_mock_provider(make_sandbox_result())
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    mock_provider.execute.assert_not_called()
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_sandboxed_approval_path_works(tmp_path):
+    """Approval gate still works in sandboxed mode; command runs after approval."""
+    client = MagicMock()
+    client.start_step.return_value = StepStartResponse(
+        execution_id=uuid4(),
+        execution_status="claimed",
+        step={"id": str(uuid4()), "status": "waiting_for_approval"},
+        runner_action="wait_for_approval",
+        poll_after_seconds=0,
+    )
+    client.get_step_approval_status.return_value = ApprovalStatusResponse(
+        execution_id=uuid4(),
+        execution_status="running",
+        step_id=uuid4(),
+        step_status="running",
+        approval_request=None,
+        runner_action="run",
+        poll_after_seconds=0,
+    )
+    mock_provider = make_mock_provider(make_sandbox_result(stdout=b"approved\n"))
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    step = make_command_step(1, "echo approved")
+    step = ClaimedStep(
+        **{**step.model_dump(), "requires_approval": True}
+    )
+    execution = make_execution([step])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    mock_provider.execute.assert_called_once()
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+
+
+def test_sandboxed_successful_real_command(tmp_path):
+    """A real `echo` command in sandboxed mode should succeed with exit_code=0."""
+    client = make_client()
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "echo hello")])
+
+    run_execution(executor, execution)
+
+    succeeded_calls = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "succeeded"
+    ]
+    assert len(succeeded_calls) == 1
+    assert succeeded_calls[0].kwargs.get("exit_code") == 0
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+
+
+def test_sandboxed_nonzero_command_fails_with_exit_code(tmp_path):
+    """A command that exits non-zero must report status=failed with the correct exit_code."""
+    client = make_client()
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "exit 42")])
+
+    run_execution(executor, execution)
+
+    failed_calls = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("exit_code") == 42
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_sandboxed_timeout_fails_with_failure_kind_timeout(tmp_path):
+    """A timed-out step must report status=failed and failure_kind=timeout."""
+    client = make_client()
+    mock_provider = make_mock_provider(
+        make_sandbox_result(timed_out=True, exit_code=None, failure_kind="timeout")
+    )
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "sleep 9999")])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    failed_calls = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("failure_kind") == "timeout"
+    assert failed_calls[0].kwargs.get("timed_out") is True
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_sandboxed_unsupported_step_type_fails_closed(tmp_path):
+    """A step with an unsupported step_type must fail without calling provider.execute."""
+    client = make_client()
+    mock_provider = make_mock_provider(make_sandbox_result())
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_unsupported_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    mock_provider.execute.assert_not_called()
+    failed_calls = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("failure_kind") == "unsupported_step_type"
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_sandboxed_stdout_stderr_uploaded_before_terminal_update(tmp_path):
+    """stdout/stderr artifacts must be uploaded before update_step is called."""
+    call_order = []
+    client = make_client()
+    client.upload_artifact.side_effect = lambda *a, **kw: (
+        call_order.append("upload") or MagicMock()
+    )
+    client.update_step.side_effect = lambda *a, **kw: (
+        call_order.append("update_step") or MagicMock()
+    )
+    mock_provider = make_mock_provider(
+        make_sandbox_result(stdout=b"hello\n", stderr=b"warning\n")
+    )
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    assert "upload" in call_order
+    assert "update_step" in call_order
+    assert call_order.index("upload") < call_order.index("update_step")
+
+
+def test_sandboxed_artifact_upload_failure_does_not_rerun_command(tmp_path):
+    """Upload failure must not cause the command to be re-executed."""
+    import httpx
+
+    client = make_client()
+    client.upload_artifact.side_effect = httpx.ConnectError("storage down")
+    mock_provider = make_mock_provider(make_sandbox_result(stdout=b"done\n"))
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1)])
+
+    with patch("runner.executor.get_provider", return_value=mock_provider):
+        run_execution(executor, execution)
+
+    # Command ran exactly once despite upload failure
+    assert mock_provider.execute.call_count == 1
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"

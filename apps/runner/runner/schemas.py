@@ -346,6 +346,11 @@ class StepUpdateRequest(BaseModel):
     finished_at: datetime | None = None
     exit_code: int | None = None
     error_message: str = ""
+    failure_kind: str = ""
+    timed_out: bool = False
+    cancelled: bool = False
+    sandbox_provider: str = ""
+    sandbox_run_id: str = ""
 
     model_config = ConfigDict(extra="forbid")
 
