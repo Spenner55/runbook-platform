@@ -30,6 +30,12 @@ export interface ExecutionStep {
   exit_code: number | null
   error_message: string
   policy_evaluation: PolicyEvaluationSummary | null
+  failure_kind: string | null
+  timed_out: boolean
+  cancelled: boolean
+  sandbox_provider: string | null
+  sandbox_run_id: string | null
+  result_metadata: Record<string, unknown> | null
 }
 
 export interface ExecutionDetail {
@@ -40,12 +46,16 @@ export interface ExecutionDetail {
   workflow_version: number
   workflow_snapshot: Record<string, unknown>
   claimed_by_runner_id: string
+  claim_token_present: boolean
   claimed_at: string | null
   last_heartbeat_at: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string
   updated_at: string
+  cancel_requested_at: string | null
+  cancel_requested_by: string | null
+  cancel_reason: string | null
   steps: ExecutionStep[]
 }
 

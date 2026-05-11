@@ -1103,4 +1103,287 @@ describe('ExecutionDetailPage', () => {
       expect(screen.getByText('Artifact file not found in storage.')).toBeInTheDocument()
     })
   })
+
+  it('shows timed-out banner on a step with timed_out=true', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'failed',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claim_token_present: false,
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:00:02Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:02Z',
+      cancel_requested_at: null,
+      cancel_requested_by: null,
+      cancel_reason: null,
+      steps: [
+        {
+          id: 'step-1',
+          position: 1,
+          step_key: 'sleep',
+          name: 'Long sleep',
+          step_type: 'shell',
+          risk_level: 'low',
+          command: 'sleep 30',
+          requires_approval: false,
+          status: 'failed',
+          started_at: '2026-04-15T10:00:01Z',
+          finished_at: '2026-04-15T10:00:02Z',
+          exit_code: null,
+          error_message: 'timed_out',
+          failure_kind: 'timeout',
+          timed_out: true,
+          cancelled: false,
+          sandbox_provider: 'subprocess',
+          sandbox_run_id: 'run-abc-123',
+          result_metadata: null,
+          policy_evaluation: null,
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Step timed out.')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/Failure kind: timeout/i)).toBeInTheDocument()
+  })
+
+  it('shows cancellation requested banner on an active execution', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'running',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claim_token_present: true,
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: '2026-04-15T10:00:10Z',
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: null,
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:10Z',
+      cancel_requested_at: '2026-04-15T10:00:08Z',
+      cancel_requested_by: 'user-operator-1',
+      cancel_reason: 'Manual stop',
+      steps: [],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Cancellation requested at/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/Manual stop/i)).toBeInTheDocument()
+  })
+
+  it('shows sandbox provider and run ID on a step', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claim_token_present: false,
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:01:00Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:01:00Z',
+      cancel_requested_at: null,
+      cancel_requested_by: null,
+      cancel_reason: null,
+      steps: [
+        {
+          id: 'step-1',
+          position: 1,
+          step_key: 'verify',
+          name: 'Verify prereqs',
+          step_type: 'shell',
+          risk_level: 'low',
+          command: 'echo hello',
+          requires_approval: false,
+          status: 'succeeded',
+          started_at: '2026-04-15T10:00:01Z',
+          finished_at: '2026-04-15T10:00:05Z',
+          exit_code: 0,
+          error_message: '',
+          failure_kind: null,
+          timed_out: false,
+          cancelled: false,
+          sandbox_provider: 'subprocess',
+          sandbox_run_id: 'run-xyz-789',
+          result_metadata: null,
+          policy_evaluation: null,
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Sandbox: subprocess/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/run run-xyz-789/i)).toBeInTheDocument()
+  })
+
+  it('does not render claim_token or other sensitive fields in the DOM', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'succeeded',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claim_token_present: false,
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:01:00Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:01:00Z',
+      cancel_requested_at: null,
+      cancel_requested_by: null,
+      cancel_reason: null,
+      steps: [],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('succeeded')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/claim_token/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/dispatch_token/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/runner_token/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/RUNNER_REGISTRATION_TOKEN/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\/home\//i)).not.toBeInTheDocument()
+  })
+
+  it('shows cancelled banner on a step with cancelled=true but not timed out', async () => {
+    const execution = {
+      id: 'execution-1',
+      status: 'cancelled',
+      workflow_id: 'workflow-1',
+      organization_id: 'org-1',
+      workflow_version: 1,
+      workflow_snapshot: {},
+      claimed_by_runner_id: 'runner-dev-01',
+      claim_token_present: false,
+      claimed_at: '2026-04-15T10:00:01Z',
+      last_heartbeat_at: null,
+      started_at: '2026-04-15T10:00:00Z',
+      finished_at: '2026-04-15T10:00:05Z',
+      created_at: '2026-04-15T10:00:00Z',
+      updated_at: '2026-04-15T10:00:05Z',
+      cancel_requested_at: '2026-04-15T10:00:03Z',
+      cancel_requested_by: 'user-1',
+      cancel_reason: null,
+      steps: [
+        {
+          id: 'step-1',
+          position: 1,
+          step_key: 'deploy',
+          name: 'Deploy service',
+          step_type: 'shell',
+          risk_level: 'high',
+          command: 'deploy.sh',
+          requires_approval: false,
+          status: 'cancelled',
+          started_at: '2026-04-15T10:00:01Z',
+          finished_at: '2026-04-15T10:00:05Z',
+          exit_code: null,
+          error_message: '',
+          failure_kind: 'cancelled',
+          timed_out: false,
+          cancelled: true,
+          sandbox_provider: 'subprocess',
+          sandbox_run_id: 'run-cancel-99',
+          result_metadata: null,
+          policy_evaluation: null,
+        },
+      ],
+    }
+
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/artifacts/')) return createJsonResponse(emptyArtifacts)
+      if (url.includes('/audit/'))
+        return createJsonResponse({ count: 0, next: null, previous: null, results: [] })
+      return createJsonResponse(execution)
+    })
+
+    renderRoute(<ExecutionDetailPage />, {
+      path: '/executions/:executionId',
+      route: '/executions/execution-1',
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Step was cancelled.')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Step timed out.')).not.toBeInTheDocument()
+  })
 })

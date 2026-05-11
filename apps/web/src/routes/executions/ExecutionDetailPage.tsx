@@ -278,6 +278,17 @@ export function ExecutionDetailPage() {
           </div>
 
           {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) &&
+          executionQuery.data.cancel_requested_at ? (
+            <p className="banner banner--warn">
+              Cancellation requested at{' '}
+              {formatDateTime(executionQuery.data.cancel_requested_at)}
+              {executionQuery.data.cancel_reason
+                ? ` · ${executionQuery.data.cancel_reason}`
+                : ''}
+            </p>
+          ) : null}
+
+          {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) &&
           (executionQuery.isStreaming || executionQuery.isPollingFallback) ? (
             <p className="banner banner--info">
               {executionQuery.isPollingFallback
@@ -305,12 +316,33 @@ export function ExecutionDetailPage() {
                         <a href="/approvals">Go to Approvals Inbox</a>
                       </p>
                     ) : null}
+                    {step.timed_out ? (
+                      <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
+                        Step timed out.
+                      </p>
+                    ) : null}
+                    {step.cancelled && !step.timed_out ? (
+                      <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
+                        Step was cancelled.
+                      </p>
+                    ) : null}
+                    {step.failure_kind && step.failure_kind !== 'policy_blocked' ? (
+                      <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+                        Failure kind: {step.failure_kind}
+                      </p>
+                    ) : null}
                     {step.error_message && step.error_message !== 'policy_blocked' ? (
                       <p className="field__error">{step.error_message}</p>
                     ) : null}
                     {step.error_message === 'policy_blocked' ? (
                       <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
                         Blocked by policy before command execution.
+                      </p>
+                    ) : null}
+                    {step.sandbox_provider ? (
+                      <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+                        Sandbox: {step.sandbox_provider}
+                        {step.sandbox_run_id ? ` · run ${step.sandbox_run_id}` : ''}
                       </p>
                     ) : null}
                     {step.policy_evaluation ? (
