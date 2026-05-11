@@ -27,6 +27,12 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "exit_code",
             "error_message",
             "policy_evaluation",
+            "failure_kind",
+            "timed_out",
+            "cancelled",
+            "sandbox_provider",
+            "sandbox_run_id",
+            "result_metadata",
         ]
 
     def get_policy_evaluation(self, obj):
@@ -92,6 +98,9 @@ class ExecutionDetailSerializer(serializers.ModelSerializer):
             "finished_at",
             "created_at",
             "updated_at",
+            "cancel_requested_at",
+            "cancel_requested_by",
+            "cancel_reason",
             "steps",
         ]
 

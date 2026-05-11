@@ -4,13 +4,18 @@ Serializers for internal runner endpoints.
 These must never be imported by public CRUD views.
 """
 
+import json
 import logging
+import re
 
 from rest_framework import serializers
 
 from apps.executions.models import Execution, ExecutionStep
 
 logger = logging.getLogger(__name__)
+
+_RESULT_METADATA_MAX_BYTES = 8192
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ClaimNextRequestSerializer(serializers.Serializer):
@@ -214,6 +219,55 @@ class StepUpdateSerializer(serializers.Serializer):
     )
     exit_code = serializers.IntegerField(required=False, allow_null=True, default=None)
     error_message = serializers.CharField(required=False, allow_blank=True, default="")
+
+    # Optional sandbox result fields — sent by the runner once real execution
+    # is implemented; ignored (defaulted) by older runners.
+    failure_kind = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
+    timed_out = serializers.BooleanField(required=False, default=False)
+    cancelled = serializers.BooleanField(required=False, default=False)
+    sandbox_provider = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
+    sandbox_run_id = serializers.CharField(
+        max_length=128, required=False, allow_blank=True, default=""
+    )
+    command_sha256 = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
+    result_metadata = serializers.JSONField(required=False, default=dict)
+    stdout_artifact_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
+    stderr_artifact_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
+    artifact_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+
+    def validate_command_sha256(self, value: str) -> str:
+        if value and not _SHA256_RE.match(value):
+            raise serializers.ValidationError(
+                "command_sha256 must be exactly 64 lowercase hex characters."
+            )
+        return value
+
+    def validate_result_metadata(self, value) -> dict:
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("result_metadata must be a JSON object.")
+        try:
+            encoded = json.dumps(value)
+        except (TypeError, ValueError) as exc:
+            raise serializers.ValidationError(
+                "result_metadata must be JSON-serializable."
+            ) from exc
+        if len(encoded.encode("utf-8")) > _RESULT_METADATA_MAX_BYTES:
+            raise serializers.ValidationError(
+                f"result_metadata exceeds maximum size of {_RESULT_METADATA_MAX_BYTES} bytes."
+            )
+        return value
 
 
 class ExecutionCompleteSerializer(serializers.Serializer):

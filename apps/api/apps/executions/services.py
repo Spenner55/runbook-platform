@@ -784,6 +784,13 @@ def update_execution_step(
     finished_at=None,
     exit_code=None,
     error_message: str = "",
+    failure_kind: str = "",
+    timed_out: bool = False,
+    cancelled: bool = False,
+    sandbox_provider: str = "",
+    sandbox_run_id: str = "",
+    command_sha256: str = "",
+    result_metadata: dict | None = None,
     _allow_running: bool = False,
 ) -> ExecutionStep:
     """
@@ -843,6 +850,27 @@ def update_execution_step(
             if error_message:
                 step.error_message = error_message
                 update_fields.append("error_message")
+
+        # Persist sandbox result fields on any terminal step transition.
+        # These are always included even when empty so that partial updates
+        # (e.g. only failure_kind set) are not silently dropped.
+        if new_status in (ExecutionStep.Status.SUCCEEDED, ExecutionStep.Status.FAILED):
+            step.failure_kind = failure_kind
+            step.timed_out = timed_out
+            step.cancelled = cancelled
+            step.sandbox_provider = sandbox_provider
+            step.sandbox_run_id = sandbox_run_id
+            step.command_sha256 = command_sha256
+            step.result_metadata = result_metadata if result_metadata is not None else {}
+            update_fields += [
+                "failure_kind",
+                "timed_out",
+                "cancelled",
+                "sandbox_provider",
+                "sandbox_run_id",
+                "command_sha256",
+                "result_metadata",
+            ]
 
         step.save(update_fields=update_fields)
 
@@ -1160,6 +1188,11 @@ def _emit_step_transition_audit(
         "new_status": new_status,
         "exit_code": step.exit_code,
         "error_message": safe_error,
+        "failure_kind": step.failure_kind,
+        "timed_out": step.timed_out,
+        "cancelled": step.cancelled,
+        "sandbox_provider": step.sandbox_provider,
+        "sandbox_run_id": step.sandbox_run_id,
     }
     audit_actor = actor_from_runner(runner_id)
     AuditService.emit(
