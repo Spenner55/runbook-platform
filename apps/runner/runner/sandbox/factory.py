@@ -3,31 +3,10 @@
 from __future__ import annotations
 
 from runner.sandbox.base import SandboxProvider, SandboxValidationError
-
-
-class _LocalProcessStub:
-    """Placeholder for LocalProcessSandboxProvider — subprocess execution is Phase A step 5+."""
-
-    name = "local_process"
-
-    def validate(self, spec) -> None:
-        raise NotImplementedError(
-            "LocalProcessSandboxProvider.validate is not yet implemented"
-        )
-
-    def execute(self, spec, cancellation_token) -> None:
-        raise NotImplementedError(
-            "LocalProcessSandboxProvider.execute is not yet implemented"
-        )
-
-    def cleanup(self, spec, result) -> None:
-        raise NotImplementedError(
-            "LocalProcessSandboxProvider.cleanup is not yet implemented"
-        )
-
+from runner.sandbox.local_process import LocalProcessSandboxProvider
 
 _REGISTRY: dict[str, type] = {
-    "local_process": _LocalProcessStub,
+    "local_process": LocalProcessSandboxProvider,
 }
 
 

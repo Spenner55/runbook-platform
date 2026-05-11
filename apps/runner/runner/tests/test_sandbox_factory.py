@@ -4,11 +4,17 @@ import pytest
 
 from runner.sandbox.base import SandboxValidationError
 from runner.sandbox.factory import get_provider
+from runner.sandbox.local_process import LocalProcessSandboxProvider
 
 
 def test_get_local_process_returns_provider():
     p = get_provider("local_process")
     assert p.name == "local_process"
+
+
+def test_get_local_process_returns_real_implementation():
+    p = get_provider("local_process")
+    assert isinstance(p, LocalProcessSandboxProvider)
 
 
 def test_invalid_provider_raises_validation_error():
@@ -19,21 +25,3 @@ def test_invalid_provider_raises_validation_error():
 def test_invalid_provider_error_lists_available():
     with pytest.raises(SandboxValidationError, match="local_process"):
         get_provider("bad_name")
-
-
-def test_local_process_validate_not_implemented():
-    p = get_provider("local_process")
-    with pytest.raises(NotImplementedError):
-        p.validate(None)
-
-
-def test_local_process_execute_not_implemented():
-    p = get_provider("local_process")
-    with pytest.raises(NotImplementedError):
-        p.execute(None, None)
-
-
-def test_local_process_cleanup_not_implemented():
-    p = get_provider("local_process")
-    with pytest.raises(NotImplementedError):
-        p.cleanup(None, None)

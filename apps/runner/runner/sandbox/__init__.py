@@ -14,11 +14,13 @@ from runner.sandbox.base import (
     SandboxValidationError,
 )
 from runner.sandbox.factory import get_provider
+from runner.sandbox.local_process import LocalProcessSandboxProvider
 
 __all__ = [
     "ArtifactSpec",
     "CapturedStream",
     "CollectedArtifact",
+    "LocalProcessSandboxProvider",
     "SandboxError",
     "SandboxExecutionSpec",
     "SandboxLimits",
