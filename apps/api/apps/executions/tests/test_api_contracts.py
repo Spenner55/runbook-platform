@@ -244,3 +244,90 @@ def test_list_execution_uses_short_response_cache(execution, api_client_for_org)
     assert second.status_code == 200
     assert second.json() == first.json()
     assert captured.captured_queries == []
+
+
+# ---------------------------------------------------------------------------
+# Public API security: raw command must not be exposed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_execution_detail_step_does_not_expose_command(execution, api_client_for_org):
+    """Public execution detail must not return raw command text on steps."""
+    client = _client_for_execution(api_client_for_org, execution)
+    response = client.get(f"/api/v1/executions/{execution.id}/")
+    assert response.status_code == 200
+    body = response.json()
+    for step in body["steps"]:
+        assert "command" not in step, (
+            "Raw command must not appear in public execution step response"
+        )
+
+
+@pytest.mark.django_db
+def test_execution_detail_step_does_not_expose_inline_secret(org, api_client_for_org):
+    """A workflow command containing an inline secret token must not appear in the public API."""
+    from apps.runbooks import services as rb_services
+    from apps.workflows import services as wf_services
+    from apps.workflows.internal_clients import StubWorkflowTransformClient
+
+    rb = rb_services.create_runbook(
+        organization=org,
+        title="Secret Command Runbook",
+        slug="secret-cmd-inline-rb",
+        raw_content="Deploy with token",
+    )
+    wf = wf_services.create_workflow(runbook=rb, transform_client=StubWorkflowTransformClient())
+    # Inject a step with an inline secret into the workflow definition
+    secret_command = "curl -H 'Authorization: Bearer super-secret-api-token-abc123' https://api.example.com"
+    wf.definition["steps"][0]["command"] = secret_command
+    wf.save(update_fields=["definition"])
+    published = wf_services.publish_workflow(workflow=wf)
+    ex = execution_services.create_execution(workflow=published)
+
+    client = api_client_for_org(org)
+    response = client.get(f"/api/v1/executions/{ex.id}/")
+    assert response.status_code == 200
+    response_text = response.content.decode()
+    assert "super-secret-api-token-abc123" not in response_text, (
+        "Inline secret in command must not appear in public execution detail response"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API: empty-string → null normalization for optional fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_execution_step_sandbox_fields_null_when_not_populated(execution, api_client_for_org):
+    """sandbox_provider, sandbox_run_id, and failure_kind must serialize as null when blank."""
+    client = _client_for_execution(api_client_for_org, execution)
+    response = client.get(f"/api/v1/executions/{execution.id}/")
+    assert response.status_code == 200
+    body = response.json()
+    for step in body["steps"]:
+        assert step["sandbox_provider"] is None, (
+            f"sandbox_provider should be null when blank, got {step['sandbox_provider']!r}"
+        )
+        assert step["sandbox_run_id"] is None, (
+            f"sandbox_run_id should be null when blank, got {step['sandbox_run_id']!r}"
+        )
+        assert step["failure_kind"] is None, (
+            f"failure_kind should be null when blank, got {step['failure_kind']!r}"
+        )
+
+
+@pytest.mark.django_db
+def test_execution_detail_cancel_fields_null_when_not_requested(execution, api_client_for_org):
+    """cancel_requested_by and cancel_reason must be null when no cancellation was requested."""
+    client = _client_for_execution(api_client_for_org, execution)
+    response = client.get(f"/api/v1/executions/{execution.id}/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cancel_requested_by"] is None, (
+        f"cancel_requested_by should be null when blank, got {body['cancel_requested_by']!r}"
+    )
+    assert body["cancel_reason"] is None, (
+        f"cancel_reason should be null when blank, got {body['cancel_reason']!r}"
+    )

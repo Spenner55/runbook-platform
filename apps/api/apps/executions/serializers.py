@@ -19,7 +19,6 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "name",
             "step_type",
             "risk_level",
-            "command",
             "requires_approval",
             "status",
             "started_at",
@@ -52,6 +51,13 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
         from apps.policies.serializers import PolicyEvaluationSummarySerializer
 
         return PolicyEvaluationSummarySerializer(evaluation).data
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in ("sandbox_provider", "sandbox_run_id", "failure_kind"):
+            if data.get(field) == "":
+                data[field] = None
+        return data
 
 
 class ExecutionCreateSerializer(serializers.Serializer):
@@ -106,6 +112,18 @@ class ExecutionDetailSerializer(serializers.ModelSerializer):
 
     def get_claim_token_present(self, obj):
         return obj.claim_token is not None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in ("cancel_requested_by", "cancel_reason"):
+            if data.get(field) == "":
+                data[field] = None
+        # Strip command from workflow_snapshot steps — commands may contain inline secrets.
+        snapshot = data.get("workflow_snapshot")
+        if snapshot and isinstance(snapshot.get("steps"), list):
+            for step in snapshot["steps"]:
+                step.pop("command", None)
+        return data
 
 
 class ExecutionCancelSerializer(serializers.Serializer):

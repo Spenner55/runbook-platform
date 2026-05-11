@@ -41,6 +41,7 @@ class InternalExecutionStepSerializer(serializers.ModelSerializer):
             "command",
             "requires_approval",
             "status",
+            "step_snapshot",
         ]
 
 

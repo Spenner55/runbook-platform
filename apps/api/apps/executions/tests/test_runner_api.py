@@ -643,3 +643,52 @@ def test_heartbeat_wrong_token_still_rejected_with_new_fields(queued_execution):
     )
     assert response.status_code == 409
     assert response.json()["errors"][0]["code"] == "claim_token_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# step_snapshot propagation in claim payload
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_claim_next_step_snapshot_present_in_response(queued_execution):
+    """Claimed step payload must include step_snapshot so the runner can read timeoutSeconds."""
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    steps = body["execution"]["steps"]
+    assert len(steps) > 0
+    for step in steps:
+        assert "step_snapshot" in step, "step_snapshot must be present in claimed step"
+        assert isinstance(step["step_snapshot"], dict)
+
+
+@pytest.mark.django_db
+def test_claim_next_step_snapshot_keys_match_workflow_step(queued_execution):
+    """step_snapshot keys must match the original workflow step definition."""
+    from apps.executions.models import ExecutionStep
+
+    # Get the first step's snapshot directly from the DB
+    db_step = ExecutionStep.objects.filter(execution=queued_execution).first()
+    assert db_step is not None
+    assert isinstance(db_step.step_snapshot, dict)
+    assert "id" in db_step.step_snapshot
+
+    # Verify the same data appears in the API response
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    body = response.json()
+    api_step = next(
+        s for s in body["execution"]["steps"] if s["step_key"] == db_step.step_key
+    )
+    assert api_step["step_snapshot"]["id"] == db_step.step_snapshot["id"]

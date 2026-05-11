@@ -228,6 +228,7 @@ class ClaimedStep(BaseModel):
     status: Literal[
         "pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"
     ]
+    step_snapshot: dict[str, Any] = {}
 
     model_config = ConfigDict(extra="ignore")
 

@@ -605,8 +605,15 @@ class Executor:
         ws_path = wm.build_workspace_path(
             execution.id, step.position, step.step_key, step.id
         )
+
+        # Use workflow-declared timeout when present; clamp to runner default max.
+        timeout_seconds = settings.sandbox_default_timeout_seconds
+        raw_timeout = step.step_snapshot.get("timeoutSeconds") if step.step_snapshot else None
+        if isinstance(raw_timeout, (int, float)) and raw_timeout > 0:
+            timeout_seconds = min(int(raw_timeout), settings.sandbox_default_timeout_seconds)
+
         limits = SandboxLimits(
-            timeout_seconds=settings.sandbox_default_timeout_seconds,
+            timeout_seconds=timeout_seconds,
             stdout_max_bytes=settings.sandbox_stdout_max_bytes,
             stderr_max_bytes=settings.sandbox_stderr_max_bytes,
             artifact_max_bytes=settings.sandbox_artifact_max_bytes,
@@ -678,7 +685,7 @@ class Executor:
             failure_kind = "timeout"
             error_message = (
                 result.error_message
-                or f"Step timed out after {settings.sandbox_default_timeout_seconds}s"
+                or f"Step timed out after {timeout_seconds}s"
             )
         elif result.cancelled:
             step_status = "failed"

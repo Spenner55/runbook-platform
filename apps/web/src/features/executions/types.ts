@@ -22,7 +22,7 @@ export interface ExecutionStep {
   name: string
   step_type: string
   risk_level: string
-  command: string
+  command?: string | null
   requires_approval: boolean
   status: string
   started_at: string | null

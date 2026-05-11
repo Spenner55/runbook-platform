@@ -658,7 +658,13 @@ def make_sandboxed_settings(workspace_root: str) -> RunnerSettings:
     )
 
 
-def make_command_step(position: int, command: str = "echo hello") -> ClaimedStep:
+def make_command_step(
+    position: int,
+    command: str = "echo hello",
+    *,
+    step_snapshot: dict | None = None,
+) -> ClaimedStep:
+    snapshot = step_snapshot if step_snapshot is not None else {"id": f"step-{position}", "command": command}
     return ClaimedStep(
         id=uuid4(),
         position=position,
@@ -668,6 +674,7 @@ def make_command_step(position: int, command: str = "echo hello") -> ClaimedStep
         risk_level="low",
         command=command,
         status="pending",
+        step_snapshot=snapshot,
     )
 
 
@@ -1093,3 +1100,153 @@ def test_cancellation_during_approval_wait_stops_execution():
     assert client.start_step.call_count == 1
     final_status = client.complete_execution.call_args.kwargs["final_status"]
     assert final_status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: real sandbox + real commands, mocked ApiClient
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_real_stdout_content_passed_to_upload(tmp_path):
+    """Real printf command — stdout bytes must reach upload_artifact."""
+    captured_uploads: list[bytes] = []
+
+    client = make_client()
+
+    def capture_upload(execution_id, step_id, claim_token, *, file_obj=None, **kwargs):
+        data = file_obj.read() if file_obj is not None else b""
+        captured_uploads.append(data)
+        return MagicMock(id=uuid4(), checksum_sha256="abc", size_bytes=len(data))
+
+    client.upload_artifact.side_effect = capture_upload
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "printf 'hello\\n'")])
+
+    run_execution(executor, execution)
+
+    succeeded_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "succeeded"
+    ]
+    assert len(succeeded_calls) == 1
+    assert succeeded_calls[0].kwargs.get("exit_code") == 0
+
+    # stdout content must have been uploaded
+    assert any(b"hello" in data for data in captured_uploads), (
+        f"Expected 'hello' in uploaded artifact content, got: {captured_uploads!r}"
+    )
+
+
+def test_e2e_nonzero_exit_reports_correct_code(tmp_path):
+    """Real exit 7 — executor must report exit_code=7 to update_step."""
+    client = make_client()
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "exit 7")])
+
+    run_execution(executor, execution)
+
+    failed_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("exit_code") == 7
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_e2e_real_timeout_reports_timed_out(tmp_path):
+    """Real sleep 30 with 1-second timeout — must report timed_out=True and failure_kind=timeout."""
+    client = make_client()
+    settings = RunnerSettings(
+        api_base_url="http://api:8000",
+        runner_id="test-runner",
+        registration_token="test-token-secret",
+        execution_mode="sandboxed",
+        sandbox_provider="local_process",
+        sandbox_workspace_root=str(tmp_path),
+        sandbox_default_timeout_seconds=1,
+    )
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "sleep 30")])
+
+    run_execution(executor, execution)
+
+    failed_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("timed_out") is True
+    assert failed_calls[0].kwargs.get("failure_kind") == "timeout"
+    assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
+
+
+def test_e2e_sandbox_metadata_propagated_to_update_step(tmp_path):
+    """sandbox_provider and sandbox_run_id from SandboxResult must reach update_step."""
+    client = make_client()
+    settings = make_sandboxed_settings(str(tmp_path))
+    executor = Executor(client, settings)
+    execution = make_execution([make_command_step(1, "echo meta")])
+
+    run_execution(executor, execution)
+
+    succeeded_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "succeeded"
+    ]
+    assert len(succeeded_calls) == 1
+    assert succeeded_calls[0].kwargs.get("sandbox_provider") == "local_process"
+    assert succeeded_calls[0].kwargs.get("sandbox_run_id", "") != ""
+
+
+def test_e2e_step_snapshot_timeout_overrides_default(tmp_path):
+    """timeoutSeconds in step_snapshot must be used instead of the runner default."""
+    client = make_client()
+    # Runner default is 300s; step requests 1s — sleep 30 must time out quickly.
+    settings = RunnerSettings(
+        api_base_url="http://api:8000",
+        runner_id="test-runner",
+        registration_token="test-token-secret",
+        execution_mode="sandboxed",
+        sandbox_provider="local_process",
+        sandbox_workspace_root=str(tmp_path),
+        sandbox_default_timeout_seconds=300,
+    )
+    executor = Executor(client, settings)
+    execution = make_execution(
+        [make_command_step(1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 1})]
+    )
+
+    run_execution(executor, execution)
+
+    failed_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("timed_out") is True
+    assert failed_calls[0].kwargs.get("failure_kind") == "timeout"
+
+
+def test_e2e_step_snapshot_timeout_clamped_to_runner_default(tmp_path):
+    """A step requesting a timeout above the runner max must be clamped down."""
+    client = make_client()
+    settings = RunnerSettings(
+        api_base_url="http://api:8000",
+        runner_id="test-runner",
+        registration_token="test-token-secret",
+        execution_mode="sandboxed",
+        sandbox_provider="local_process",
+        sandbox_workspace_root=str(tmp_path),
+        sandbox_default_timeout_seconds=2,
+    )
+    executor = Executor(client, settings)
+    # Step requests 9999s but runner caps at 2s; sleep 30 must time out quickly.
+    execution = make_execution(
+        [make_command_step(1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 9999})]
+    )
+
+    run_execution(executor, execution)
+
+    failed_calls = [
+        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+    ]
+    assert len(failed_calls) == 1
+    assert failed_calls[0].kwargs.get("timed_out") is True
