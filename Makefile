@@ -1,6 +1,6 @@
 .PHONY: up up-d down restart reset logs logs-api logs-web logs-runner logs-ai \
         ps migrate makemigrations makemigrations-app \
-        test-api test-api-v test-runner test-web seed-dev \
+        test-api test-api-v test-runner test-web seed-dev seed-execution-smoke \
         format lint check-prod check-migrations security-scan hardening-check bootstrap help \
         api-shell ai-shell runner-shell web-shell db-shell \
         start-db stop-db start-api stop-api start-web stop-web start-runner stop-runner start-ai stop-ai
@@ -85,6 +85,9 @@ test-web: ## Run web Vitest suite (single run)
 
 seed-dev: ## Seed local database with development data (idempotent)
 	docker compose exec api python manage.py seed_dev
+
+seed-execution-smoke: ## Re-queue smoke test executions (idempotent fast reset)
+	docker compose exec api python manage.py seed_dev --execution-smoke
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 

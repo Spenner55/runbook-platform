@@ -1,7 +1,11 @@
 import { apiRequest } from '../../../shared/api/client'
 import type { CreateExecutionInput, ExecutionDetail, ExecutionSummary } from '../types'
 
-export function listExecutions() {
+export function listExecutions(statuses?: string[]) {
+  if (statuses?.length) {
+    const params = statuses.map((s) => `status=${encodeURIComponent(s)}`).join('&')
+    return apiRequest<ExecutionSummary[]>(`/api/v1/executions/?${params}`)
+  }
   return apiRequest<ExecutionSummary[]>('/api/v1/executions/')
 }
 

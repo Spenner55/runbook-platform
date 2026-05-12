@@ -22,7 +22,7 @@ function getStatusPillClass(status: string) {
 
 export function ExecutionsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const executionsQuery = useExecutions(statusFilter === 'all' ? undefined : statusFilter)
+  const executionsQuery = useExecutions(statusFilter === 'all' ? undefined : [statusFilter])
 
   return (
     <section className="panel stack-lg">

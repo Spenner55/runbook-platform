@@ -232,9 +232,16 @@ export function ExecutionDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <Link className="muted" to="/executions">
-          ← Back to Executions
-        </Link>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <Link className="muted" to="/executions">
+            ← Back to Executions
+          </Link>
+          {executionQuery.data ? (
+            <Link className="muted" to={`/workflows/${executionQuery.data.workflow_id}`}>
+              View Workflow
+            </Link>
+          ) : null}
+        </div>
 
         <h2>Execution detail</h2>
       </div>

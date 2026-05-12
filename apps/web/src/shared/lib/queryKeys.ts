@@ -6,7 +6,7 @@ export const queryKeys = {
   runbookWorkflows: (runbookId: string) => ['runbook-workflows', runbookId] as const,
   workflows: ['workflows'] as const,
   workflow: (workflowId: string) => ['workflow', workflowId] as const,
-  executions: (status?: string) => ['executions', status ?? 'all'] as const,
+  executions: (statuses?: string[]) => ['executions', statuses?.join(',') ?? 'all'] as const,
   execution: (executionId: string) => ['execution', executionId] as const,
   approvals: (organizationId: string, status?: string) =>
     ['approvals', organizationId, status ?? 'pending'] as const,
