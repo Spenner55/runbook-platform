@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
-import pytest
 
 from runner.artifact_uploader import ArtifactUploader, _compute_sha256, _truncate_output
 from runner.sandbox.base import ArtifactSpec, CollectedArtifact

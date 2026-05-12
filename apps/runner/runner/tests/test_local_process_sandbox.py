@@ -16,7 +16,6 @@ from runner.sandbox.base import (
 )
 from runner.sandbox.local_process import LocalProcessSandboxProvider
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Protocol
+from typing import Protocol
 from uuid import UUID
-
 
 # ---------------------------------------------------------------------------
 # Exceptions

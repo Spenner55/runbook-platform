@@ -8,9 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from runner.executor import Executor
+from runner.executor import Executor, _HeartbeatThread
 from runner.sandbox.base import CapturedStream, SandboxResult
-from runner.executor import _HeartbeatThread
 from runner.schemas import (
     ApprovalStatusResponse,
     BreakglassSessionFacts,
@@ -974,13 +973,10 @@ def test_heartbeat_no_cancel_does_not_set_token():
 
 def test_cancellation_before_step_prevents_execution():
     """If cancellation is set before the step loop runs, no steps execute."""
-    import threading
 
     client = make_client()
     executor = Executor(client)
     execution = make_execution([make_step(1), make_step(2)])
-
-    original_run = executor.run
 
     def run_with_pre_cancel(exec_, token):
         # Inject cancellation into the shared event before steps start.
@@ -1016,8 +1012,6 @@ def test_cancellation_does_not_execute_later_steps():
     client = make_client()
 
     # Set cancellation after step 1's update_step is called (simulates heartbeat firing)
-    original_update_step = client.update_step
-
     def update_step_and_cancel(*args, **kwargs):
         if cancellation_holder:
             cancellation_holder[0].set()
