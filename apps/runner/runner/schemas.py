@@ -13,6 +13,19 @@ from pydantic import BaseModel, ConfigDict, SecretStr, field_serializer, model_v
 # ---------------------------------------------------------------------------
 
 
+_VALID_EXECUTION_MODES = frozenset({"simulated", "sandboxed"})
+_KNOWN_SANDBOX_PROVIDERS = frozenset({"local_process"})
+_VALID_CLEANUP_POLICIES = frozenset({"always", "on_success", "never"})
+
+_SANDBOX_NUMERIC_FIELDS: list[tuple[str, str]] = [
+    ("sandbox_default_timeout_seconds", "RUNNER_SANDBOX_DEFAULT_TIMEOUT_SECONDS"),
+    ("sandbox_stdout_max_bytes", "RUNNER_SANDBOX_STDOUT_MAX_BYTES"),
+    ("sandbox_stderr_max_bytes", "RUNNER_SANDBOX_STDERR_MAX_BYTES"),
+    ("sandbox_artifact_max_bytes", "RUNNER_SANDBOX_ARTIFACT_MAX_BYTES"),
+    ("sandbox_max_artifacts_per_step", "RUNNER_SANDBOX_MAX_ARTIFACTS_PER_STEP"),
+]
+
+
 class RunnerSettings(BaseModel):
     api_base_url: str
     runner_id: str
@@ -23,6 +36,21 @@ class RunnerSettings(BaseModel):
     heartbeat_interval_seconds: int = 10
     fake_step_delay_seconds: float = 1.0
     log_level: str = "INFO"
+
+    # Sandbox settings
+    execution_mode: str = "simulated"
+    sandbox_provider: str = "local_process"
+    sandbox_workspace_root: str = "/tmp/runner-workspaces"
+    sandbox_cleanup_policy: str = "always"
+    sandbox_default_timeout_seconds: int = 300
+    sandbox_stdout_max_bytes: int = 5_242_880
+    sandbox_stderr_max_bytes: int = 5_242_880
+    sandbox_artifact_max_bytes: int = 52_428_800
+    sandbox_max_artifacts_per_step: int = 10
+    sandbox_allowed_env_prefixes: list[str] = []
+    sandbox_allowed_env_names: list[str] = []
+    sandbox_shell_path: str = "/bin/sh"
+    sandbox_allow_shell: bool = False
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -36,9 +64,13 @@ class RunnerSettings(BaseModel):
 
     def validate_for_startup(self) -> None:
         """Raise SystemExit(1) with clear messages if required config is missing."""
+        import os
         import sys
+        from pathlib import Path
 
         errors: list[str] = []
+
+        # Core connectivity
         if not self.api_base_url.strip():
             errors.append("API_BASE_URL is empty — set it to the Django API base URL")
         if not self.runner_id.strip():
@@ -47,6 +79,65 @@ class RunnerSettings(BaseModel):
             errors.append(
                 "RUNNER_REGISTRATION_TOKEN must not be empty or the placeholder 'change-me'"
             )
+
+        # Execution mode
+        execution_mode = getattr(self, "execution_mode", "simulated")
+        if execution_mode not in _VALID_EXECUTION_MODES:
+            errors.append(
+                f"RUNNER_EXECUTION_MODE must be one of {sorted(_VALID_EXECUTION_MODES)},"
+                f" got {execution_mode!r}"
+            )
+
+        # Sandbox provider
+        sandbox_provider = getattr(self, "sandbox_provider", "local_process")
+        if sandbox_provider not in _KNOWN_SANDBOX_PROVIDERS:
+            errors.append(
+                f"RUNNER_SANDBOX_PROVIDER {sandbox_provider!r} is not known."
+                f" Available: {sorted(_KNOWN_SANDBOX_PROVIDERS)}"
+            )
+
+        # Cleanup policy
+        cleanup_policy = getattr(self, "sandbox_cleanup_policy", "always")
+        if cleanup_policy not in _VALID_CLEANUP_POLICIES:
+            errors.append(
+                f"RUNNER_SANDBOX_CLEANUP_POLICY must be one of {sorted(_VALID_CLEANUP_POLICIES)},"
+                f" got {cleanup_policy!r}"
+            )
+
+        # Numeric limits must be positive
+        for field_name, env_name in _SANDBOX_NUMERIC_FIELDS:
+            val = getattr(self, field_name, 1)
+            if not isinstance(val, int) or val <= 0:
+                errors.append(f"{env_name} must be a positive integer, got {val!r}")
+
+        # Workspace root: must exist or be creatable/writable
+        workspace_root_str = getattr(
+            self, "sandbox_workspace_root", "/tmp/runner-workspaces"
+        )
+        if workspace_root_str:
+            workspace_root = Path(workspace_root_str)
+            if workspace_root.exists():
+                if not os.access(str(workspace_root), os.W_OK):
+                    errors.append(
+                        f"RUNNER_SANDBOX_WORKSPACE_ROOT {workspace_root} exists but is not writable"
+                    )
+            else:
+                try:
+                    workspace_root.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    errors.append(
+                        f"RUNNER_SANDBOX_WORKSPACE_ROOT {workspace_root} cannot be created: {exc}"
+                    )
+
+        # Shell path must exist when shell execution is enabled
+        allow_shell = getattr(self, "sandbox_allow_shell", False)
+        shell_path_str = getattr(self, "sandbox_shell_path", "/bin/sh")
+        if allow_shell and shell_path_str and not Path(shell_path_str).exists():
+            errors.append(
+                f"RUNNER_SANDBOX_SHELL_PATH {shell_path_str!r} does not exist"
+                " (required when RUNNER_SANDBOX_ALLOW_SHELL=true)"
+            )
+
         if errors:
             for msg in errors:
                 print(f"CRITICAL startup validation failed: {msg}", file=sys.stderr)
@@ -61,6 +152,12 @@ class RunnerSettings(BaseModel):
             if raw is None:
                 return default
             return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+        def _env_list(name: str) -> list[str]:
+            raw = os.environ.get(name, "")
+            if not raw.strip():
+                return []
+            return [item.strip() for item in raw.split(",") if item.strip()]
 
         return cls(
             api_base_url=os.environ.get("API_BASE_URL", "http://api:8000"),
@@ -80,6 +177,35 @@ class RunnerSettings(BaseModel):
                 os.environ.get("RUNNER_FAKE_STEP_DELAY_SECONDS", "1.0")
             ),
             log_level=os.environ.get("RUNNER_LOG_LEVEL", "INFO"),
+            execution_mode=os.environ.get("RUNNER_EXECUTION_MODE", "simulated"),
+            sandbox_provider=os.environ.get("RUNNER_SANDBOX_PROVIDER", "local_process"),
+            sandbox_workspace_root=os.environ.get(
+                "RUNNER_SANDBOX_WORKSPACE_ROOT", "/tmp/runner-workspaces"
+            ),
+            sandbox_cleanup_policy=os.environ.get(
+                "RUNNER_SANDBOX_CLEANUP_POLICY", "always"
+            ),
+            sandbox_default_timeout_seconds=int(
+                os.environ.get("RUNNER_SANDBOX_DEFAULT_TIMEOUT_SECONDS", "300")
+            ),
+            sandbox_stdout_max_bytes=int(
+                os.environ.get("RUNNER_SANDBOX_STDOUT_MAX_BYTES", str(5_242_880))
+            ),
+            sandbox_stderr_max_bytes=int(
+                os.environ.get("RUNNER_SANDBOX_STDERR_MAX_BYTES", str(5_242_880))
+            ),
+            sandbox_artifact_max_bytes=int(
+                os.environ.get("RUNNER_SANDBOX_ARTIFACT_MAX_BYTES", str(52_428_800))
+            ),
+            sandbox_max_artifacts_per_step=int(
+                os.environ.get("RUNNER_SANDBOX_MAX_ARTIFACTS_PER_STEP", "10")
+            ),
+            sandbox_allowed_env_prefixes=_env_list(
+                "RUNNER_SANDBOX_ALLOWED_ENV_PREFIXES"
+            ),
+            sandbox_allowed_env_names=_env_list("RUNNER_SANDBOX_ALLOWED_ENV_NAMES"),
+            sandbox_shell_path=os.environ.get("RUNNER_SANDBOX_SHELL_PATH", "/bin/sh"),
+            sandbox_allow_shell=_env_bool("RUNNER_SANDBOX_ALLOW_SHELL", False),
         )
 
 
@@ -108,6 +234,7 @@ class ClaimedStep(BaseModel):
     status: Literal[
         "pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"
     ]
+    step_snapshot: dict[str, Any] = {}
 
     model_config = ConfigDict(extra="ignore")
 
@@ -209,6 +336,8 @@ class HeartbeatResponse(BaseModel):
     execution_id: UUID | None = None
     status: str
     last_heartbeat_at: datetime | None = None
+    cancel_requested: bool = False
+    cancel_reason: str = ""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -226,6 +355,11 @@ class StepUpdateRequest(BaseModel):
     finished_at: datetime | None = None
     exit_code: int | None = None
     error_message: str = ""
+    failure_kind: str = ""
+    timed_out: bool = False
+    cancelled: bool = False
+    sandbox_provider: str = ""
+    sandbox_run_id: str = ""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -257,7 +391,7 @@ class StepUpdateResponse(BaseModel):
 class CompleteExecutionRequest(BaseModel):
     runner_id: str
     claim_token: UUID
-    final_status: Literal["succeeded", "failed"]
+    final_status: Literal["succeeded", "failed", "cancelled"]
     finished_at: datetime | None = None
     error_message: str = ""
 

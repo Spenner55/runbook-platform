@@ -13,11 +13,13 @@ import hashlib
 import io
 import logging
 import time
+from pathlib import Path
 from uuid import UUID
 
 import httpx
 
 from runner.client import ApiClient
+from runner.sandbox.base import CollectedArtifact
 from runner.schemas import ArtifactUploadResponse
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,59 @@ class ArtifactUploader:
         self, step_id: UUID, content: bytes
     ) -> ArtifactUploadResponse | None:
         return self._upload_stream(step_id, content, kind="stderr", name="stderr.txt")
+
+    def upload_file(
+        self,
+        step_id: UUID,
+        artifact: CollectedArtifact,
+        *,
+        sandbox_provider: str = "",
+        sandbox_run_id: str = "",
+        step_key: str = "",
+        redaction_applied: bool = False,
+        collection_status: str = "collected",
+    ) -> ArtifactUploadResponse | None:
+        """Upload a collected file artifact to Django.
+
+        artifact_source_path in metadata is the relative path from the spec, not
+        the absolute host path, so host filesystem layout is never exposed.
+        """
+        try:
+            content = Path(artifact.absolute_path).read_bytes()
+        except OSError as exc:
+            logger.error(
+                "Failed to read artifact file %s for step %s: %s",
+                artifact.spec.path,
+                step_id,
+                exc,
+            )
+            return None
+
+        truncated = len(content) > self._max_bytes
+        if truncated:
+            content = content[: self._max_bytes]
+
+        metadata: dict = {
+            "truncated": truncated,
+            "redaction_applied": redaction_applied,
+            "collection_status": collection_status,
+            "artifact_source_path": artifact.spec.path,
+        }
+        if sandbox_provider:
+            metadata["sandbox_provider"] = sandbox_provider
+        if sandbox_run_id:
+            metadata["sandbox_run_id"] = sandbox_run_id
+        if step_key:
+            metadata["step_key"] = step_key
+
+        return self._upload_bytes(
+            step_id,
+            content,
+            kind=artifact.spec.kind,
+            name=artifact.spec.name,
+            mime_type=artifact.spec.mime_type,
+            metadata=metadata,
+        )
 
     def _upload_stream(
         self,

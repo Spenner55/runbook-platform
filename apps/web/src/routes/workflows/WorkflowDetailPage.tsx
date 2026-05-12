@@ -11,8 +11,6 @@ export function WorkflowDetailPage() {
   const workflowQuery = useWorkflowDetail(workflowId ?? null)
   const publishWorkflow = usePublishWorkflow(workflowId ?? null)
   const createExecution = useCreateExecution()
-  const runbookId = workflowQuery.data?.runbook_id
-
   async function handlePublishWorkflow() {
     await publishWorkflow.mutateAsync()
   }
@@ -29,8 +27,8 @@ export function WorkflowDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <Link className="muted" to={`/runbooks/${runbookId}`}>
-          ← Back to Runbook
+        <Link className="muted" to={`/workflows`}>
+          ← Back to Workflows
         </Link>
 
         <h2>Workflow detail</h2>
@@ -117,6 +115,14 @@ export function WorkflowDetailPage() {
                     <p className="muted">
                       {step.type} · risk {step.risk}
                     </p>
+                    {step.command ? (
+                      <pre
+                        className="code-block"
+                        style={{ marginTop: '0.25rem', fontSize: '0.85em' }}
+                      >
+                        {step.command}
+                      </pre>
+                    ) : null}
                   </div>
                   <span className="pill">
                     {step.requiresApproval ? 'Approval required' : 'No approval'}

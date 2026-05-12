@@ -26,6 +26,7 @@ import { SettingsPage } from '../routes/settings/SettingsPage'
 import { WorkflowCreatePage } from '../routes/workflows/WorkflowCreatePage'
 import { WorkflowDetailPage } from '../routes/workflows/WorkflowDetailPage'
 import { WorkflowReviewPage } from '../routes/workflows/WorkflowReviewPage'
+import { WorkflowsPage } from '../routes/workflows/WorkflowsPage'
 
 export const router = createBrowserRouter([
   {
@@ -43,6 +44,7 @@ export const router = createBrowserRouter([
           { path: 'organizations', element: <OrganizationsPage /> },
           { path: 'runbooks', element: <RunbooksPage /> },
           { path: 'runbooks/:runbookId', element: <RunbookDetailPage /> },
+          { path: 'workflows', element: <WorkflowsPage /> },
           { path: 'workflows/new', element: <WorkflowCreatePage /> },
           { path: 'workflows/:workflowId', element: <WorkflowDetailPage /> },
           { path: 'workflows/:workflowId/review', element: <WorkflowReviewPage /> },

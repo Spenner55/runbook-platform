@@ -91,6 +91,9 @@ class ExecutionViewSet(
             queryset = _build_detail_queryset()
         elif self.action == "list":
             queryset = Execution.objects.only(*EXECUTION_LIST_FIELDS)
+            status_filter = self.request.query_params.getlist("status")
+            if status_filter:
+                queryset = queryset.filter(status__in=status_filter)
         else:
             queryset = Execution.objects.select_related(
                 "workflow", "organization"

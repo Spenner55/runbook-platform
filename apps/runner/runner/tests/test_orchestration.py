@@ -283,8 +283,17 @@ def test_heartbeat_is_sent_while_execution_active(monkeypatch):
 
     original_init = executor_mod._HeartbeatThread.__init__
 
-    def patched_init(self, client, execution_id, claim_token, interval=10):
-        original_init(self, client, execution_id, claim_token, interval=0.01)  # fast
+    def patched_init(
+        self, client, execution_id, claim_token, interval=10, cancellation_event=None
+    ):
+        original_init(
+            self,
+            client,
+            execution_id,
+            claim_token,
+            interval=0.01,
+            cancellation_event=cancellation_event,
+        )  # fast
 
     monkeypatch.setattr(executor_mod._HeartbeatThread, "__init__", patched_init)
 

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
 
 from runner.artifact_uploader import ArtifactUploader, _compute_sha256, _truncate_output
+from runner.sandbox.base import ArtifactSpec, CollectedArtifact
 from runner.schemas import ArtifactUploadResponse
 
 EXECUTION_ID = uuid4()
@@ -179,3 +181,157 @@ def test_upload_uses_correct_api_path():
     assert args[0] == EXECUTION_ID
     assert args[1] == STEP_ID
     assert args[2] == CLAIM_TOKEN
+
+
+# ---------------------------------------------------------------------------
+# upload_file tests
+# ---------------------------------------------------------------------------
+
+
+def _make_artifact(
+    tmp_path: Path, content: bytes, path: str = "artifacts/out.txt"
+) -> CollectedArtifact:
+    abs_path = tmp_path / path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_bytes(content)
+    spec = ArtifactSpec(name="out.txt", path=path, kind="file", mime_type="text/plain")
+    return CollectedArtifact(
+        spec=spec,
+        absolute_path=abs_path,
+        size_bytes=len(content),
+        checksum_sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+def test_upload_file_builds_expected_payload(tmp_path):
+    content = b"file content"
+    artifact = _make_artifact(tmp_path, content)
+    client = _make_client(
+        _make_response(kind="file", name="out.txt", size_bytes=len(content))
+    )
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    result = uploader.upload_file(
+        STEP_ID,
+        artifact,
+        sandbox_provider="local_process",
+        sandbox_run_id="run-abc",
+        step_key="my_step",
+        redaction_applied=False,
+        collection_status="collected",
+    )
+
+    assert result is not None
+    kw = client.upload_artifact.call_args.kwargs
+    assert kw["kind"] == "file"
+    assert kw["name"] == "out.txt"
+    assert kw["mime_type"] == "text/plain"
+    assert kw["checksum_sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_upload_file_metadata_passed_safely(tmp_path):
+    content = b"hello"
+    artifact = _make_artifact(tmp_path, content)
+    client = _make_client(_make_response(kind="file", name="out.txt"))
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    uploader.upload_file(
+        STEP_ID,
+        artifact,
+        sandbox_provider="local_process",
+        sandbox_run_id="run-xyz",
+        step_key="step1",
+        redaction_applied=True,
+        collection_status="collected",
+    )
+
+    metadata = client.upload_artifact.call_args.kwargs["metadata"]
+    assert metadata["sandbox_provider"] == "local_process"
+    assert metadata["sandbox_run_id"] == "run-xyz"
+    assert metadata["step_key"] == "step1"
+    assert metadata["artifact_source_path"] == "artifacts/out.txt"
+    assert metadata["redaction_applied"] is True
+    assert metadata["collection_status"] == "collected"
+    assert metadata["truncated"] is False
+    # Absolute host path must not appear in metadata values
+    for v in metadata.values():
+        if isinstance(v, str):
+            assert str(tmp_path) not in v
+
+
+def test_upload_file_does_not_expose_absolute_path(tmp_path):
+    content = b"secret"
+    artifact = _make_artifact(tmp_path, content)
+    client = _make_client(_make_response(kind="file", name="out.txt"))
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    uploader.upload_file(STEP_ID, artifact)
+
+    metadata = client.upload_artifact.call_args.kwargs["metadata"]
+    for v in metadata.values():
+        if isinstance(v, str):
+            assert str(tmp_path) not in v
+
+
+def test_upload_file_truncates_oversized(tmp_path):
+    content = b"x" * 20
+    artifact = _make_artifact(tmp_path, content)
+    client = _make_client(_make_response(kind="file", name="out.txt", size_bytes=10))
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN, max_bytes=10)
+
+    uploader.upload_file(STEP_ID, artifact)
+
+    kw = client.upload_artifact.call_args.kwargs
+    assert kw["metadata"]["truncated"] is True
+
+
+def test_upload_file_failure_does_not_rerun_command(tmp_path):
+    """Upload failure returns None; the caller decides what to do — no command re-run."""
+    content = b"data"
+    artifact = _make_artifact(tmp_path, content)
+    error = httpx.HTTPStatusError(
+        "Bad request", request=MagicMock(), response=MagicMock(status_code=400)
+    )
+    client = _make_client(side_effect=error)
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    result = uploader.upload_file(STEP_ID, artifact)
+
+    assert result is None
+    assert client.upload_artifact.call_count == 1  # no retry on 4xx
+
+
+def test_upload_file_read_error_returns_none(tmp_path):
+    content = b"data"
+    artifact = _make_artifact(tmp_path, content)
+    # Remove the file to simulate a read failure
+    artifact.absolute_path.unlink()
+    client = _make_client()
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    result = uploader.upload_file(STEP_ID, artifact)
+
+    assert result is None
+    client.upload_artifact.assert_not_called()
+
+
+def test_upload_stdout_still_works_after_upload_file(tmp_path):
+    """Confirm stdout upload is unaffected by the new upload_file method."""
+    client = _make_client()
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+    uploader.upload_stdout(STEP_ID, b"stdout data")
+    assert client.upload_artifact.call_args.kwargs["kind"] == "stdout"
+
+
+def test_upload_file_omits_empty_optional_metadata(tmp_path):
+    content = b"data"
+    artifact = _make_artifact(tmp_path, content)
+    client = _make_client(_make_response(kind="file", name="out.txt"))
+    uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
+
+    uploader.upload_file(STEP_ID, artifact)
+
+    metadata = client.upload_artifact.call_args.kwargs["metadata"]
+    assert "sandbox_provider" not in metadata
+    assert "sandbox_run_id" not in metadata
+    assert "step_key" not in metadata

@@ -156,12 +156,21 @@ class ExecutionHeartbeatView(RunnerInternalAPIView):
             runner_id=d["runner_id"],
             claim_token=str(d["claim_token"]),
         )
-        execution.refresh_from_db(fields=["last_heartbeat_at", "status"])
+        execution.refresh_from_db(
+            fields=[
+                "last_heartbeat_at",
+                "status",
+                "cancel_requested_at",
+                "cancel_reason",
+            ]
+        )
         return Response(
             {
                 "execution_id": str(execution.id),
                 "status": execution.status,
                 "last_heartbeat_at": execution.last_heartbeat_at,
+                "cancel_requested": execution.cancel_requested_at is not None,
+                "cancel_reason": execution.cancel_reason or "",
             }
         )
 
@@ -190,6 +199,13 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
             finished_at=d.get("finished_at"),
             exit_code=d.get("exit_code"),
             error_message=d.get("error_message", ""),
+            failure_kind=d.get("failure_kind", ""),
+            timed_out=d.get("timed_out", False),
+            cancelled=d.get("cancelled", False),
+            sandbox_provider=d.get("sandbox_provider", ""),
+            sandbox_run_id=d.get("sandbox_run_id", ""),
+            command_sha256=d.get("command_sha256", ""),
+            result_metadata=d.get("result_metadata") or {},
         )
         execution.refresh_from_db(fields=["status"])
         return Response(

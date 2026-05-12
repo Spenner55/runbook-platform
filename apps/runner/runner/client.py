@@ -293,6 +293,11 @@ class ApiClient:
         finished_at: datetime | None = None,
         exit_code: int | None = None,
         error_message: str = "",
+        failure_kind: str = "",
+        timed_out: bool = False,
+        cancelled: bool = False,
+        sandbox_provider: str = "",
+        sandbox_run_id: str = "",
     ) -> StepUpdateResponse:
         data = self._post(
             f"/api/v1/internal/executions/{execution_id}/steps/{step_id}/update/",
@@ -304,6 +309,11 @@ class ApiClient:
                 finished_at=finished_at,
                 exit_code=exit_code,
                 error_message=error_message,
+                failure_kind=failure_kind,
+                timed_out=timed_out,
+                cancelled=cancelled,
+                sandbox_provider=sandbox_provider,
+                sandbox_run_id=sandbox_run_id,
             ).model_dump(mode="json"),
         )
         return StepUpdateResponse.model_validate(data)

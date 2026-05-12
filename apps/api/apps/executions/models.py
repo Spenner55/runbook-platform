@@ -38,6 +38,13 @@ class Execution(BaseModel):
     claimed_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
 
+    # Cancellation intent — set when a user requests cancellation of a
+    # claimed/running execution.  The runner observes this via the heartbeat
+    # response and is responsible for reporting the terminal status.
+    cancel_requested_at = models.DateTimeField(null=True, blank=True)
+    cancel_requested_by = models.CharField(max_length=255, blank=True, default="")
+    cancel_reason = models.CharField(max_length=500, blank=True, default="")
+
     class Meta:
         ordering = ["-created_at"]
         indexes = [
@@ -79,6 +86,7 @@ class ExecutionStep(BaseModel):
         SUCCEEDED = "succeeded", "Succeeded"
         FAILED = "failed", "Failed"
         SKIPPED = "skipped", "Skipped"
+        CANCELLED = "cancelled", "Cancelled"
 
     execution = models.ForeignKey(
         Execution,
@@ -103,6 +111,15 @@ class ExecutionStep(BaseModel):
     exit_code = models.IntegerField(null=True, blank=True)
     error_message = models.TextField(blank=True, default="")
 
+    # Sandbox result fields — populated by the runner once real execution lands
+    failure_kind = models.CharField(max_length=64, blank=True, default="")
+    timed_out = models.BooleanField(default=False)
+    cancelled = models.BooleanField(default=False)
+    sandbox_provider = models.CharField(max_length=64, blank=True, default="")
+    sandbox_run_id = models.CharField(max_length=128, blank=True, default="")
+    command_sha256 = models.CharField(max_length=64, blank=True, default="")
+    result_metadata = models.JSONField(default=dict)
+
     class Meta:
         ordering = ["position"]
         indexes = [
@@ -121,6 +138,7 @@ class ExecutionStep(BaseModel):
                         "succeeded",
                         "failed",
                         "skipped",
+                        "cancelled",
                     ]
                 ),
                 name="step_status_valid_chk",

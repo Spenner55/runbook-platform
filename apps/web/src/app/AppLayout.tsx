@@ -26,6 +26,9 @@ export function AppLayout() {
           <NavLink className={getNavClassName} to="/runbooks">
             Runbooks
           </NavLink>
+          <NavLink className={getNavClassName} to="/workflows">
+            Workflows
+          </NavLink>
           <NavLink className={getNavClassName} to="/executions">
             Executions
           </NavLink>
