@@ -145,9 +145,7 @@ def test_collect_existing_artifact(tmp_path, mgr):
     f = tmp_path / "out.txt"
     f.write_bytes(b"hello")
     spec = ArtifactSpec(name="output", path="out.txt")
-    results = mgr.collect_artifacts(
-        _make_workspace(tmp_path), [spec], _limits()
-    )
+    results = mgr.collect_artifacts(_make_workspace(tmp_path), [spec], _limits())
     assert len(results) == 1
     assert results[0].size_bytes == 5
     assert results[0].checksum_sha256  # non-empty
@@ -170,7 +168,9 @@ def test_collect_artifact_exceeds_size_limit(tmp_path, mgr):
     f.write_bytes(b"x" * 100)
     spec = ArtifactSpec(name="big", path="big.bin")
     with pytest.raises(SandboxValidationError, match="exceeds limit"):
-        mgr.collect_artifacts(_make_workspace(tmp_path), [spec], _limits(artifact_max_bytes=10))
+        mgr.collect_artifacts(
+            _make_workspace(tmp_path), [spec], _limits(artifact_max_bytes=10)
+        )
 
 
 def test_collect_artifact_count_limit(tmp_path, mgr):
@@ -180,7 +180,9 @@ def test_collect_artifact_count_limit(tmp_path, mgr):
         f.write_bytes(b"data")
         files.append(ArtifactSpec(name=f"f{i}", path=f"f{i}.txt"))
     with pytest.raises(SandboxValidationError, match="count exceeds"):
-        mgr.collect_artifacts(_make_workspace(tmp_path), files, _limits(max_artifacts=2))
+        mgr.collect_artifacts(
+            _make_workspace(tmp_path), files, _limits(max_artifacts=2)
+        )
 
 
 def test_collect_invalid_path_optional_skipped(tmp_path, mgr):

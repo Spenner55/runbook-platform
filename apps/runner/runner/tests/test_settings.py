@@ -58,7 +58,9 @@ def test_validate_for_startup_passes_with_valid_settings():
 
 
 def test_validate_for_startup_fails_on_empty_api_base_url():
-    settings = _new_settings_raw(api_base_url="   ", runner_id="runner-1", registration_token="secret")
+    settings = _new_settings_raw(
+        api_base_url="   ", runner_id="runner-1", registration_token="secret"
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         settings.validate_for_startup()
@@ -66,7 +68,9 @@ def test_validate_for_startup_fails_on_empty_api_base_url():
 
 
 def test_validate_for_startup_fails_on_empty_runner_id():
-    settings = _new_settings_raw(api_base_url="http://api:8000", runner_id="", registration_token="secret")
+    settings = _new_settings_raw(
+        api_base_url="http://api:8000", runner_id="", registration_token="secret"
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         settings.validate_for_startup()
@@ -75,7 +79,9 @@ def test_validate_for_startup_fails_on_empty_runner_id():
 
 def test_validate_for_startup_fails_on_placeholder_token():
     settings = _new_settings_raw(
-        api_base_url="http://api:8000", runner_id="runner-1", registration_token="change-me"
+        api_base_url="http://api:8000",
+        runner_id="runner-1",
+        registration_token="change-me",
     )
 
     with pytest.raises(SystemExit) as exc_info:

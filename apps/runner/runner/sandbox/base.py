@@ -123,8 +123,6 @@ class SandboxProvider(Protocol):
         """Execute the spec and return a result. Must not raise for non-zero exit codes."""
         ...
 
-    def cleanup(
-        self, spec: SandboxExecutionSpec, result: SandboxResult | None
-    ) -> None:
+    def cleanup(self, spec: SandboxExecutionSpec, result: SandboxResult | None) -> None:
         """Clean up resources. Must not raise — log and record failures in metadata."""
         ...

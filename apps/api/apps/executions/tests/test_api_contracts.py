@@ -277,7 +277,9 @@ def test_execution_detail_step_does_not_expose_inline_secret(org, api_client_for
         slug="secret-cmd-inline-rb",
         raw_content="Deploy with token",
     )
-    wf = wf_services.create_workflow(runbook=rb, transform_client=StubWorkflowTransformClient())
+    wf = wf_services.create_workflow(
+        runbook=rb, transform_client=StubWorkflowTransformClient()
+    )
     # Inject a step with an inline secret into the workflow definition
     secret_command = "curl -H 'Authorization: Bearer super-secret-api-token-abc123' https://api.example.com"
     wf.definition["steps"][0]["command"] = secret_command
@@ -300,7 +302,9 @@ def test_execution_detail_step_does_not_expose_inline_secret(org, api_client_for
 
 
 @pytest.mark.django_db
-def test_execution_step_sandbox_fields_null_when_not_populated(execution, api_client_for_org):
+def test_execution_step_sandbox_fields_null_when_not_populated(
+    execution, api_client_for_org
+):
     """sandbox_provider, sandbox_run_id, and failure_kind must serialize as null when blank."""
     client = _client_for_execution(api_client_for_org, execution)
     response = client.get(f"/api/v1/executions/{execution.id}/")
@@ -319,7 +323,9 @@ def test_execution_step_sandbox_fields_null_when_not_populated(execution, api_cl
 
 
 @pytest.mark.django_db
-def test_execution_detail_cancel_fields_null_when_not_requested(execution, api_client_for_org):
+def test_execution_detail_cancel_fields_null_when_not_requested(
+    execution, api_client_for_org
+):
     """cancel_requested_by and cancel_reason must be null when no cancellation was requested."""
     client = _client_for_execution(api_client_for_org, execution)
     response = client.get(f"/api/v1/executions/{execution.id}/")

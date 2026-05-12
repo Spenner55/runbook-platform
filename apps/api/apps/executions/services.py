@@ -916,7 +916,9 @@ def update_execution_step(
             step.sandbox_provider = sandbox_provider
             step.sandbox_run_id = sandbox_run_id
             step.command_sha256 = command_sha256
-            step.result_metadata = result_metadata if result_metadata is not None else {}
+            step.result_metadata = (
+                result_metadata if result_metadata is not None else {}
+            )
             update_fields += [
                 "failure_kind",
                 "timed_out",

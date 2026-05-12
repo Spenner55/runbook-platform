@@ -25,9 +25,9 @@ def _get_smoke_workflows():
     from apps.workflows.models import Workflow
 
     return list(
-        Workflow.objects.filter(
-            runbook__slug="execution-plane-smoke-tests"
-        ).order_by("version")
+        Workflow.objects.filter(runbook__slug="execution-plane-smoke-tests").order_by(
+            "version"
+        )
     )
 
 

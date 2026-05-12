@@ -188,7 +188,9 @@ def test_upload_uses_correct_api_path():
 # ---------------------------------------------------------------------------
 
 
-def _make_artifact(tmp_path: Path, content: bytes, path: str = "artifacts/out.txt") -> CollectedArtifact:
+def _make_artifact(
+    tmp_path: Path, content: bytes, path: str = "artifacts/out.txt"
+) -> CollectedArtifact:
     abs_path = tmp_path / path
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_bytes(content)
@@ -204,7 +206,9 @@ def _make_artifact(tmp_path: Path, content: bytes, path: str = "artifacts/out.tx
 def test_upload_file_builds_expected_payload(tmp_path):
     content = b"file content"
     artifact = _make_artifact(tmp_path, content)
-    client = _make_client(_make_response(kind="file", name="out.txt", size_bytes=len(content)))
+    client = _make_client(
+        _make_response(kind="file", name="out.txt", size_bytes=len(content))
+    )
     uploader = ArtifactUploader(client, EXECUTION_ID, CLAIM_TOKEN)
 
     result = uploader.upload_file(

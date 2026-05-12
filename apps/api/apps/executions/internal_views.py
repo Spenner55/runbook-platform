@@ -157,7 +157,12 @@ class ExecutionHeartbeatView(RunnerInternalAPIView):
             claim_token=str(d["claim_token"]),
         )
         execution.refresh_from_db(
-            fields=["last_heartbeat_at", "status", "cancel_requested_at", "cancel_reason"]
+            fields=[
+                "last_heartbeat_at",
+                "status",
+                "cancel_requested_at",
+                "cancel_reason",
+            ]
         )
         return Response(
             {

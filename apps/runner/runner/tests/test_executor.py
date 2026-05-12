@@ -663,7 +663,11 @@ def make_command_step(
     *,
     step_snapshot: dict | None = None,
 ) -> ClaimedStep:
-    snapshot = step_snapshot if step_snapshot is not None else {"id": f"step-{position}", "command": command}
+    snapshot = (
+        step_snapshot
+        if step_snapshot is not None
+        else {"id": f"step-{position}", "command": command}
+    )
     return ClaimedStep(
         id=uuid4(),
         position=position,
@@ -759,9 +763,7 @@ def test_sandboxed_approval_path_works(tmp_path):
     settings = make_sandboxed_settings(str(tmp_path))
     executor = Executor(client, settings)
     step = make_command_step(1, "echo approved")
-    step = ClaimedStep(
-        **{**step.model_dump(), "requires_approval": True}
-    )
+    step = ClaimedStep(**{**step.model_dump(), "requires_approval": True})
     execution = make_execution([step])
 
     with patch("runner.executor.get_provider", return_value=mock_provider):
@@ -964,6 +966,7 @@ def test_heartbeat_no_cancel_does_not_set_token():
     thread.start()
     # Let it fire a couple of heartbeats
     import time as _time
+
     _time.sleep(0.05)
     thread.stop()
     thread.join(timeout=2.0)
@@ -1035,7 +1038,9 @@ def test_cancelled_sandbox_result_reported_to_django(tmp_path):
     """When provider returns cancelled=True, update_step must be called with cancelled=True."""
     client = make_client()
     mock_provider = make_mock_provider(
-        make_sandbox_result(cancelled=True, exit_code=None, error_message="Step was cancelled")
+        make_sandbox_result(
+            cancelled=True, exit_code=None, error_message="Step was cancelled"
+        )
     )
     settings = make_sandboxed_settings(str(tmp_path))
     executor = Executor(client, settings)
@@ -1045,7 +1050,9 @@ def test_cancelled_sandbox_result_reported_to_django(tmp_path):
         run_execution(executor, execution)
 
     failed_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
     assert failed_calls[0].kwargs.get("cancelled") is True
@@ -1085,7 +1092,9 @@ def test_cancellation_during_approval_wait_stops_execution():
     with patch.object(_HeartbeatThread, "__init__", patched_hb_init):
         with patch("runner.executor.time.sleep", cancel_on_second_sleep):
             executor = Executor(client)
-            execution = make_execution([make_step(1, requires_approval=True), make_step(2)])
+            execution = make_execution(
+                [make_step(1, requires_approval=True), make_step(2)]
+            )
             executor.run(execution, uuid4())
 
     # Approval polling must not have been called (cancellation arrived before first poll)
@@ -1120,7 +1129,9 @@ def test_e2e_real_stdout_content_passed_to_upload(tmp_path):
     run_execution(executor, execution)
 
     succeeded_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "succeeded"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "succeeded"
     ]
     assert len(succeeded_calls) == 1
     assert succeeded_calls[0].kwargs.get("exit_code") == 0
@@ -1141,7 +1152,9 @@ def test_e2e_nonzero_exit_reports_correct_code(tmp_path):
     run_execution(executor, execution)
 
     failed_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
     assert failed_calls[0].kwargs.get("exit_code") == 7
@@ -1166,7 +1179,9 @@ def test_e2e_real_timeout_reports_timed_out(tmp_path):
     run_execution(executor, execution)
 
     failed_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
     assert failed_calls[0].kwargs.get("timed_out") is True
@@ -1184,7 +1199,9 @@ def test_e2e_sandbox_metadata_propagated_to_update_step(tmp_path):
     run_execution(executor, execution)
 
     succeeded_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "succeeded"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "succeeded"
     ]
     assert len(succeeded_calls) == 1
     assert succeeded_calls[0].kwargs.get("sandbox_provider") == "local_process"
@@ -1206,13 +1223,19 @@ def test_e2e_step_snapshot_timeout_overrides_default(tmp_path):
     )
     executor = Executor(client, settings)
     execution = make_execution(
-        [make_command_step(1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 1})]
+        [
+            make_command_step(
+                1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 1}
+            )
+        ]
     )
 
     run_execution(executor, execution)
 
     failed_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
     assert failed_calls[0].kwargs.get("timed_out") is True
@@ -1234,13 +1257,19 @@ def test_e2e_step_snapshot_timeout_clamped_to_runner_default(tmp_path):
     executor = Executor(client, settings)
     # Step requests 9999s but runner caps at 2s; sleep 30 must time out quickly.
     execution = make_execution(
-        [make_command_step(1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 9999})]
+        [
+            make_command_step(
+                1, "sleep 30", step_snapshot={"id": "step-1", "timeoutSeconds": 9999}
+            )
+        ]
     )
 
     run_execution(executor, execution)
 
     failed_calls = [
-        c for c in client.update_step.call_args_list if c.kwargs.get("status") == "failed"
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
     assert failed_calls[0].kwargs.get("timed_out") is True

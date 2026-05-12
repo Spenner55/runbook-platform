@@ -4,73 +4,100 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0007_execution_exec_status_valid_chk_and_more'),
+        ("executions", "0007_execution_exec_status_valid_chk_and_more"),
     ]
 
     operations = [
         migrations.RemoveConstraint(
-            model_name='executionstep',
-            name='step_status_valid_chk',
+            model_name="executionstep",
+            name="step_status_valid_chk",
         ),
         migrations.AddField(
-            model_name='execution',
-            name='cancel_reason',
-            field=models.CharField(blank=True, default='', max_length=500),
+            model_name="execution",
+            name="cancel_reason",
+            field=models.CharField(blank=True, default="", max_length=500),
         ),
         migrations.AddField(
-            model_name='execution',
-            name='cancel_requested_at',
+            model_name="execution",
+            name="cancel_requested_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='execution',
-            name='cancel_requested_by',
-            field=models.CharField(blank=True, default='', max_length=255),
+            model_name="execution",
+            name="cancel_requested_by",
+            field=models.CharField(blank=True, default="", max_length=255),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='cancelled',
+            model_name="executionstep",
+            name="cancelled",
             field=models.BooleanField(default=False),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='command_sha256',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="executionstep",
+            name="command_sha256",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='failure_kind',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="executionstep",
+            name="failure_kind",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='result_metadata',
+            model_name="executionstep",
+            name="result_metadata",
             field=models.JSONField(default=dict),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='sandbox_provider',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="executionstep",
+            name="sandbox_provider",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='sandbox_run_id',
-            field=models.CharField(blank=True, default='', max_length=128),
+            model_name="executionstep",
+            name="sandbox_run_id",
+            field=models.CharField(blank=True, default="", max_length=128),
         ),
         migrations.AddField(
-            model_name='executionstep',
-            name='timed_out',
+            model_name="executionstep",
+            name="timed_out",
             field=models.BooleanField(default=False),
         ),
         migrations.AlterField(
-            model_name='executionstep',
-            name='status',
-            field=models.CharField(choices=[('pending', 'Pending'), ('waiting_for_approval', 'Waiting for Approval'), ('running', 'Running'), ('succeeded', 'Succeeded'), ('failed', 'Failed'), ('skipped', 'Skipped'), ('cancelled', 'Cancelled')], default='pending', max_length=24),
+            model_name="executionstep",
+            name="status",
+            field=models.CharField(
+                choices=[
+                    ("pending", "Pending"),
+                    ("waiting_for_approval", "Waiting for Approval"),
+                    ("running", "Running"),
+                    ("succeeded", "Succeeded"),
+                    ("failed", "Failed"),
+                    ("skipped", "Skipped"),
+                    ("cancelled", "Cancelled"),
+                ],
+                default="pending",
+                max_length=24,
+            ),
         ),
         migrations.AddConstraint(
-            model_name='executionstep',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['pending', 'waiting_for_approval', 'running', 'succeeded', 'failed', 'skipped', 'cancelled'])), name='step_status_valid_chk'),
+            model_name="executionstep",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "status__in",
+                        [
+                            "pending",
+                            "waiting_for_approval",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "skipped",
+                            "cancelled",
+                        ],
+                    )
+                ),
+                name="step_status_valid_chk",
+            ),
         ),
     ]

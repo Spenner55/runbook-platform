@@ -12,7 +12,7 @@ export function WorkflowsPage() {
   const activeWorkflowIds = new Set(
     (activeExecutionsQuery.data ?? [])
       .filter((e) => e.status === 'queued' || e.last_heartbeat_at !== null)
-      .map((e) => e.workflow_id),
+      .map((e) => e.workflow_id)
   )
 
   return (
@@ -31,29 +31,29 @@ export function WorkflowsPage() {
           {[...workflowsQuery.data]
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
             .map((workflow) => (
-            <li className="list__item" key={workflow.id}>
-              <div>
-                <strong>{workflow.name}</strong>
-                <p className="muted">
-                  v{workflow.version} · <span className="pill">{workflow.status}</span> ·{' '}
-                  {new Date(workflow.created_at).toLocaleString()}
-                  {activeWorkflowIds.has(workflow.id) ? (
-                    <span className="pill pill--info" style={{ marginLeft: '0.5rem' }}>
-                      Running
-                    </span>
-                  ) : null}
-                  {workflow.requires_review ? (
-                    <span className="pill pill--warn" style={{ marginLeft: '0.5rem' }}>
-                      Needs review
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <Link className="button button--ghost" to={`/workflows/${workflow.id}`}>
-                View
-              </Link>
-            </li>
-          ))}
+              <li className="list__item" key={workflow.id}>
+                <div>
+                  <strong>{workflow.name}</strong>
+                  <p className="muted">
+                    v{workflow.version} · <span className="pill">{workflow.status}</span> ·{' '}
+                    {new Date(workflow.created_at).toLocaleString()}
+                    {activeWorkflowIds.has(workflow.id) ? (
+                      <span className="pill pill--info" style={{ marginLeft: '0.5rem' }}>
+                        Running
+                      </span>
+                    ) : null}
+                    {workflow.requires_review ? (
+                      <span className="pill pill--warn" style={{ marginLeft: '0.5rem' }}>
+                        Needs review
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+                <Link className="button button--ghost" to={`/workflows/${workflow.id}`}>
+                  View
+                </Link>
+              </li>
+            ))}
         </ul>
       ) : null}
 

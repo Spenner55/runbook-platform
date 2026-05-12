@@ -46,8 +46,7 @@ class WorkspaceManager:
         candidate = (self._root / str(execution_id) / step_dir).resolve()
         root_str = str(self._root)
         if not (
-            str(candidate).startswith(root_str + os.sep)
-            or str(candidate) == root_str
+            str(candidate).startswith(root_str + os.sep) or str(candidate) == root_str
         ):
             raise SandboxValidationError(
                 f"Workspace path {candidate} escapes configured root {self._root}"
@@ -76,9 +75,7 @@ class WorkspaceManager:
             meta=root / "meta",
         )
 
-    def resolve_workspace_path(
-        self, workspace: Workspace, relative_path: str
-    ) -> Path:
+    def resolve_workspace_path(self, workspace: Workspace, relative_path: str) -> Path:
         return validate_artifact_path(workspace.root, relative_path)
 
     def collect_artifacts(
@@ -148,18 +145,13 @@ def validate_artifact_path(workspace_root: Path, relative_path: str) -> Path:
             f"Artifact path must be relative, got absolute: {relative_path!r}"
         )
     if ".." in Path(relative_path).parts:
-        raise SandboxValidationError(
-            f"Artifact path contains '..': {relative_path!r}"
-        )
+        raise SandboxValidationError(f"Artifact path contains '..': {relative_path!r}")
 
     resolved_root = workspace_root.resolve()
     candidate = (resolved_root / relative_path).resolve()
     root_str = str(resolved_root)
 
-    if not (
-        str(candidate).startswith(root_str + os.sep)
-        or str(candidate) == root_str
-    ):
+    if not (str(candidate).startswith(root_str + os.sep) or str(candidate) == root_str):
         raise SandboxValidationError(
             f"Artifact path {relative_path!r} resolves outside workspace root "
             f"(possible symlink escape or traversal)"
@@ -172,9 +164,7 @@ def _reject_special_file(path: Path) -> None:
     """Raise SandboxValidationError for device, socket, or FIFO files."""
     mode = path.stat().st_mode
     if stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
-        raise SandboxValidationError(
-            f"Artifact path is a device file: {path}"
-        )
+        raise SandboxValidationError(f"Artifact path is a device file: {path}")
     if stat.S_ISSOCK(mode):
         raise SandboxValidationError(f"Artifact path is a socket: {path}")
     if stat.S_ISFIFO(mode):

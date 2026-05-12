@@ -111,7 +111,9 @@ class RunnerSettings(BaseModel):
                 errors.append(f"{env_name} must be a positive integer, got {val!r}")
 
         # Workspace root: must exist or be creatable/writable
-        workspace_root_str = getattr(self, "sandbox_workspace_root", "/tmp/runner-workspaces")
+        workspace_root_str = getattr(
+            self, "sandbox_workspace_root", "/tmp/runner-workspaces"
+        )
         if workspace_root_str:
             workspace_root = Path(workspace_root_str)
             if workspace_root.exists():
@@ -180,7 +182,9 @@ class RunnerSettings(BaseModel):
             sandbox_workspace_root=os.environ.get(
                 "RUNNER_SANDBOX_WORKSPACE_ROOT", "/tmp/runner-workspaces"
             ),
-            sandbox_cleanup_policy=os.environ.get("RUNNER_SANDBOX_CLEANUP_POLICY", "always"),
+            sandbox_cleanup_policy=os.environ.get(
+                "RUNNER_SANDBOX_CLEANUP_POLICY", "always"
+            ),
             sandbox_default_timeout_seconds=int(
                 os.environ.get("RUNNER_SANDBOX_DEFAULT_TIMEOUT_SECONDS", "300")
             ),
@@ -196,7 +200,9 @@ class RunnerSettings(BaseModel):
             sandbox_max_artifacts_per_step=int(
                 os.environ.get("RUNNER_SANDBOX_MAX_ARTIFACTS_PER_STEP", "10")
             ),
-            sandbox_allowed_env_prefixes=_env_list("RUNNER_SANDBOX_ALLOWED_ENV_PREFIXES"),
+            sandbox_allowed_env_prefixes=_env_list(
+                "RUNNER_SANDBOX_ALLOWED_ENV_PREFIXES"
+            ),
             sandbox_allowed_env_names=_env_list("RUNNER_SANDBOX_ALLOWED_ENV_NAMES"),
             sandbox_shell_path=os.environ.get("RUNNER_SANDBOX_SHELL_PATH", "/bin/sh"),
             sandbox_allow_shell=_env_bool("RUNNER_SANDBOX_ALLOW_SHELL", False),

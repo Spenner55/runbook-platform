@@ -58,7 +58,9 @@ class _HeartbeatThread(threading.Thread):
         self._interval = interval
         self._stop_event = threading.Event()
         self._observed_status = "claimed"
-        self._cancellation_event = cancellation_event if cancellation_event is not None else threading.Event()
+        self._cancellation_event = (
+            cancellation_event if cancellation_event is not None else threading.Event()
+        )
         self._cancel_reason = ""
 
     @property
@@ -162,7 +164,10 @@ class Executor:
 
         cancellation_event = threading.Event()
         heartbeat = _HeartbeatThread(
-            self._client, execution_id, claim_token, cancellation_event=cancellation_event
+            self._client,
+            execution_id,
+            claim_token,
+            cancellation_event=cancellation_event,
         )
         heartbeat.start()
         uploader = self._make_uploader(execution_id, claim_token)
@@ -198,7 +203,12 @@ class Executor:
                     outcome = "failed"
                     break
                 step_failed = self._run_step(
-                    execution, claim_token, step, heartbeat, uploader, cancellation_event
+                    execution,
+                    claim_token,
+                    step,
+                    heartbeat,
+                    uploader,
+                    cancellation_event,
                 )
                 if step_failed:
                     outcome = "failed"
@@ -356,7 +366,13 @@ class Executor:
         if start_resp.runner_action == "wait_for_approval":
             logger.info("Step %d '%s': waiting for approval", step.position, step.name)
             return self._wait_for_approval(
-                execution, claim_token, step, heartbeat, start_resp, uploader, cancellation_event
+                execution,
+                claim_token,
+                step,
+                heartbeat,
+                start_resp,
+                uploader,
+                cancellation_event,
             )
 
         # runner_action == "blocked" or unexpected
@@ -428,7 +444,12 @@ class Executor:
                 )
                 heartbeat.set_observed_status("running")
                 return self._execute_command(
-                    execution, claim_token, step, heartbeat, uploader, cancellation_event
+                    execution,
+                    claim_token,
+                    step,
+                    heartbeat,
+                    uploader,
+                    cancellation_event,
                 )
 
             # runner_action == "fail"
@@ -450,10 +471,7 @@ class Executor:
         cancellation_event: threading.Event,
     ) -> bool:
         """Dispatch to sandboxed or simulated execution based on settings."""
-        if (
-            self._settings is not None
-            and self._settings.execution_mode == "sandboxed"
-        ):
+        if self._settings is not None and self._settings.execution_mode == "sandboxed":
             return self._execute_sandboxed(
                 execution, claim_token, step, heartbeat, uploader, cancellation_event
             )
@@ -608,9 +626,13 @@ class Executor:
 
         # Use workflow-declared timeout when present; clamp to runner default max.
         timeout_seconds = settings.sandbox_default_timeout_seconds
-        raw_timeout = step.step_snapshot.get("timeoutSeconds") if step.step_snapshot else None
+        raw_timeout = (
+            step.step_snapshot.get("timeoutSeconds") if step.step_snapshot else None
+        )
         if isinstance(raw_timeout, (int, float)) and raw_timeout > 0:
-            timeout_seconds = min(int(raw_timeout), settings.sandbox_default_timeout_seconds)
+            timeout_seconds = min(
+                int(raw_timeout), settings.sandbox_default_timeout_seconds
+            )
 
         limits = SandboxLimits(
             timeout_seconds=timeout_seconds,
@@ -684,8 +706,7 @@ class Executor:
             step_status = "failed"
             failure_kind = "timeout"
             error_message = (
-                result.error_message
-                or f"Step timed out after {timeout_seconds}s"
+                result.error_message or f"Step timed out after {timeout_seconds}s"
             )
         elif result.cancelled:
             step_status = "failed"
@@ -764,9 +785,7 @@ class Executor:
             else:
                 logger.info("Step %d '%s': succeeded", step.position, step.name)
         except httpx.HTTPError as exc:
-            logger.error(
-                "Failed to mark step %s %s: %s", step.id, step_status, exc
-            )
+            logger.error("Failed to mark step %s %s: %s", step.id, step_status, exc)
             return True
 
         self._emit_step_verification_facts(
@@ -774,7 +793,9 @@ class Executor:
             claim_token=claim_token,
             step=step,
             outcome="passed" if not step_failed else "failed",
-            exit_code=exit_code if exit_code is not None else (0 if not step_failed else 1),
+            exit_code=exit_code
+            if exit_code is not None
+            else (0 if not step_failed else 1),
             artifacts=artifacts,
         )
         return step_failed

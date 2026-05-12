@@ -28,7 +28,9 @@ _DEFAULT_LIMITS = SandboxLimits(
     max_artifacts=10,
 )
 
-_FAST_CANCEL_INTERVAL = SandboxExecutionSpec.__dataclass_fields__  # unused; just confirming it's a dataclass
+_FAST_CANCEL_INTERVAL = (
+    SandboxExecutionSpec.__dataclass_fields__
+)  # unused; just confirming it's a dataclass
 del _FAST_CANCEL_INTERVAL
 
 
@@ -49,7 +51,9 @@ def _make_spec(
         command=command,
         display_command=" ".join(command),
         workspace_root=tmp_path / "workspace",
-        environment=environment if environment is not None else {"PATH": "/usr/bin:/bin:/usr/local/bin"},
+        environment=environment
+        if environment is not None
+        else {"PATH": "/usr/bin:/bin:/usr/local/bin"},
         limits=limits,
         artifact_specs=artifact_specs or [],
         cancellation_check_interval_seconds=cancellation_check_interval_seconds,
@@ -289,7 +293,9 @@ def test_stdout_truncated_when_cap_exceeded(provider, tmp_path):
         artifact_max_bytes=1024,
         max_artifacts=10,
     )
-    spec = _make_spec(tmp_path, ["echo 'this is longer than five bytes'"], limits=limits)
+    spec = _make_spec(
+        tmp_path, ["echo 'this is longer than five bytes'"], limits=limits
+    )
     result = provider.execute(spec, None)
 
     assert result.stdout.truncated is True
@@ -305,7 +311,9 @@ def test_stderr_truncated_when_cap_exceeded(provider, tmp_path):
         artifact_max_bytes=1024,
         max_artifacts=10,
     )
-    spec = _make_spec(tmp_path, ["echo 'this is longer than five bytes' >&2"], limits=limits)
+    spec = _make_spec(
+        tmp_path, ["echo 'this is longer than five bytes' >&2"], limits=limits
+    )
     result = provider.execute(spec, None)
 
     assert result.stderr.truncated is True
@@ -390,19 +398,26 @@ def test_required_artifact_missing_sets_failure_kind(provider, tmp_path):
     spec = _make_spec(
         tmp_path,
         ["echo ok"],
-        artifact_specs=[ArtifactSpec(name="report", path="artifacts/report.txt", required=True)],
+        artifact_specs=[
+            ArtifactSpec(name="report", path="artifacts/report.txt", required=True)
+        ],
     )
     result = provider.execute(spec, None)
 
     assert result.failure_kind == "artifact_error"
-    assert "report.txt" in result.error_message or "Required artifact" in result.error_message
+    assert (
+        "report.txt" in result.error_message
+        or "Required artifact" in result.error_message
+    )
 
 
 def test_optional_artifact_missing_no_failure(provider, tmp_path):
     spec = _make_spec(
         tmp_path,
         ["echo ok"],
-        artifact_specs=[ArtifactSpec(name="report", path="artifacts/report.txt", required=False)],
+        artifact_specs=[
+            ArtifactSpec(name="report", path="artifacts/report.txt", required=False)
+        ],
     )
     result = provider.execute(spec, None)
 
@@ -416,7 +431,9 @@ def test_required_artifact_present_collected(provider, tmp_path):
     spec = _make_spec(
         tmp_path,
         ["echo content > ../artifacts/report.txt"],
-        artifact_specs=[ArtifactSpec(name="report", path="artifacts/report.txt", required=True)],
+        artifact_specs=[
+            ArtifactSpec(name="report", path="artifacts/report.txt", required=True)
+        ],
     )
     result = provider.execute(spec, None)
 
@@ -434,7 +451,9 @@ def test_unsafe_artifact_path_traversal_rejected(provider, tmp_path):
     spec = _make_spec(
         tmp_path,
         ["echo ok"],
-        artifact_specs=[ArtifactSpec(name="escape", path="../../../etc/passwd", required=True)],
+        artifact_specs=[
+            ArtifactSpec(name="escape", path="../../../etc/passwd", required=True)
+        ],
     )
     result = provider.execute(spec, None)
 
@@ -456,7 +475,9 @@ def test_unsafe_optional_artifact_path_traversal_skipped(provider, tmp_path):
     spec = _make_spec(
         tmp_path,
         ["echo ok"],
-        artifact_specs=[ArtifactSpec(name="escape", path="../../../etc/passwd", required=False)],
+        artifact_specs=[
+            ArtifactSpec(name="escape", path="../../../etc/passwd", required=False)
+        ],
     )
     result = provider.execute(spec, None)
 

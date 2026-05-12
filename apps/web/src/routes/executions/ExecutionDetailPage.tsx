@@ -287,11 +287,8 @@ export function ExecutionDetailPage() {
           {ACTIVE_EXECUTION_STATUSES.has(executionQuery.data.status) &&
           executionQuery.data.cancel_requested_at ? (
             <p className="banner banner--warn">
-              Cancellation requested at{' '}
-              {formatDateTime(executionQuery.data.cancel_requested_at)}
-              {executionQuery.data.cancel_reason
-                ? ` · ${executionQuery.data.cancel_reason}`
-                : ''}
+              Cancellation requested at {formatDateTime(executionQuery.data.cancel_requested_at)}
+              {executionQuery.data.cancel_reason ? ` · ${executionQuery.data.cancel_reason}` : ''}
             </p>
           ) : null}
 

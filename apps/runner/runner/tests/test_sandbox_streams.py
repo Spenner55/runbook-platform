@@ -81,7 +81,7 @@ class TestStreamCapture:
 
     def test_partial_fill_on_overflow(self):
         sc = StreamCapture(5)
-        sc.write(b"abc")   # 3 bytes
+        sc.write(b"abc")  # 3 bytes
         sc.write(b"defg")  # 4 bytes; only 2 fit
         result = sc.to_captured_stream()
         assert result.content == b"abcde"

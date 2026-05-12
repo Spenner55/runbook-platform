@@ -382,9 +382,18 @@ class Command(BaseCommand):
             ex,
             step_data,
             step_overrides={
-                0: {"sandbox_provider": "local_process", "sandbox_run_id": "seed-succ-step0"},
-                1: {"sandbox_provider": "local_process", "sandbox_run_id": "seed-succ-step1"},
-                2: {"sandbox_provider": "local_process", "sandbox_run_id": "seed-succ-step2"},
+                0: {
+                    "sandbox_provider": "local_process",
+                    "sandbox_run_id": "seed-succ-step0",
+                },
+                1: {
+                    "sandbox_provider": "local_process",
+                    "sandbox_run_id": "seed-succ-step1",
+                },
+                2: {
+                    "sandbox_provider": "local_process",
+                    "sandbox_run_id": "seed-succ-step2",
+                },
             },
         )
         self._seed_artifact(ex)
@@ -434,7 +443,10 @@ class Command(BaseCommand):
             step_data,
             fail_message="Script exited with code 1: permission denied on /app/deploy",
             step_overrides={
-                0: {"sandbox_provider": "local_process", "sandbox_run_id": "seed-fail-step0"},
+                0: {
+                    "sandbox_provider": "local_process",
+                    "sandbox_run_id": "seed-fail-step0",
+                },
                 1: {
                     "sandbox_provider": "local_process",
                     "sandbox_run_id": "seed-fail-step1",
@@ -614,7 +626,9 @@ class Command(BaseCommand):
                 "name": "Run deployment script",
                 "step_type": "shell_command",
                 "risk_level": "high",
-                "command": snap_steps[1].get("command", "") if len(snap_steps) > 1 else "",
+                "command": snap_steps[1].get("command", "")
+                if len(snap_steps) > 1
+                else "",
                 "requires_approval": True,
                 "step_snapshot": snap_steps[1] if len(snap_steps) > 1 else {},
                 "status": ExecutionStep.Status.RUNNING,
@@ -681,7 +695,9 @@ class Command(BaseCommand):
                 "name": "Run deployment script",
                 "step_type": "shell_command",
                 "risk_level": "high",
-                "command": snap_steps[1].get("command", "") if len(snap_steps) > 1 else "",
+                "command": snap_steps[1].get("command", "")
+                if len(snap_steps) > 1
+                else "",
                 "requires_approval": True,
                 "step_snapshot": snap_steps[1] if len(snap_steps) > 1 else {},
                 "status": ExecutionStep.Status.CANCELLED,
@@ -703,7 +719,9 @@ class Command(BaseCommand):
                 "name": "Post-deploy smoke test",
                 "step_type": "shell_command",
                 "risk_level": "low",
-                "command": snap_steps[2].get("command", "") if len(snap_steps) > 2 else "",
+                "command": snap_steps[2].get("command", "")
+                if len(snap_steps) > 2
+                else "",
                 "requires_approval": False,
                 "step_snapshot": snap_steps[2] if len(snap_steps) > 2 else {},
                 "status": ExecutionStep.Status.SKIPPED,
@@ -765,7 +783,9 @@ class Command(BaseCommand):
                 "name": "Run deployment script",
                 "step_type": "shell_command",
                 "risk_level": "high",
-                "command": snap_steps[1].get("command", "") if len(snap_steps) > 1 else "",
+                "command": snap_steps[1].get("command", "")
+                if len(snap_steps) > 1
+                else "",
                 "requires_approval": True,
                 "step_snapshot": snap_steps[1] if len(snap_steps) > 1 else {},
                 "status": ExecutionStep.Status.FAILED,
@@ -787,7 +807,9 @@ class Command(BaseCommand):
                 "name": "Post-deploy smoke test",
                 "step_type": "shell_command",
                 "risk_level": "low",
-                "command": snap_steps[2].get("command", "") if len(snap_steps) > 2 else "",
+                "command": snap_steps[2].get("command", "")
+                if len(snap_steps) > 2
+                else "",
                 "requires_approval": False,
                 "step_snapshot": snap_steps[2] if len(snap_steps) > 2 else {},
                 "status": ExecutionStep.Status.SKIPPED,
@@ -1389,8 +1411,7 @@ class Command(BaseCommand):
                     "type": "command",
                     "risk": "low",
                     "command": (
-                        'echo "=== Post-deploy verification ==="\n'
-                        'echo "result=ok"'
+                        'echo "=== Post-deploy verification ==="\necho "result=ok"'
                     ),
                     "requiresApproval": False,
                 },

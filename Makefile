@@ -5,7 +5,9 @@
         test-evidence test-executions test-integrations test-organizations test-policies \
         test-runbooks test-users test-workflows \
         seed-dev seed-execution-smoke \
-        format lint lint-fix check-prod check-migrations security-scan hardening-check bootstrap help \
+        format format-check format-check-api format-check-ai format-check-runner format-check-web \
+        lint lint-api lint-ai lint-runner lint-web lint-fix \
+        check-prod check-migrations security-scan hardening-check bootstrap help \
         ci ci-full \
         api-shell ai-shell runner-shell web-shell db-shell \
         start-db stop-db start-api stop-api start-web stop-web start-runner stop-runner start-ai stop-ai
@@ -161,6 +163,36 @@ lint: ## Lint all Python and TypeScript code (read-only)
 	docker compose exec runner ruff check /app
 	docker compose exec web npm run lint
 
+lint-api: ## Ruff lint check for the api service only
+	docker compose exec api ruff check /app
+
+lint-ai: ## Ruff lint check for the ai service only
+	docker compose exec ai ruff check /app
+
+lint-runner: ## Ruff lint check for the runner service only
+	docker compose exec runner ruff check /app
+
+lint-web: ## ESLint check for the web service only
+	docker compose exec web npm run lint
+
+format-check: ## Check formatting across all services without writing changes
+	docker compose exec api ruff format --check /app
+	docker compose exec ai ruff format --check /app
+	docker compose exec runner ruff format --check /app
+	docker compose exec web npm run format:check
+
+format-check-api: ## Check ruff formatting for the api service only
+	docker compose exec api ruff format --check /app
+
+format-check-ai: ## Check ruff formatting for the ai service only
+	docker compose exec ai ruff format --check /app
+
+format-check-runner: ## Check ruff formatting for the runner service only
+	docker compose exec runner ruff format --check /app
+
+format-check-web: ## Check prettier formatting for the web service only
+	docker compose exec web npm run format:check
+
 lint-fix: ## Auto-fix lint errors across all Python and TypeScript code
 	docker compose exec api ruff check /app --fix
 	docker compose exec ai ruff check /app --fix
@@ -194,8 +226,9 @@ hardening-check: check-prod check-migrations security-scan ## Run all local hard
 
 # ── CI pipeline ───────────────────────────────────────────────────────────────
 
-ci: ## Run the CI pipeline locally: lint → all tests → migration checks → prod check
+ci: ## Run the CI pipeline locally: lint → format-check → all tests → migration checks → prod check
 	$(MAKE) lint
+	$(MAKE) format-check
 	$(MAKE) test
 	$(MAKE) check-migrations
 	$(MAKE) check-prod

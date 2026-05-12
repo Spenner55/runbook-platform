@@ -267,7 +267,9 @@ class LocalProcessSandboxProvider:
             )
             mgr = WorkspaceManager(ws_root)
             try:
-                artifacts = mgr.collect_artifacts(workspace, spec.artifact_specs, limits)
+                artifacts = mgr.collect_artifacts(
+                    workspace, spec.artifact_specs, limits
+                )
             except SandboxValidationError as exc:
                 failure_kind = "artifact_error"
                 error_message = str(exc)
@@ -288,9 +290,7 @@ class LocalProcessSandboxProvider:
             metadata={},
         )
 
-    def cleanup(
-        self, spec: SandboxExecutionSpec, result: SandboxResult | None
-    ) -> None:
+    def cleanup(self, spec: SandboxExecutionSpec, result: SandboxResult | None) -> None:
         """Remove the workspace directory. Never raises."""
         try:
             if spec.workspace_root.exists():
