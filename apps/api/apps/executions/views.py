@@ -34,6 +34,7 @@ EXECUTION_LIST_FIELDS = [
     "id",
     "status",
     "workflow_id",
+    "workflow_snapshot",
     "organization_id",
     "workflow_version",
     "claimed_by_runner_id",

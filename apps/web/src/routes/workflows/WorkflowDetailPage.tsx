@@ -109,7 +109,7 @@ export function WorkflowDetailPage() {
             <h3>Workflow steps</h3>
             <ol className="step-list">
               {workflowQuery.data.definition.steps.map((step) => (
-                <li className="step-list__item" key={step.id}>
+                <li className="step-list__item" key={step.id} id={`step-${step.id}`}>
                   <div>
                     <strong>{step.name}</strong>
                     <p className="muted">

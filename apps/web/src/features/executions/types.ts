@@ -4,6 +4,7 @@ export interface ExecutionSummary {
   id: string
   status: string
   workflow_id: string
+  workflow_name: string | null
   organization_id: string
   workflow_version: number
   claimed_by_runner_id: string

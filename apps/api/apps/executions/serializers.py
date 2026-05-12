@@ -65,12 +65,15 @@ class ExecutionCreateSerializer(serializers.Serializer):
 
 
 class ExecutionListSerializer(serializers.ModelSerializer):
+    workflow_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Execution
         fields = [
             "id",
             "status",
             "workflow_id",
+            "workflow_name",
             "organization_id",
             "workflow_version",
             "claimed_by_runner_id",
@@ -81,6 +84,12 @@ class ExecutionListSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_workflow_name(self, obj):
+        name = obj.workflow_snapshot.get("name")
+        if name:
+            return name
+        return obj.workflow.name
 
 
 class ExecutionDetailSerializer(serializers.ModelSerializer):

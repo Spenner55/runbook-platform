@@ -54,6 +54,7 @@ export function ExecutionsPage() {
             <tr>
               <th>ID</th>
               <th>Workflow</th>
+              <th>Name</th>
               <th>Status</th>
               <th>Started</th>
               <th>Finished</th>
@@ -69,6 +70,7 @@ export function ExecutionsPage() {
                 <td>
                   <code>{execution.workflow_id.slice(0, 8)}…</code>
                 </td>
+                <td>{execution.workflow_name ?? '—'}</td>
                 <td>
                   <span className={getStatusPillClass(execution.status)}>{execution.status}</span>
                 </td>

@@ -513,6 +513,13 @@ class Command(BaseCommand):
         )
 
         # Pending approval request — this is what you'd approve/reject in the UI
+        # Delete any stale decision before resetting to PENDING so the unique constraint
+        # on ApprovalDecision.approval_request_id is not violated on re-seed.
+        existing_ar = ApprovalRequest.objects.filter(step=step2).first()
+        if existing_ar is not None:
+            from apps.approvals.models import ApprovalDecision as _AD
+
+            _AD.objects.filter(approval_request=existing_ar).delete()
         approval, approval_created = ApprovalRequest.objects.update_or_create(
             step=step2,
             defaults={
