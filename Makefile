@@ -1,6 +1,10 @@
 .PHONY: up up-d down restart reset logs logs-api logs-web logs-runner logs-ai \
         ps migrate makemigrations makemigrations-app \
-        test test-api test-api-v test-runner test-web seed-dev seed-execution-smoke \
+        test test-api test-api-v test-api-app test-runner test-web test-web-file \
+        test-approvals test-artifacts test-audit test-auditor test-changes test-common \
+        test-evidence test-executions test-integrations test-organizations test-policies \
+        test-runbooks test-users test-workflows \
+        seed-dev seed-execution-smoke \
         format lint lint-fix check-prod check-migrations security-scan hardening-check bootstrap help \
         ci ci-full \
         api-shell ai-shell runner-shell web-shell db-shell \
@@ -76,11 +80,59 @@ test-api: ## Run Django pytest suite
 test-api-v: ## Run Django pytest suite (verbose)
 	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest -v
 
+test-api-app: ## Run Django tests for one app: make test-api-app APP=runbooks
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/$(APP)/tests/
+
+test-approvals: ## Run approvals app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/approvals/tests/
+
+test-artifacts: ## Run artifacts app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/artifacts/tests/
+
+test-audit: ## Run audit app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/audit/tests/
+
+test-auditor: ## Run auditor app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/auditor/tests/
+
+test-changes: ## Run changes app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/changes/tests/
+
+test-common: ## Run common app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/common/tests/
+
+test-evidence: ## Run evidence app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/evidence/tests/
+
+test-executions: ## Run executions app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/executions/tests/
+
+test-integrations: ## Run integrations app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/integrations/tests/
+
+test-organizations: ## Run organizations app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/organizations/tests/
+
+test-policies: ## Run policies app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/policies/tests/
+
+test-runbooks: ## Run runbooks app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/runbooks/tests/
+
+test-users: ## Run users app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/users/tests/
+
+test-workflows: ## Run workflows app tests
+	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest apps/workflows/tests/
+
 test-runner: ## Run runner pytest suite
 	docker compose exec runner pytest
 
 test-web: ## Run web Vitest suite (single run)
 	docker compose exec web npm test -- --run
+
+test-web-file: ## Run a single web test file: make test-web-file FILE=src/routes/executions/ExecutionsPage.test.tsx
+	docker compose exec web npm test -- --run $(FILE)
 
 test: ## Run all test suites (API, runner, web)
 	docker compose exec -e DJANGO_SETTINGS_MODULE=config.settings.test api pytest

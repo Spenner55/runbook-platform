@@ -101,7 +101,13 @@ describe('ExecutionsPage', () => {
     const succeeded = makeExecution({ id: 'exec-succeeded', status: 'succeeded' })
     const failed = makeExecution({ id: 'exec-failed', status: 'failed' })
 
-    fetchMock.mockResolvedValue(createJsonResponse([succeeded, failed]))
+    fetchMock.mockImplementation((url: RequestInfo | URL) => {
+      const urlStr = String(url)
+      if (urlStr.includes('status=failed')) {
+        return Promise.resolve(createJsonResponse([failed]))
+      }
+      return Promise.resolve(createJsonResponse([succeeded, failed]))
+    })
 
     const user = userEvent.setup()
 
