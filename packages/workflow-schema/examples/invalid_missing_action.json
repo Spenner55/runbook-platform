@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "2",
+  "name": "Step Missing Action",
+  "steps": [
+    {
+      "id": "step-1",
+      "name": "Do something",
+      "type": "manual_task",
+      "risk": "low"
+    }
+  ]
+}

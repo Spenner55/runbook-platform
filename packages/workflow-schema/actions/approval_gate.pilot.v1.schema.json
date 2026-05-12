@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ApprovalGateAction",
+  "description": "A gate that blocks progression until an explicit approval is granted.",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "type": "string", "const": "approval_gate" },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "message": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

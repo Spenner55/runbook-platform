@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ManualTaskAction",
+  "description": "A human-performed task step requiring operator confirmation.",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "type": "string", "const": "manual_task" },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instructions": { "type": "string", "minLength": 1 },
+        "expected_outcome": { "type": "string" }
+      }
+    }
+  }
+}

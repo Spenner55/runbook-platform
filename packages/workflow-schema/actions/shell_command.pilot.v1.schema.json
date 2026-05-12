@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ShellCommandAction",
+  "description": "Executes a shell command in the runner sandbox.",
+  "type": "object",
+  "required": ["type", "params"],
+  "additionalProperties": false,
+  "properties": {
+    "type": { "type": "string", "const": "shell_command" },
+    "params": {
+      "type": "object",
+      "required": ["command"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "working_directory": { "type": "string" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}

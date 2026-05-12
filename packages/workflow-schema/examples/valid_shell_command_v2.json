@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "2",
+  "name": "Deploy Production Service",
+  "description": "Deploys the main API service to production.",
+  "steps": [
+    {
+      "id": "pre-flight-check",
+      "name": "Run pre-flight checks",
+      "type": "shell_command",
+      "risk": "low",
+      "action": {
+        "type": "shell_command",
+        "params": {
+          "command": "bash scripts/preflight.sh",
+          "timeout_seconds": 60,
+          "environment": {
+            "TARGET_ENV": "production"
+          }
+        }
+      }
+    },
+    {
+      "id": "deploy-service",
+      "name": "Deploy service binary",
+      "type": "shell_command",
+      "risk": "high",
+      "requiresApproval": true,
+      "approvalTimeoutSeconds": 1800,
+      "action": {
+        "type": "shell_command",
+        "params": {
+          "command": "bash scripts/deploy.sh --env production",
+          "timeout_seconds": 600,
+          "working_directory": "/app",
+          "environment": {
+            "TARGET_ENV": "production",
+            "ROLLBACK_ON_FAILURE": "true"
+          }
+        }
+      }
+    }
+  ]
+}

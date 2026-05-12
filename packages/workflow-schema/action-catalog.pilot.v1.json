@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "pilot.v1",
+  "description": "Pilot action catalog listing all supported action types and their schema locations.",
+  "actions": [
+    {
+      "type": "manual_task",
+      "description": "A human-performed task requiring operator confirmation.",
+      "schema": "./actions/manual_task.pilot.v1.schema.json",
+      "requiresRunner": false
+    },
+    {
+      "type": "approval_gate",
+      "description": "A gate that blocks progression until an explicit approval is granted.",
+      "schema": "./actions/approval_gate.pilot.v1.schema.json",
+      "requiresRunner": false
+    },
+    {
+      "type": "shell_command",
+      "description": "Executes a shell command in the runner sandbox.",
+      "schema": "./actions/shell_command.pilot.v1.schema.json",
+      "requiresRunner": true
+    },
+    {
+      "type": "http_request",
+      "description": "Issues an outbound HTTP request and optionally asserts on the response.",
+      "schema": "./actions/http_request.pilot.v1.schema.json",
+      "requiresRunner": true
+    },
+    {
+      "type": "artifact_assertion",
+      "description": "Asserts a condition about a named artifact produced during execution.",
+      "schema": "./actions/artifact_assertion.pilot.v1.schema.json",
+      "requiresRunner": true
+    }
+  ]
+}

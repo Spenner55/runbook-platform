@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "2",
+  "name": "Health-check and Notify Workflow",
+  "description": "Checks service health and posts a Slack notification.",
+  "steps": [
+    {
+      "id": "health-check",
+      "name": "Check API health endpoint",
+      "type": "http_request",
+      "risk": "low",
+      "action": {
+        "type": "http_request",
+        "params": {
+          "method": "GET",
+          "url": "https://api.example.com/health",
+          "timeout_seconds": 10,
+          "expected_status_codes": [200]
+        }
+      }
+    },
+    {
+      "id": "notify-slack",
+      "name": "Post deployment notification to Slack",
+      "type": "http_request",
+      "risk": "low",
+      "action": {
+        "type": "http_request",
+        "params": {
+          "method": "POST",
+          "url": "https://hooks.slack.com/services/example",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": { "text": "Deployment complete." },
+          "timeout_seconds": 10,
+          "expected_status_codes": [200, 204]
+        }
+      }
+    }
+  ]
+}

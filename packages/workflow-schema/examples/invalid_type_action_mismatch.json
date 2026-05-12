@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "2",
+  "name": "Type Action Mismatch",
+  "steps": [
+    {
+      "id": "step-1",
+      "name": "Step type says shell_command but action says http_request",
+      "type": "shell_command",
+      "risk": "low",
+      "action": {
+        "type": "http_request",
+        "params": {
+          "method": "GET",
+          "url": "https://example.com"
+        }
+      }
+    }
+  ]
+}
