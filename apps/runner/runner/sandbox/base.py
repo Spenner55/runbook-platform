@@ -55,6 +55,7 @@ class ArtifactSpec:
     kind: str = "file"
     mime_type: str = ""
     required: bool = False
+    declaration_key: str = ""  # original declaration key, empty for ad-hoc specs
 
 
 @dataclass(frozen=True)

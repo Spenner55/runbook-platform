@@ -286,6 +286,7 @@ class ClaimedStep(BaseModel):
     retry: RetrySpec | None = None
     idempotency: IdempotencySpec | None = None
     artifacts: list[ArtifactDeclaration] = []
+    secret_keys: list[str] = []
 
     model_config = ConfigDict(extra="ignore")
 

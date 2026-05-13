@@ -27,6 +27,7 @@ class ActionExecutionContext:
     uploader: ArtifactUploader
     cancellation_event: threading.Event
     settings: RunnerSettings | None = None
+    secret_keys: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

@@ -354,7 +354,13 @@ class TestShellCommandExecute:
 
         assert result.status == "succeeded"
         assert result.exit_code == 0
-        ctx.uploader.upload_stdout.assert_called_once_with(step.id, b"hello\n")
+        ctx.uploader.upload_stdout.assert_called_once_with(
+            step.id,
+            b"hello\n",
+            action_type="shell_command",
+            action_version="pilot.v1",
+            step_key=step.step_key,
+        )
 
     def test_shell_mode_success_when_allowed(self, tmp_path):
         from runner.actions.shell_command import ShellCommandHandler

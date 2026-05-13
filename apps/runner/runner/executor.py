@@ -15,6 +15,8 @@ from runner.actions.base import ActionExecutionContext, ActionValidationError
 from runner.actions.registry import ACTION_REGISTRY
 from runner.artifact_uploader import ArtifactUploader
 from runner.client import ApiClient
+from runner.secrets.base import SecretUnavailableError
+from runner.secrets.null_provider import NullProvider
 from runner.sandbox import (
     SandboxError,
     SandboxExecutionSpec,
@@ -545,6 +547,29 @@ class Executor:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
             return True
 
+        secret_keys = list(step.secret_keys)
+        try:
+            NullProvider().resolve(secret_keys)
+        except SecretUnavailableError as exc:
+            logger.error(
+                "Step %d '%s': secret unavailable — failing closed: %s",
+                step.position,
+                step.name,
+                exc,
+            )
+            try:
+                self._client.update_step(
+                    execution.id,
+                    step.id,
+                    claim_token,
+                    status="failed",
+                    error_message=str(exc),
+                    failure_kind="secret_unavailable",
+                )
+            except httpx.HTTPError as http_exc:
+                logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
+            return True
+
         ctx = ActionExecutionContext(
             execution=execution,
             step=step,
@@ -553,6 +578,7 @@ class Executor:
             uploader=uploader,
             cancellation_event=cancellation_event,
             settings=self._settings,
+            secret_keys=secret_keys,
         )
         heartbeat.set_observed_status("running")
         started_at = _utcnow()

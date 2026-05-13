@@ -18,6 +18,7 @@ from runner.sandbox import (
     get_provider,
 )
 from runner.sandbox.workspace import WorkspaceManager
+from runner.schemas import ArtifactDeclaration
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,15 @@ class ShellCommandHandler:
             max_artifacts=settings.sandbox_max_artifacts_per_step,
         )
 
-        artifact_specs = _build_artifact_specs(ctx.step.artifacts)
+        try:
+            artifact_specs = _build_artifact_specs(ctx.step.artifacts)
+        except ActionValidationError as exc:
+            return ActionResult(
+                status="failed",
+                exit_code=None,
+                error_message=str(exc),
+                failure_kind="action_input_invalid",
+            )
 
         spec = SandboxExecutionSpec(
             execution_id=ctx.execution.id,
@@ -188,8 +197,24 @@ class ShellCommandHandler:
                 failure_kind="sandbox_error",
             )
 
-        ctx.uploader.upload_stdout(ctx.step.id, result.stdout.content)
-        ctx.uploader.upload_stderr(ctx.step.id, result.stderr.content)
+        snapshot = ctx.step.action_snapshot
+        action_type = snapshot.type if snapshot else ""
+        action_version = snapshot.version if snapshot else ""
+
+        ctx.uploader.upload_stdout(
+            ctx.step.id,
+            result.stdout.content,
+            action_type=action_type,
+            action_version=action_version,
+            step_key=ctx.step.step_key,
+        )
+        ctx.uploader.upload_stderr(
+            ctx.step.id,
+            result.stderr.content,
+            action_type=action_type,
+            action_version=action_version,
+            step_key=ctx.step.step_key,
+        )
 
         for collected in result.artifacts:
             ctx.uploader.upload_file(
@@ -198,6 +223,9 @@ class ShellCommandHandler:
                 sandbox_provider=result.provider,
                 sandbox_run_id=result.sandbox_run_id,
                 step_key=ctx.step.step_key,
+                declaration_key=collected.spec.declaration_key,
+                action_type=action_type,
+                action_version=action_version,
             )
 
         step_failed = (
@@ -264,11 +292,20 @@ def _build_env(settings: Any) -> dict[str, str]:
     }
 
 
-def _build_artifact_specs(declarations: list) -> list[ArtifactSpec]:
+def _build_artifact_specs(declarations: list[ArtifactDeclaration]) -> list[ArtifactSpec]:
     specs = []
     for decl in declarations:
         if not decl.path:
             continue
+        # Catch unsafe paths at declaration-validation time → action_input_invalid
+        if os.path.isabs(decl.path):
+            raise ActionValidationError(
+                f"Artifact declaration '{decl.key}' has an absolute path: {decl.path!r}"
+            )
+        if ".." in Path(decl.path).parts:
+            raise ActionValidationError(
+                f"Artifact declaration '{decl.key}' contains '..': {decl.path!r}"
+            )
         specs.append(
             ArtifactSpec(
                 name=decl.name or decl.key,
@@ -276,6 +313,7 @@ def _build_artifact_specs(declarations: list) -> list[ArtifactSpec]:
                 kind=decl.kind or "file",
                 mime_type=decl.mime_type,
                 required=decl.required,
+                declaration_key=decl.key,
             )
         )
     return specs
