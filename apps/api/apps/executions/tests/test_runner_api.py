@@ -12,6 +12,7 @@ from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
+from apps.workflows.tests.fixtures.workflow_v2 import valid_v2_shell_command_workflow
 
 
 @pytest.fixture
@@ -86,6 +87,31 @@ def test_claim_next_response_includes_steps(queued_execution):
     body = response.json()
     assert "steps" in body["execution"]
     assert len(body["execution"]["steps"]) > 0
+
+
+@pytest.mark.django_db
+def test_claim_next_v2_execution_includes_action_snapshot(runbook):
+    workflow = workflow_services.create_workflow_v2_draft(
+        runbook=runbook,
+        definition=valid_v2_shell_command_workflow(),
+    )
+    workflow = workflow_services.publish_workflow(workflow=workflow)
+    queued = execution_services.create_execution(workflow=workflow)
+
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["execution"]["id"] == str(queued.id)
+    step = body["execution"]["steps"][0]
+    assert step["action_snapshot"] == workflow.definition["steps"][0]["action"]
+    assert step["step_snapshot"] == workflow.definition["steps"][0]
+    assert step["timeout_seconds"] == 30
 
 
 @pytest.mark.django_db
@@ -692,3 +718,116 @@ def test_claim_next_step_snapshot_keys_match_workflow_step(queued_execution):
         s for s in body["execution"]["steps"] if s["step_key"] == db_step.step_key
     )
     assert api_step["step_snapshot"]["id"] == db_step.step_snapshot["id"]
+
+
+# ---------------------------------------------------------------------------
+# v2 action_snapshot / timeout_seconds / execution_mode in claim payload
+# ---------------------------------------------------------------------------
+
+
+def _v2_shell_definition(**overrides):
+    doc = {
+        "schemaVersion": "2",
+        "name": "V2 Runner Test Workflow",
+        "steps": [
+            {
+                "id": "run-cmd",
+                "name": "Run Command",
+                "type": "shell_command",
+                "risk": "low",
+                "action": {"type": "shell_command", "params": {"command": "echo test"}},
+                "timeoutSeconds": 90,
+                "retry": {"maxAttempts": 2, "backoffSeconds": 5},
+                "idempotency": {"mode": "natural"},
+                "artifacts": [{"key": "out", "kind": "stdout"}],
+            }
+        ],
+    }
+    doc.update(overrides)
+    return doc
+
+
+@pytest.fixture
+def published_v2_workflow(runbook):
+    wf = workflow_services.create_workflow_v2_draft(
+        runbook=runbook,
+        definition=_v2_shell_definition(),
+    )
+    return workflow_services.publish_workflow(workflow=wf)
+
+
+@pytest.fixture
+def queued_v2_execution(published_v2_workflow):
+    return execution_services.create_execution(workflow=published_v2_workflow)
+
+
+@pytest.mark.django_db
+def test_claim_next_v1_step_has_null_action_snapshot(queued_execution):
+    """v1 steps must have action_snapshot=null in the claim payload."""
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    steps = response.json()["execution"]["steps"]
+    for step in steps:
+        assert "action_snapshot" in step
+        assert step["action_snapshot"] is None
+
+
+@pytest.mark.django_db
+def test_claim_next_v2_step_has_action_snapshot(queued_v2_execution):
+    """v2 steps must include a non-null action_snapshot with type and params."""
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    step = response.json()["execution"]["steps"][0]
+    assert step["action_snapshot"] is not None
+    assert step["action_snapshot"]["type"] == "shell_command"
+    assert step["action_snapshot"]["params"]["command"] == "echo test"
+
+
+@pytest.mark.django_db
+def test_claim_next_v2_step_has_timeout_seconds(queued_v2_execution):
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    step = response.json()["execution"]["steps"][0]
+    assert step["timeout_seconds"] == 90
+
+
+@pytest.mark.django_db
+def test_claim_next_v2_step_has_retry_and_idempotency(queued_v2_execution):
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    step = response.json()["execution"]["steps"][0]
+    assert step["retry"] == {"maxAttempts": 2, "backoffSeconds": 5}
+    assert step["idempotency"] == {"mode": "natural"}
+    assert step["artifacts"] == [{"key": "out", "kind": "stdout"}]
+
+
+@pytest.mark.django_db
+def test_claim_next_v1_execution_has_live_mode(queued_execution):
+    api = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = api.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    assert response.json()["execution"]["execution_mode"] == "live"

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "2",
+  "name": "Pilot HTTP request workflow",
+  "description": "Shared valid v2 http_request fixture for Pilot Phase B tests.",
+  "catalogVersion": "pilot.v1",
+  "secrets": [],
+  "steps": [
+    {
+      "id": "health-check",
+      "name": "Check API health",
+      "type": "http_request",
+      "risk": "low",
+      "action": {
+        "type": "http_request",
+        "version": "pilot.v1",
+        "params": {
+          "method": "GET",
+          "url": "https://example.com/health",
+          "headers": {
+            "Accept": "application/json"
+          },
+          "timeout_seconds": 10,
+          "expected_status_codes": [
+            200
+          ]
+        }
+      },
+      "timeoutSeconds": 10,
+      "retry": {
+        "maxAttempts": 1
+      },
+      "idempotency": {
+        "mode": "natural",
+        "reason": "GET health checks are safe to repeat."
+      },
+      "dryRun": {
+        "supported": true,
+        "strategy": "validate_only"
+      },
+      "artifacts": []
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from apps.executions.models import Execution, ExecutionStep
 
 class ExecutionStepSerializer(serializers.ModelSerializer):
     policy_evaluation = serializers.SerializerMethodField()
+    evidence_status = serializers.SerializerMethodField()
 
     class Meta:
         model = ExecutionStep
@@ -32,6 +33,7 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "sandbox_provider",
             "sandbox_run_id",
             "result_metadata",
+            "evidence_status",
         ]
 
     def get_policy_evaluation(self, obj):
@@ -52,6 +54,11 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
 
         return PolicyEvaluationSummarySerializer(evaluation).data
 
+    def get_evidence_status(self, obj):
+        from apps.artifacts.services import check_step_evidence_completeness
+
+        return check_step_evidence_completeness(obj)
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         for field in ("sandbox_provider", "sandbox_run_id", "failure_kind"):
@@ -62,15 +69,24 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
 
 class ExecutionCreateSerializer(serializers.Serializer):
     workflow_id = serializers.UUIDField()
+    mode = serializers.ChoiceField(
+        choices=["live", "dry_run"],
+        default="live",
+        required=False,
+    )
 
 
 class ExecutionListSerializer(serializers.ModelSerializer):
+    workflow_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Execution
         fields = [
             "id",
             "status",
+            "execution_mode",
             "workflow_id",
+            "workflow_name",
             "organization_id",
             "workflow_version",
             "claimed_by_runner_id",
@@ -82,6 +98,20 @@ class ExecutionListSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def get_workflow_name(self, obj):
+        # _workflow_name is annotated by the list view queryset via scalar
+        # subquery to avoid fetching the large workflow_snapshot JSON field.
+        annotated = getattr(obj, "_workflow_name", None)
+        if annotated:
+            return annotated
+        # Fallback when called outside the list view (e.g. in tests that
+        # construct executions without the annotation).
+        if "workflow_snapshot" in obj.__dict__:
+            name = obj.workflow_snapshot.get("name")
+            if name:
+                return name
+        return obj.workflow.name
+
 
 class ExecutionDetailSerializer(serializers.ModelSerializer):
     steps = ExecutionStepSerializer(many=True, read_only=True)
@@ -92,10 +122,12 @@ class ExecutionDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "status",
+            "execution_mode",
             "workflow_id",
             "organization_id",
             "workflow_version",
             "workflow_snapshot",
+            "workflow_snapshot_hash_sha256",
             "claimed_by_runner_id",
             "claim_token_present",
             "claimed_at",

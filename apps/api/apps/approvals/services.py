@@ -230,19 +230,22 @@ def get_approval_status(*, approval_request: ApprovalRequest) -> ApprovalRequest
         locked.resolved_at = now
         locked.save(update_fields=["status", "resolved_at", "updated_at"])
 
-        approval_decision = ApprovalDecision.objects.create(
+        approval_decision, created = ApprovalDecision.objects.get_or_create(
             approval_request=locked,
-            decision=ApprovalDecision.Decision.TIMED_OUT,
-            source_type=ApprovalDecision.SourceType.SYSTEM,
-            decided_at=now,
-            decided_by_label="system",
-            decided_by_label_source="system",
+            defaults={
+                "decision": ApprovalDecision.Decision.TIMED_OUT,
+                "source_type": ApprovalDecision.SourceType.SYSTEM,
+                "decided_at": now,
+                "decided_by_label": "system",
+                "decided_by_label_source": "system",
+            },
         )
-        _emit_approval_decision_audit(
-            approval_request=locked,
-            approval_decision=approval_decision,
-            actor=system_actor(),
-        )
+        if created:
+            _emit_approval_decision_audit(
+                approval_request=locked,
+                approval_decision=approval_decision,
+                actor=system_actor(),
+            )
         record_approval_latency(
             outcome=locked.status,
             requested_at=locked.requested_at,

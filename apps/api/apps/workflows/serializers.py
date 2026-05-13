@@ -35,6 +35,10 @@ class WorkflowDetailSerializer(serializers.ModelSerializer):
             "status",
             "definition_schema_version",
             "definition",
+            "definition_hash_sha256",
+            "catalog_version",
+            "validation_status",
+            "validation_report",
             "requires_review",
             "parse_source",
             "runbook_id",
@@ -50,3 +54,12 @@ class WorkflowPublishSerializer(serializers.Serializer):
 
 class WorkflowArchiveSerializer(serializers.Serializer):
     pass
+
+
+class WorkflowValidateSerializer(serializers.Serializer):
+    definition = serializers.JSONField()
+    schema_version = serializers.ChoiceField(
+        choices=["workflow.schema.v1", "workflow.schema.v2"],
+        default="workflow.schema.v2",
+        required=False,
+    )

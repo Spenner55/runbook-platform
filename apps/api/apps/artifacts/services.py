@@ -479,6 +479,57 @@ def _safe_notify_integration(*, event_type: str, organization, context: dict) ->
     transaction.on_commit(notify)
 
 
+def check_step_evidence_completeness(step) -> dict:
+    """Compare declared required artifacts against uploaded artifacts for a step.
+
+    Matching is by ``declaration_key`` stored in artifact metadata, which the
+    runner sets when uploading an artifact that satisfies a v2 artifact
+    declaration.  Steps with no ``required: true`` artifacts are always complete.
+
+    Returns::
+
+        {
+            "complete": bool,
+            "required_keys": [...],   # keys declared required in step snapshot
+            "satisfied_keys": [...],  # subset with a matching uploaded artifact
+            "missing_keys": [...],    # required_keys - satisfied_keys
+        }
+    """
+    snapshot = step.step_snapshot or {}
+    declarations = snapshot.get("artifacts") or []
+    required_keys = [
+        a["key"]
+        for a in declarations
+        if isinstance(a, dict) and a.get("required", False) and "key" in a
+    ]
+
+    if not required_keys:
+        return {
+            "complete": True,
+            "required_keys": [],
+            "satisfied_keys": [],
+            "missing_keys": [],
+        }
+
+    satisfied_keys = [
+        key
+        for key in required_keys
+        if Artifact.objects.filter(
+            step=step,
+            upload_status=Artifact.UploadStatus.AVAILABLE,
+            metadata__declaration_key=key,
+        ).exists()
+    ]
+    missing_keys = [k for k in required_keys if k not in satisfied_keys]
+
+    return {
+        "complete": not missing_keys,
+        "required_keys": required_keys,
+        "satisfied_keys": satisfied_keys,
+        "missing_keys": missing_keys,
+    }
+
+
 def _artifact_context(*, artifact: Artifact, event_type: str) -> dict:
     return {
         "event_type": event_type,

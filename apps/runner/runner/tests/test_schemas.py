@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from runner.schemas import (
+    ActionSnapshot,
+    ArtifactDeclaration,
     ClaimedExecution,
     ClaimedStep,
     ClaimNextResponse,
     CompleteExecutionRequest,
     CompleteExecutionResponse,
     HeartbeatRequest,
+    IdempotencySpec,
+    RetrySpec,
     RunnerSettings,
     StepUpdateResponse,
 )
@@ -166,6 +172,19 @@ def test_claimed_execution_no_claim_token_field():
     )
 
 
+def test_claimed_v2_execution_fixture_round_trips():
+    fixture = Path(__file__).parent / "fixtures" / "claimed_execution_v2.json"
+    data = json.loads(fixture.read_text())
+
+    exe = ClaimedExecution.model_validate(data)
+
+    assert exe.execution_mode == "live"
+    assert exe.steps[0].action_snapshot is not None
+    assert exe.steps[0].action_snapshot.type == "shell_command"
+    assert exe.steps[0].action_snapshot.version == "pilot.v1"
+    assert exe.steps[0].action_snapshot.params["command"].startswith("printf")
+
+
 def test_claimed_execution_parses_django_response_shape():
     """Simulate the dict Django actually returns in ClaimedExecutionSerializer."""
     data = {
@@ -302,3 +321,219 @@ def test_heartbeat_request_json_serialisation():
     dumped = req.model_dump(mode="json")
     assert dumped["observed_status"] == "running"
     assert "claim_token" in dumped
+
+
+# ---------------------------------------------------------------------------
+# v2 action / metadata sub-model contracts
+# ---------------------------------------------------------------------------
+
+
+def test_retry_spec_parses_camelcase():
+    spec = RetrySpec.model_validate(
+        {"maxAttempts": 3, "backoffSeconds": 5, "retryOn": ["timeout"]}
+    )
+    assert spec.max_attempts == 3
+    assert spec.backoff_seconds == 5
+    assert spec.retry_on == ["timeout"]
+
+
+def test_retry_spec_defaults():
+    spec = RetrySpec.model_validate({"maxAttempts": 1})
+    assert spec.backoff_seconds == 0
+    assert spec.retry_on == []
+
+
+def test_retry_spec_unknown_fields_ignored():
+    spec = RetrySpec.model_validate({"maxAttempts": 2, "futureField": "ignored"})
+    assert spec.max_attempts == 2
+
+
+def test_idempotency_spec_parses():
+    spec = IdempotencySpec.model_validate(
+        {"mode": "keyed", "key": "deploy-abc", "reason": "safe"}
+    )
+    assert spec.mode == "keyed"
+    assert spec.key == "deploy-abc"
+
+
+def test_idempotency_spec_defaults():
+    spec = IdempotencySpec.model_validate({"mode": "none"})
+    assert spec.key == ""
+    assert spec.reason == ""
+
+
+def test_artifact_declaration_parses_camelcase():
+    decl = ArtifactDeclaration.model_validate(
+        {
+            "key": "output",
+            "kind": "file",
+            "path": "/tmp/out.txt",
+            "mimeType": "text/plain",
+            "maxBytes": 1048576,
+            "contentDisposition": "attachment",
+            "evidenceRole": "primary",
+        }
+    )
+    assert decl.key == "output"
+    assert decl.mime_type == "text/plain"
+    assert decl.max_bytes == 1048576
+    assert decl.content_disposition == "attachment"
+    assert decl.evidence_role == "primary"
+
+
+def test_artifact_declaration_defaults():
+    decl = ArtifactDeclaration.model_validate({"key": "report"})
+    assert decl.mime_type == ""
+    assert decl.max_bytes is None
+    assert decl.required is False
+
+
+def test_action_snapshot_parses():
+    snap = ActionSnapshot.model_validate(
+        {"type": "shell_command", "params": {"command": "echo hi"}}
+    )
+    assert snap.type == "shell_command"
+    assert snap.params == {"command": "echo hi"}
+
+
+def test_action_snapshot_defaults():
+    snap = ActionSnapshot.model_validate({"type": "manual_task"})
+    assert snap.params == {}
+    assert snap.version == ""
+
+
+# ---------------------------------------------------------------------------
+# ClaimedStep v1 / v2 contract
+# ---------------------------------------------------------------------------
+
+
+def _v1_step_dict(**overrides) -> dict:
+    d = {
+        "id": str(uuid4()),
+        "position": 1,
+        "step_key": "step-1",
+        "name": "Step 1",
+        "step_type": "shell",
+        "risk_level": "low",
+        "command": "echo hello",
+        "requires_approval": False,
+        "status": "pending",
+        "step_snapshot": {
+            "id": "step-1",
+            "name": "Step 1",
+            "type": "shell",
+            "risk": "low",
+            "command": "echo hello",
+        },
+    }
+    d.update(overrides)
+    return d
+
+
+def _v2_step_dict(**overrides) -> dict:
+    d = {
+        "id": str(uuid4()),
+        "position": 1,
+        "step_key": "run",
+        "name": "Run command",
+        "step_type": "shell_command",
+        "risk_level": "low",
+        "command": "echo hello",
+        "requires_approval": False,
+        "status": "pending",
+        "step_snapshot": {
+            "id": "run",
+            "name": "Run command",
+            "type": "shell_command",
+            "risk": "low",
+            "action": {"type": "shell_command", "params": {"command": "echo hello"}},
+            "timeoutSeconds": 120,
+            "retry": {"maxAttempts": 2, "backoffSeconds": 3},
+            "idempotency": {"mode": "natural"},
+            "artifacts": [{"key": "stdout", "kind": "stdout"}],
+        },
+        "action_snapshot": {
+            "type": "shell_command",
+            "params": {"command": "echo hello"},
+        },
+        "timeout_seconds": 120,
+        "retry": {"maxAttempts": 2, "backoffSeconds": 3},
+        "idempotency": {"mode": "natural"},
+        "artifacts": [{"key": "stdout", "kind": "stdout"}],
+    }
+    d.update(overrides)
+    return d
+
+
+def test_v1_claimed_step_parses_unchanged():
+    step = ClaimedStep.model_validate(_v1_step_dict())
+    assert step.action_snapshot is None
+    assert step.timeout_seconds is None
+    assert step.retry is None
+    assert step.idempotency is None
+    assert step.artifacts == []
+
+
+def test_v2_claimed_step_parses_with_action_snapshot():
+    step = ClaimedStep.model_validate(_v2_step_dict())
+    assert step.action_snapshot is not None
+    assert step.action_snapshot.type == "shell_command"
+    assert step.action_snapshot.params == {"command": "echo hello"}
+    assert step.timeout_seconds == 120
+    assert step.retry is not None
+    assert step.retry.max_attempts == 2
+    assert step.retry.backoff_seconds == 3
+    assert step.idempotency is not None
+    assert step.idempotency.mode == "natural"
+    assert len(step.artifacts) == 1
+    assert step.artifacts[0].key == "stdout"
+
+
+def test_v2_claimed_step_missing_action_snapshot_is_none():
+    """A v2 step payload with action_snapshot omitted must not fail."""
+    d = _v2_step_dict()
+    d.pop("action_snapshot")
+    step = ClaimedStep.model_validate(d)
+    assert step.action_snapshot is None
+
+
+def test_claimed_step_unknown_extra_fields_still_ignored():
+    """Forward-compatible: unknown fields from a future API version are dropped."""
+    d = _v1_step_dict()
+    d["from_future"] = "new_field"
+    step = ClaimedStep.model_validate(d)
+    assert step.step_key == "step-1"
+
+
+# ---------------------------------------------------------------------------
+# ClaimedExecution execution_mode
+# ---------------------------------------------------------------------------
+
+
+def test_claimed_execution_includes_execution_mode():
+    data = {
+        "id": str(uuid4()),
+        "status": "claimed",
+        "workflow_id": str(uuid4()),
+        "organization_id": str(uuid4()),
+        "workflow_version": 1,
+        "workflow_snapshot": {},
+        "execution_mode": "dry_run",
+        "steps": [_v1_step_dict()],
+    }
+    exe = ClaimedExecution.model_validate(data)
+    assert exe.execution_mode == "dry_run"
+
+
+def test_claimed_execution_execution_mode_defaults_to_live():
+    data = {
+        "id": str(uuid4()),
+        "status": "claimed",
+        "workflow_id": str(uuid4()),
+        "organization_id": str(uuid4()),
+        "workflow_version": 1,
+        "workflow_snapshot": {},
+        "steps": [],
+    }
+    exe = ClaimedExecution.model_validate(data)
+    assert exe.execution_mode == "live"

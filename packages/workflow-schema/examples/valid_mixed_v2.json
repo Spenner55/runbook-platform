@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "2",
+  "name": "Database Migration Runbook",
+  "description": "Safely applies a database migration with manual review and approval gates.",
+  "steps": [
+    {
+      "id": "backup-db",
+      "name": "Create database backup",
+      "type": "shell_command",
+      "risk": "medium",
+      "action": {
+        "type": "shell_command",
+        "params": {
+          "command": "pg_dump $DATABASE_URL > /backups/pre-migration.dump",
+          "timeout_seconds": 300
+        }
+      }
+    },
+    {
+      "id": "review-migration",
+      "name": "Review migration SQL",
+      "type": "manual_task",
+      "risk": "low",
+      "action": {
+        "type": "manual_task",
+        "params": {
+          "instructions": "Review the migration file at migrations/0042_add_index.sql and confirm it is safe to apply.",
+          "expected_outcome": "Migration SQL reviewed and approved by DBA."
+        }
+      }
+    },
+    {
+      "id": "approve-migration",
+      "name": "Approve migration execution",
+      "type": "approval_gate",
+      "risk": "high",
+      "requiresApproval": true,
+      "action": {
+        "type": "approval_gate",
+        "params": {
+          "message": "Confirm you have reviewed the migration and the backup is complete.",
+          "timeout_seconds": 3600
+        }
+      }
+    },
+    {
+      "id": "run-migration",
+      "name": "Apply database migration",
+      "type": "shell_command",
+      "risk": "critical",
+      "action": {
+        "type": "shell_command",
+        "params": {
+          "command": "python manage.py migrate",
+          "timeout_seconds": 120
+        }
+      }
+    },
+    {
+      "id": "verify-artifact",
+      "name": "Assert migration log artifact exists",
+      "type": "artifact_assertion",
+      "risk": "low",
+      "action": {
+        "type": "artifact_assertion",
+        "params": {
+          "artifact_key": "migration_log",
+          "assertion": "exists"
+        }
+      }
+    }
+  ]
+}

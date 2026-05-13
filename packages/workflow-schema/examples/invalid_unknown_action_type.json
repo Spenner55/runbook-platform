@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "2",
+  "name": "Unknown Action Type",
+  "steps": [
+    {
+      "id": "step-1",
+      "name": "Do something exotic",
+      "type": "shell_command",
+      "risk": "low",
+      "action": {
+        "type": "unsupported_future_action",
+        "params": {}
+      }
+    }
+  ]
+}

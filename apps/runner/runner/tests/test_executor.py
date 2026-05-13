@@ -853,7 +853,7 @@ def test_sandboxed_unsupported_step_type_fails_closed(tmp_path):
         if c.kwargs.get("status") == "failed"
     ]
     assert len(failed_calls) == 1
-    assert failed_calls[0].kwargs.get("failure_kind") == "unsupported_step_type"
+    assert failed_calls[0].kwargs.get("failure_kind") == "unsupported_action_contract"
     assert client.complete_execution.call_args.kwargs["final_status"] == "failed"
 
 

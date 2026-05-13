@@ -3,7 +3,19 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAcceptWorkflowReview } from '../../features/workflows/hooks/useAcceptWorkflowReview'
 import { useRejectWorkflowReview } from '../../features/workflows/hooks/useRejectWorkflowReview'
 import { useWorkflowDetail } from '../../features/workflows/hooks/useWorkflowDetail'
+import type { ActionInvocation, WorkflowDefinitionV2 } from '../../features/workflows/types'
 import { getApiErrorMessage } from '../../shared/api/client'
+
+function actionDetailText(action: ActionInvocation): string {
+  const p = action.params
+  if (!p) return '—'
+  if (action.type === 'shell_command' && typeof p.command === 'string') return p.command
+  if (action.type === 'http_request' && typeof p.method === 'string' && typeof p.url === 'string')
+    return `${p.method} ${p.url}`
+  if (action.type === 'manual_task' && typeof p.instructions === 'string') return p.instructions
+  if (action.type === 'approval_gate' && typeof p.message === 'string') return p.message
+  return '—'
+}
 
 export function WorkflowReviewPage() {
   const { workflowId } = useParams()
@@ -21,6 +33,9 @@ export function WorkflowReviewPage() {
     await rejectReview.mutateAsync()
     navigate('/runbooks')
   }
+
+  const wf = workflowQuery.data
+  const isV2 = wf?.definition_schema_version === 'workflow.schema.v2'
 
   return (
     <section className="panel stack-lg">
@@ -42,53 +57,108 @@ export function WorkflowReviewPage() {
         <p className="banner banner--error">{getApiErrorMessage(workflowQuery.error)}</p>
       ) : null}
 
-      {workflowQuery.data ? (
+      {wf ? (
         <>
           <div className="detail-grid">
             <div>
               <p className="detail-grid__label">Name</p>
-              <p>{workflowQuery.data.name}</p>
+              <p>{wf.name}</p>
             </div>
             <div>
               <p className="detail-grid__label">Steps</p>
-              <p>{workflowQuery.data.definition.steps.length}</p>
+              <p>{wf.definition.steps.length}</p>
             </div>
             <div>
               <p className="detail-grid__label">Source</p>
-              <p>{workflowQuery.data.parse_source === 'ai_parse' ? 'AI parsed' : 'Manual'}</p>
+              <p>{wf.parse_source === 'ai_parse' ? 'AI parsed' : 'Manual'}</p>
+            </div>
+            <div>
+              <p className="detail-grid__label">Schema</p>
+              <p>{wf.definition_schema_version}</p>
             </div>
           </div>
 
           <div className="stack-md">
             <h3>Steps</h3>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Risk</th>
-                  <th>Approval</th>
-                  <th>Command</th>
-                </tr>
-              </thead>
-              <tbody>
-                {workflowQuery.data.definition.steps.map((step, index) => (
-                  <tr key={step.id}>
-                    <td>{index + 1}</td>
-                    <td>{step.name}</td>
-                    <td>{step.type}</td>
-                    <td>
-                      <span className={`pill pill--risk-${step.risk}`}>{step.risk}</span>
-                    </td>
-                    <td>{step.requiresApproval ? 'Required' : '—'}</td>
-                    <td>
-                      {step.command ? <code className="code-inline">{step.command}</code> : '—'}
-                    </td>
+            {isV2 ? (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Action</th>
+                    <th>Risk</th>
+                    <th>Approval</th>
+                    <th>Details</th>
+                    <th>Secrets</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(wf.definition as WorkflowDefinitionV2).steps.map((step, index) => (
+                    <tr key={step.id}>
+                      <td>{index + 1}</td>
+                      <td>{step.name}</td>
+                      <td>
+                        <code className="code-inline">{step.action.type}</code>
+                        {step.action.version ? (
+                          <span
+                            className="muted"
+                            style={{ marginLeft: '0.3em', fontSize: '0.85em' }}
+                          >
+                            v{step.action.version}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td>
+                        <span className={`pill pill--risk-${step.risk}`}>{step.risk}</span>
+                      </td>
+                      <td>{step.requiresApproval ? 'Required' : '—'}</td>
+                      <td>
+                        {actionDetailText(step.action) !== '—' ? (
+                          <code className="code-inline">{actionDetailText(step.action)}</code>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>{step.secrets?.length ? step.secrets.join(', ') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Risk</th>
+                    <th>Approval</th>
+                    <th>Command</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(
+                    wf.definition as {
+                      steps: import('../../features/workflows/types').WorkflowStep[]
+                    }
+                  ).steps.map((step, index) => (
+                    <tr key={step.id}>
+                      <td>{index + 1}</td>
+                      <td>{step.name}</td>
+                      <td>{step.type}</td>
+                      <td>
+                        <span className={`pill pill--risk-${step.risk}`}>{step.risk}</span>
+                      </td>
+                      <td>{step.requiresApproval ? 'Required' : '—'}</td>
+                      <td>
+                        {step.command ? <code className="code-inline">{step.command}</code> : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           <div className="actions-row">

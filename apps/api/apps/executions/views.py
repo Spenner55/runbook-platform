@@ -2,7 +2,7 @@ import time
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import F, Prefetch, Window
+from django.db.models import F, OuterRef, Prefetch, Subquery, Window
 from django.db.models.functions import RowNumber
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -33,6 +33,7 @@ from apps.workflows.models import Workflow
 EXECUTION_LIST_FIELDS = [
     "id",
     "status",
+    "execution_mode",
     "workflow_id",
     "organization_id",
     "workflow_version",
@@ -90,7 +91,14 @@ class ExecutionViewSet(
         if self.action == "retrieve":
             queryset = _build_detail_queryset()
         elif self.action == "list":
-            queryset = Execution.objects.only(*EXECUTION_LIST_FIELDS)
+            # Annotate with workflow name via scalar subquery to avoid both
+            # N+1 deferred access on workflow_snapshot and a JOIN on workflows.
+            workflow_name_sq = Subquery(
+                Workflow.objects.filter(pk=OuterRef("workflow_id")).values("name")[:1]
+            )
+            queryset = Execution.objects.only(*EXECUTION_LIST_FIELDS).annotate(
+                _workflow_name=workflow_name_sq
+            )
             status_filter = self.request.query_params.getlist("status")
             if status_filter:
                 queryset = queryset.filter(status__in=status_filter)
@@ -183,7 +191,9 @@ class ExecutionViewSet(
             user=request.user, organization_id=workflow.organization_id
         )
         execution = services.create_execution(
-            workflow=workflow, actor=actor_from_request(request)
+            workflow=workflow,
+            actor=actor_from_request(request),
+            mode=serializer.validated_data.get("mode", "live"),
         )
 
         return Response(

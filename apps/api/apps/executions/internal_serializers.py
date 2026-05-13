@@ -29,6 +29,12 @@ class ClaimNextRequestSerializer(serializers.Serializer):
 
 
 class InternalExecutionStepSerializer(serializers.ModelSerializer):
+    action_snapshot = serializers.SerializerMethodField()
+    timeout_seconds = serializers.SerializerMethodField()
+    retry = serializers.SerializerMethodField()
+    idempotency = serializers.SerializerMethodField()
+    artifacts = serializers.SerializerMethodField()
+
     class Meta:
         model = ExecutionStep
         fields = [
@@ -42,7 +48,31 @@ class InternalExecutionStepSerializer(serializers.ModelSerializer):
             "requires_approval",
             "status",
             "step_snapshot",
+            "action_snapshot",
+            "timeout_seconds",
+            "retry",
+            "idempotency",
+            "artifacts",
         ]
+
+    def _snapshot(self, obj) -> dict:
+        s = obj.step_snapshot
+        return s if isinstance(s, dict) else {}
+
+    def get_action_snapshot(self, obj):
+        return self._snapshot(obj).get("action")
+
+    def get_timeout_seconds(self, obj):
+        return self._snapshot(obj).get("timeoutSeconds")
+
+    def get_retry(self, obj):
+        return self._snapshot(obj).get("retry")
+
+    def get_idempotency(self, obj):
+        return self._snapshot(obj).get("idempotency")
+
+    def get_artifacts(self, obj):
+        return self._snapshot(obj).get("artifacts") or []
 
 
 class ClaimedExecutionSerializer(serializers.ModelSerializer):
@@ -68,6 +98,7 @@ class ClaimedExecutionSerializer(serializers.ModelSerializer):
             "claimed_at",
             "last_heartbeat_at",
             "steps",
+            "execution_mode",
             "change_record_id",
             "dispatch_token",
             "requested_inputs_sha256",

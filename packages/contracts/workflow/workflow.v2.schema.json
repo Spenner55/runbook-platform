@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkflowDefinitionV2",
+  "description": "Workflow definition schema v2. Introduces schemaVersion, structured action objects per step, and an expanded action type catalog.",
+  "type": "object",
+  "required": ["schemaVersion", "name", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "2",
+      "description": "Must be '2' for v2 workflows."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/Step" }
+    }
+  },
+  "definitions": {
+    "RiskLevel": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "ManualTaskAction": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "manual_task" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "instructions": { "type": "string", "minLength": 1 },
+            "expected_outcome": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ApprovalGateAction": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "approval_gate" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": { "type": "string", "minLength": 1 },
+            "timeout_seconds": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "ShellCommandAction": {
+      "type": "object",
+      "required": ["type", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "shell_command" },
+        "params": {
+          "type": "object",
+          "required": ["command"],
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1 },
+            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "working_directory": { "type": "string" },
+            "environment": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "HttpRequestAction": {
+      "type": "object",
+      "required": ["type", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "http_request" },
+        "params": {
+          "type": "object",
+          "required": ["method", "url"],
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+            },
+            "url": { "type": "string", "minLength": 1 },
+            "headers": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "body": {},
+            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "expected_status_codes": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 100, "maximum": 599 },
+              "minItems": 1
+            }
+          }
+        }
+      }
+    },
+    "ArtifactAssertionAction": {
+      "type": "object",
+      "required": ["type", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "const": "artifact_assertion" },
+        "params": {
+          "type": "object",
+          "required": ["artifact_key", "assertion"],
+          "additionalProperties": false,
+          "properties": {
+            "artifact_key": { "type": "string", "minLength": 1 },
+            "assertion": {
+              "type": "string",
+              "enum": ["exists", "not_exists", "content_matches"]
+            },
+            "pattern": { "type": "string" }
+          },
+          "if": {
+            "properties": { "assertion": { "const": "content_matches" } },
+            "required": ["assertion"]
+          },
+          "then": { "required": ["pattern"] }
+        }
+      }
+    },
+    "Action": {
+      "oneOf": [
+        { "$ref": "#/definitions/ManualTaskAction" },
+        { "$ref": "#/definitions/ApprovalGateAction" },
+        { "$ref": "#/definitions/ShellCommandAction" },
+        { "$ref": "#/definitions/HttpRequestAction" },
+        { "$ref": "#/definitions/ArtifactAssertionAction" }
+      ]
+    },
+    "Step": {
+      "type": "object",
+      "required": ["id", "name", "type", "risk", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["manual_task", "approval_gate", "shell_command", "http_request", "artifact_assertion"]
+        },
+        "risk": { "$ref": "#/definitions/RiskLevel" },
+        "requiresApproval": { "type": "boolean" },
+        "approvalTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "action": { "$ref": "#/definitions/Action" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "manual_task" } }, "required": ["type"] },
+          "then": { "properties": { "action": { "properties": { "type": { "const": "manual_task" } }, "required": ["type"] } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "approval_gate" } }, "required": ["type"] },
+          "then": { "properties": { "action": { "properties": { "type": { "const": "approval_gate" } }, "required": ["type"] } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "shell_command" } }, "required": ["type"] },
+          "then": { "properties": { "action": { "properties": { "type": { "const": "shell_command" } }, "required": ["type"] } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "http_request" } }, "required": ["type"] },
+          "then": { "properties": { "action": { "properties": { "type": { "const": "http_request" } }, "required": ["type"] } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "artifact_assertion" } }, "required": ["type"] },
+          "then": { "properties": { "action": { "properties": { "type": { "const": "artifact_assertion" } }, "required": ["type"] } } }
+        }
+      ]
+    }
+  }
+}

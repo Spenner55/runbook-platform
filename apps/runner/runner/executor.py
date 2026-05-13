@@ -11,6 +11,8 @@ from uuid import UUID
 
 import httpx
 
+from runner.actions.base import ActionExecutionContext, ActionValidationError
+from runner.actions.registry import ACTION_REGISTRY
 from runner.artifact_uploader import ArtifactUploader
 from runner.client import ApiClient
 from runner.sandbox import (
@@ -27,6 +29,8 @@ from runner.schemas import (
     ClaimedStep,
     RunnerSettings,
 )
+from runner.secrets.base import SecretUnavailableError
+from runner.secrets.null_provider import NullProvider
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,20 @@ _SUPPORTED_SANDBOX_STEP_TYPES = frozenset({"command", "shell"})
 
 def _utcnow() -> datetime:
     return datetime.now(tz=UTC)
+
+
+def _normalize_sandbox_failure_kind(kind: str, message: str = "") -> str:
+    if kind in {"timeout", "sandbox_setup_failed", "required_artifact_missing"}:
+        return kind
+    if kind in {"spawn_error", "sandbox_error", "validation_error"}:
+        return "sandbox_setup_failed"
+    if kind == "artifact_error":
+        return (
+            "required_artifact_missing"
+            if "required artifact" in message.lower()
+            else "action_input_invalid"
+        )
+    return kind
 
 
 class _HeartbeatThread(threading.Thread):
@@ -470,7 +488,11 @@ class Executor:
         uploader: ArtifactUploader,
         cancellation_event: threading.Event,
     ) -> bool:
-        """Dispatch to sandboxed or simulated execution based on settings."""
+        """Dispatch to v2 action handler or v1 compatibility path based on action_snapshot."""
+        if step.action_snapshot is not None:
+            return self._execute_action_v2(
+                execution, claim_token, step, heartbeat, uploader, cancellation_event
+            )
         if self._settings is not None and self._settings.execution_mode == "sandboxed":
             return self._execute_sandboxed(
                 execution, claim_token, step, heartbeat, uploader, cancellation_event
@@ -478,6 +500,134 @@ class Executor:
         return self._execute_simulated(
             execution, claim_token, step, heartbeat, uploader
         )
+
+    def _execute_action_v2(
+        self,
+        execution: ClaimedExecution,
+        claim_token: UUID,
+        step: ClaimedStep,
+        heartbeat: _HeartbeatThread,
+        uploader: ArtifactUploader,
+        cancellation_event: threading.Event,
+    ) -> bool:
+        """Dispatch a v2 step via the typed action registry. Returns True if the step failed."""
+        snapshot = step.action_snapshot
+        assert snapshot is not None  # caller guarantees this
+
+        handler = ACTION_REGISTRY.lookup(snapshot.type, snapshot.version)
+        if handler is None:
+            logger.error(
+                "Step %d '%s': unsupported action type=%r version=%r — failing closed",
+                step.position,
+                step.name,
+                snapshot.type,
+                snapshot.version,
+            )
+            try:
+                self._client.update_step(
+                    execution.id,
+                    step.id,
+                    claim_token,
+                    status="failed",
+                    error_message=(
+                        f"Unsupported action contract: type={snapshot.type!r}"
+                        f" version={snapshot.version!r}"
+                    ),
+                    failure_kind="unsupported_action_contract",
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to mark step %s failed: %s", step.id, exc)
+            return True
+
+        try:
+            handler.validate(snapshot.params)
+        except ActionValidationError as exc:
+            logger.error(
+                "Step %d '%s': action input validation failed: %s",
+                step.position,
+                step.name,
+                exc,
+            )
+            try:
+                self._client.update_step(
+                    execution.id,
+                    step.id,
+                    claim_token,
+                    status="failed",
+                    error_message=str(exc),
+                    failure_kind="action_input_invalid",
+                )
+            except httpx.HTTPError as http_exc:
+                logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
+            return True
+
+        secret_keys = list(step.secret_keys)
+        try:
+            NullProvider().resolve(secret_keys)
+        except SecretUnavailableError as exc:
+            logger.error(
+                "Step %d '%s': secret unavailable — failing closed: %s",
+                step.position,
+                step.name,
+                exc,
+            )
+            try:
+                self._client.update_step(
+                    execution.id,
+                    step.id,
+                    claim_token,
+                    status="failed",
+                    error_message=str(exc),
+                    failure_kind="secret_unavailable",
+                )
+            except httpx.HTTPError as http_exc:
+                logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
+            return True
+
+        ctx = ActionExecutionContext(
+            execution=execution,
+            step=step,
+            claim_token=claim_token,
+            client=self._client,
+            uploader=uploader,
+            cancellation_event=cancellation_event,
+            settings=self._settings,
+            secret_keys=secret_keys,
+        )
+        heartbeat.set_observed_status("running")
+        started_at = _utcnow()
+        result = handler.execute(ctx)
+        finished_at = _utcnow()
+
+        effective_started_at = result.started_at or started_at
+        effective_finished_at = result.finished_at or finished_at
+
+        try:
+            self._client.update_step(
+                execution.id,
+                step.id,
+                claim_token,
+                status=result.status,
+                started_at=effective_started_at,
+                finished_at=effective_finished_at,
+                exit_code=result.exit_code,
+                error_message=result.error_message,
+                failure_kind=result.failure_kind,
+            )
+            if result.status == "failed":
+                logger.info(
+                    "Step %d '%s': failed (failure_kind=%s)",
+                    step.position,
+                    step.name,
+                    result.failure_kind,
+                )
+            else:
+                logger.info("Step %d '%s': succeeded", step.position, step.name)
+        except httpx.HTTPError as exc:
+            logger.error("Failed to mark step %s %s: %s", step.id, result.status, exc)
+            return True
+
+        return result.status == "failed"
 
     def _execute_simulated(
         self,
@@ -613,7 +763,7 @@ class Executor:
                         f"Unsupported step_type {step.step_type!r}"
                         " for sandboxed execution."
                     ),
-                    failure_kind="unsupported_step_type",
+                    failure_kind="unsupported_action_contract",
                 )
             except httpx.HTTPError as exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, exc)
@@ -671,7 +821,7 @@ class Executor:
                     claim_token,
                     status="failed",
                     error_message=str(exc),
-                    failure_kind="validation_error",
+                    failure_kind="sandbox_setup_failed",
                 )
             except httpx.HTTPError as http_exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
@@ -694,7 +844,7 @@ class Executor:
                     claim_token,
                     status="failed",
                     error_message=str(exc),
-                    failure_kind="sandbox_error",
+                    failure_kind="sandbox_setup_failed",
                 )
             except httpx.HTTPError as http_exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
@@ -714,11 +864,13 @@ class Executor:
             error_message = result.error_message or "Step was cancelled"
         elif result.failure_kind:
             step_status = "failed"
-            failure_kind = result.failure_kind
+            failure_kind = _normalize_sandbox_failure_kind(
+                result.failure_kind, result.error_message
+            )
             error_message = result.error_message
         elif result.exit_code is not None and result.exit_code != 0:
             step_status = "failed"
-            failure_kind = ""
+            failure_kind = "action_failed"
             error_message = f"Command exited with code {result.exit_code}"
         else:
             step_status = "succeeded"

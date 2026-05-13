@@ -30,6 +30,12 @@ class PolicyRule(BaseModel):
         RISK_LEVEL = "risk_level", "Risk Level"
         STEP_TYPE = "step_type", "Step Type"
         TIME_WINDOW = "time_window", "Time Window"
+        # v2 action fact conditions
+        ACTION_TYPE = "action_type", "Action Type"
+        ACTION_VERSION = "action_version", "Action Version"
+        EXECUTION_MODE = "execution_mode", "Execution Mode"
+        IDEMPOTENCY_MODE = "idempotency_mode", "Idempotency Mode"
+        MUTATES_TARGET = "mutates_target", "Mutates Target"
 
     class Outcome(models.TextChoices):
         APPROVAL_REQUIRED = "approval_required", "Approval Required"

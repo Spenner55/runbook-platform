@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
 
@@ -7,6 +8,7 @@ import { useArtifactDownload } from '../../features/artifacts/hooks/useArtifactD
 import { useExecutionArtifacts } from '../../features/artifacts/hooks/useExecutionArtifacts'
 import type { Artifact } from '../../features/artifacts/types'
 import { useExecutionDetail } from '../../features/executions/hooks/useExecutionDetail'
+import type { ExecutionStep } from '../../features/executions/types'
 import type { PolicyEvaluationSummary } from '../../features/policies/types'
 import { getApiErrorMessage } from '../../shared/api/client'
 
@@ -100,6 +102,148 @@ function metadataText(event: AuditEvent) {
     parts.push(`Decision ${metadata.decision}`)
   }
   return parts.join(' · ')
+}
+
+function StepRow({ step, workflowId }: { step: ExecutionStep; workflowId: string }) {
+  const [open, setOpen] = useState(false)
+
+  const hasDetails = true
+
+  return (
+    <li className="step-list__item" style={{ flexDirection: 'column', gap: '0.5rem' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          alignItems: 'flex-start',
+          width: '100%',
+        }}
+      >
+        <div>
+          <strong>
+            {step.position}. {step.name}
+          </strong>
+          <p className="muted">
+            {step.step_type} · risk {step.risk_level}
+            {step.requires_approval ? ' · approval required' : ''}
+          </p>
+          {step.status === 'waiting_for_approval' ? (
+            <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
+              Awaiting approval before command execution.{' '}
+              <a href="/approvals">Go to Approvals Inbox</a>
+            </p>
+          ) : null}
+          {step.timed_out ? (
+            <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
+              Step timed out.
+            </p>
+          ) : null}
+          {step.cancelled && !step.timed_out ? (
+            <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
+              Step was cancelled.
+            </p>
+          ) : null}
+          {step.failure_kind && step.failure_kind !== 'policy_blocked' ? (
+            <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+              Failure kind: {step.failure_kind}
+            </p>
+          ) : null}
+          {step.error_message && step.error_message !== 'policy_blocked' ? (
+            <p className="field__error">{step.error_message}</p>
+          ) : null}
+          {step.error_message === 'policy_blocked' ? (
+            <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
+              Blocked by policy before command execution.
+            </p>
+          ) : null}
+          {step.sandbox_provider ? (
+            <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
+              Sandbox: {step.sandbox_provider}
+              {step.sandbox_run_id ? ` · run ${step.sandbox_run_id}` : ''}
+            </p>
+          ) : null}
+          {step.policy_evaluation ? (
+            <PolicyEvaluationBadge evaluation={step.policy_evaluation} />
+          ) : null}
+        </div>
+        <div className="step-list__meta">
+          <span className={getStepPillClass(step.status)}>{step.status}</span>
+          <span className="muted">exit {step.exit_code ?? '—'}</span>
+          {hasDetails ? (
+            <button
+              type="button"
+              className="button button--sm"
+              onClick={() => setOpen((o) => !o)}
+              aria-expanded={open}
+            >
+              {open ? 'Hide details ▲' : 'Details ▼'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {open && hasDetails ? (
+        <div
+          style={{
+            width: '100%',
+            borderTop: '1px solid var(--border)',
+            paddingTop: '0.75rem',
+            display: 'grid',
+            gap: '0.5rem',
+            fontSize: '0.88em',
+          }}
+        >
+          <div
+            className="detail-grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
+          >
+            <div>
+              <p className="detail-grid__label">Step key</p>
+              <p>{step.step_key}</p>
+            </div>
+            <div>
+              <p className="detail-grid__label">Command</p>
+              <Link
+                to={`/workflows/${workflowId}#step-${step.step_key}`}
+                className="muted"
+                style={{ fontSize: '0.95em' }}
+              >
+                View command on workflow page →
+              </Link>
+            </div>
+            <div>
+              <p className="detail-grid__label">Started</p>
+              <p>{formatDateTime(step.started_at)}</p>
+            </div>
+            <div>
+              <p className="detail-grid__label">Finished</p>
+              <p>{formatDateTime(step.finished_at)}</p>
+            </div>
+            {step.result_metadata && Object.keys(step.result_metadata).length > 0 ? (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <p className="detail-grid__label">Result metadata</p>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: '0.5rem 0.75rem',
+                    background: 'rgba(18,33,39,0.05)',
+                    borderRadius: '0.5rem',
+                    fontFamily: 'monospace',
+                    fontSize: '0.95em',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  {JSON.stringify(step.result_metadata, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </li>
+  )
 }
 
 function AuditTrailPanel({
@@ -305,59 +449,7 @@ export function ExecutionDetailPage() {
             <h3>Steps</h3>
             <ol className="step-list">
               {executionQuery.data.steps.map((step) => (
-                <li className="step-list__item" key={step.id}>
-                  <div>
-                    <strong>
-                      {step.position}. {step.name}
-                    </strong>
-                    <p className="muted">
-                      {step.step_type} · risk {step.risk_level}
-                      {step.requires_approval ? ' · approval required' : ''}
-                    </p>
-                    {step.status === 'waiting_for_approval' ? (
-                      <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
-                        Awaiting approval before command execution.{' '}
-                        <a href="/approvals">Go to Approvals Inbox</a>
-                      </p>
-                    ) : null}
-                    {step.timed_out ? (
-                      <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
-                        Step timed out.
-                      </p>
-                    ) : null}
-                    {step.cancelled && !step.timed_out ? (
-                      <p className="banner banner--warn" style={{ marginTop: '0.25rem' }}>
-                        Step was cancelled.
-                      </p>
-                    ) : null}
-                    {step.failure_kind && step.failure_kind !== 'policy_blocked' ? (
-                      <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
-                        Failure kind: {step.failure_kind}
-                      </p>
-                    ) : null}
-                    {step.error_message && step.error_message !== 'policy_blocked' ? (
-                      <p className="field__error">{step.error_message}</p>
-                    ) : null}
-                    {step.error_message === 'policy_blocked' ? (
-                      <p className="banner banner--error" style={{ marginTop: '0.25rem' }}>
-                        Blocked by policy before command execution.
-                      </p>
-                    ) : null}
-                    {step.sandbox_provider ? (
-                      <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.85em' }}>
-                        Sandbox: {step.sandbox_provider}
-                        {step.sandbox_run_id ? ` · run ${step.sandbox_run_id}` : ''}
-                      </p>
-                    ) : null}
-                    {step.policy_evaluation ? (
-                      <PolicyEvaluationBadge evaluation={step.policy_evaluation} />
-                    ) : null}
-                  </div>
-                  <div className="step-list__meta">
-                    <span className={getStepPillClass(step.status)}>{step.status}</span>
-                    <span className="muted">exit {step.exit_code ?? '—'}</span>
-                  </div>
-                </li>
+                <StepRow key={step.id} step={step} workflowId={executionQuery.data.workflow_id} />
               ))}
             </ol>
           </div>
