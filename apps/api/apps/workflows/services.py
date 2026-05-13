@@ -326,6 +326,100 @@ def create_workflow_v2_draft(
         ) from exc
 
 
+def create_v2_draft_from_v1(
+    *,
+    workflow: Workflow,
+    actor: AuditActor | None = None,
+) -> Workflow:
+    """
+    Lift a v1 workflow (any status) to a new v2 draft on the same runbook.
+
+    The source workflow row is never mutated. The result is always a new draft.
+    Raises DomainValidationError when the source schema is not workflow.schema.v1.
+    """
+    if workflow.definition_schema_version != "workflow.schema.v1":
+        raise DomainValidationError(
+            code="unsupported_source_schema",
+            detail=(
+                f"Cannot migrate workflow with schema version "
+                f"'{workflow.definition_schema_version}'; "
+                "only 'workflow.schema.v1' is supported."
+            ),
+        )
+
+    v1_def = workflow.definition
+    v2_steps, shell_introduced = _lift_v1_steps(v1_def.get("steps", []))
+
+    v2_def: dict = {
+        "schemaVersion": "2",
+        "name": v1_def.get("name", workflow.name),
+        "catalogVersion": "pilot.v1",
+        "steps": v2_steps,
+        "secrets": [],
+    }
+
+    schema_version = "workflow.schema.v2"
+    report = _build_validation_report(v2_def, schema_version)
+    validation_status = (
+        Workflow.ValidationStatus.VALID
+        if report["valid"]
+        else Workflow.ValidationStatus.INVALID
+    )
+
+    requires_review = (
+        workflow.parse_source == Workflow.ParseSource.AI_PARSE or shell_introduced
+    )
+
+    try:
+        with transaction.atomic():
+            locked_runbook = (
+                Runbook.objects.select_for_update()
+                .select_related("organization")
+                .get(pk=workflow.runbook_id)
+            )
+            existing_max = (
+                Workflow.objects.filter(runbook=locked_runbook).aggregate(
+                    max_version=Max("version")
+                )["max_version"]
+                or 0
+            )
+            new_workflow = Workflow.objects.create(
+                organization=locked_runbook.organization,
+                runbook=locked_runbook,
+                name=v2_def["name"],
+                version=existing_max + 1,
+                status=Workflow.Status.DRAFT,
+                definition_schema_version=schema_version,
+                definition=v2_def,
+                definition_hash_sha256=compute_definition_hash(v2_def),
+                catalog_version="pilot.v1",
+                validation_status=validation_status,
+                validation_report=report,
+                requires_review=requires_review,
+                parse_source=workflow.parse_source,
+            )
+            _emit_workflow_audit(
+                workflow=new_workflow,
+                event_type="workflow.created",
+                actor=actor,
+                metadata={
+                    "runbook_id": str(locked_runbook.id),
+                    "version": new_workflow.version,
+                    "status": new_workflow.status,
+                    "definition_schema_version": schema_version,
+                    "migrated_from_version": workflow.version,
+                    "migrated_from_schema": workflow.definition_schema_version,
+                    "validation_status": validation_status,
+                },
+            )
+            return new_workflow
+    except IntegrityError as exc:
+        raise ConcurrencyConflictError(
+            code="workflow_version_conflict",
+            detail="Workflow version allocation conflicted with another request.",
+        ) from exc
+
+
 def validate_definition_report(definition: dict, schema_version: str) -> dict:
     """Return a validation report dict without persisting anything."""
     return _build_validation_report(definition, schema_version)
@@ -485,6 +579,64 @@ def _workflow_schema_path() -> Path:
     if container_candidate.is_file():
         return container_candidate
     raise RuntimeError("Could not locate packages/workflow-schema/workflow.schema.json")
+
+
+def _lift_v1_steps(steps: list[dict]) -> tuple[list[dict], bool]:
+    """
+    Convert a v1 step list to v2 format.
+
+    Returns (v2_steps, shell_introduced) where shell_introduced is True when at
+    least one shell_command step was lifted (runner risk introduced).
+
+    Lift rules:
+      manual_task  -> manual_task action
+      approval     -> approval_gate step + approval_gate action
+      shell_command with command -> shell_command action with params.command
+    """
+    shell_introduced = False
+    v2_steps: list[dict] = []
+
+    for step in steps:
+        step_type = step.get("type", "")
+        v2_step: dict = {
+            "id": step.get("id", ""),
+            "name": step.get("name", ""),
+            "risk": step.get("risk", "low"),
+            "retry": {"maxAttempts": 1},
+            "idempotency": {"mode": "none"},
+            "artifacts": [],
+            "secrets": [],
+        }
+
+        if "requiresApproval" in step:
+            v2_step["requiresApproval"] = step["requiresApproval"]
+        if "approvalTimeoutSeconds" in step:
+            v2_step["approvalTimeoutSeconds"] = step["approvalTimeoutSeconds"]
+
+        if step_type == "manual_task":
+            v2_step["type"] = "manual_task"
+            v2_step["action"] = {"type": "manual_task"}
+        elif step_type == "approval":
+            v2_step["type"] = "approval_gate"
+            action: dict = {"type": "approval_gate"}
+            if "approvalTimeoutSeconds" in step:
+                action["params"] = {"timeout_seconds": step["approvalTimeoutSeconds"]}
+            v2_step["action"] = action
+        elif step_type == "shell_command":
+            v2_step["type"] = "shell_command"
+            v2_step["action"] = {
+                "type": "shell_command",
+                "params": {"command": step.get("command", "")},
+            }
+            shell_introduced = True
+        else:
+            # Unknown v1 type: carry through; validation report will flag it.
+            v2_step["type"] = step_type
+            v2_step["action"] = {"type": step_type}
+
+        v2_steps.append(v2_step)
+
+    return v2_steps, shell_introduced
 
 
 def _map_candidate_to_definition(candidate: WorkflowCandidate) -> dict:

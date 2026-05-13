@@ -154,6 +154,17 @@ class WorkflowViewSet(
         )
         return Response(WorkflowDetailSerializer(workflow).data)
 
+    @action(detail=True, methods=["post"], url_path="create-v2-draft")
+    def create_v2_draft(self, request, pk=None):
+        workflow = self.get_object()
+        assert_organization_operator(
+            user=request.user, organization_id=workflow.organization_id
+        )
+        new_workflow = services.create_v2_draft_from_v1(
+            workflow=workflow, actor=actor_from_request(request)
+        )
+        return Response(WorkflowDetailSerializer(new_workflow).data, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=["post"])
     def validate(self, request):
         serializer = WorkflowValidateSerializer(data=request.data)
