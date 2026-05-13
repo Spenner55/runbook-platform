@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, SecretStr, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -210,6 +210,51 @@ class RunnerSettings(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Step action / metadata sub-models (v2 workflow definitions)
+# ---------------------------------------------------------------------------
+
+
+class RetrySpec(BaseModel):
+    max_attempts: int = Field(alias="maxAttempts")
+    backoff_seconds: int = Field(0, alias="backoffSeconds")
+    retry_on: list[str] = Field(default_factory=list, alias="retryOn")
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+class IdempotencySpec(BaseModel):
+    mode: str
+    key: str = ""
+    reason: str = ""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ArtifactDeclaration(BaseModel):
+    key: str
+    name: str = ""
+    path: str = ""
+    kind: str = ""
+    mime_type: str = Field("", alias="mimeType")
+    required: bool = False
+    max_bytes: int | None = Field(None, alias="maxBytes")
+    content_disposition: str = Field("", alias="contentDisposition")
+    evidence_role: str = Field("", alias="evidenceRole")
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+class ActionSnapshot(BaseModel):
+    type: str
+    version: str = ""
+    params: dict[str, Any] = {}
+    inputs: dict[str, Any] = {}
+    outputs: dict[str, Any] = {}
+
+    model_config = ConfigDict(extra="ignore")
+
+
+# ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
 
@@ -235,6 +280,12 @@ class ClaimedStep(BaseModel):
         "pending", "waiting_for_approval", "running", "succeeded", "failed", "skipped"
     ]
     step_snapshot: dict[str, Any] = {}
+    # v2 action fields — None for v1 steps
+    action_snapshot: ActionSnapshot | None = None
+    timeout_seconds: int | None = None
+    retry: RetrySpec | None = None
+    idempotency: IdempotencySpec | None = None
+    artifacts: list[ArtifactDeclaration] = []
 
     model_config = ConfigDict(extra="ignore")
 
@@ -276,6 +327,7 @@ class ClaimedExecution(BaseModel):
     claimed_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
     steps: list[ClaimedStep]
+    execution_mode: str = "live"
     # Change binding fields — present only when the execution is change-bound
     change_record_id: UUID | None = None
     dispatch_token: SecretStr | None = None
