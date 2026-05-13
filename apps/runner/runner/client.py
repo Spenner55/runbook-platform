@@ -64,9 +64,10 @@ class ApiClient:
         http_client: httpx.Client | None = None,
         api_retries_enabled: bool = True,
         retry_sleep: _RetrySleep | None = None,
+        registered_runner_id: str = "",
     ) -> None:
         self._base = base_url.rstrip("/")
-        self._runner_id = runner_id
+        self._runner_id = registered_runner_id if registered_runner_id else runner_id
         self._auth_headers = {"Authorization": f"Bearer {runner_token}"}
         self._runner_version = runner_version
         self._api_retries_enabled = api_retries_enabled
@@ -253,6 +254,51 @@ class ApiClient:
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
+
+    def register(
+        self,
+        display_name: str,
+        fingerprint_sha256: str,
+        hostname: str,
+        labels: dict | None = None,
+        capabilities: list | None = None,
+    ) -> dict:
+        """Call POST /api/v1/internal/runners/register/ with the registration token."""
+        data = self._post(
+            "/api/v1/internal/runners/register/",
+            {
+                "registration_token": self._auth_headers["Authorization"].split(" ", 1)[1],
+                "display_name": display_name,
+                "runner_version": self._runner_version,
+                "fingerprint_sha256": fingerprint_sha256,
+                "hostname": hostname,
+                "labels": labels or {},
+                "capabilities": capabilities or [],
+            },
+        )
+        return data
+
+    def runner_heartbeat(
+        self,
+        runner_version: str = "",
+        hostname: str = "",
+        current_execution_count: int = 0,
+        observed_pool_key: str = "",
+        capabilities_checksum: str = "",
+    ) -> dict:
+        """Call POST /api/v1/internal/runners/heartbeat/ with the per-runner bearer token."""
+        data = self._post(
+            "/api/v1/internal/runners/heartbeat/",
+            {
+                "runner_version": runner_version,
+                "hostname": hostname,
+                "current_execution_count": current_execution_count,
+                "observed_pool_key": observed_pool_key,
+                "capabilities_checksum": capabilities_checksum,
+                "sent_at": _utcnow().isoformat(),
+            },
+        )
+        return data
 
     def claim_next(self) -> ClaimNextResponse:
         data = self._post(

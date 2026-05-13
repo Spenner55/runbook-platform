@@ -53,6 +53,9 @@ export function AppLayout() {
           <NavLink className={getNavClassName} to="/integrations">
             Integrations
           </NavLink>
+          <NavLink className={getNavClassName} to="/runners">
+            Runners
+          </NavLink>
           <NavLink className={getNavClassName} to="/settings">
             Settings
           </NavLink>

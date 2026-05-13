@@ -46,6 +46,9 @@ class OperationProfile(BaseModel):
         blank=True,
         related_name="operation_profiles",
     )
+    allowed_runner_pool_keys = models.JSONField(default=list)
+    required_runner_labels = models.JSONField(default=dict)
+    required_runner_capabilities = models.JSONField(default=list)
     created_by = models.ForeignKey(
         "users.User",
         null=True,
@@ -1330,6 +1333,11 @@ class DispatchEligibilityCheck(BaseModel):
     freeze_conflicts_ok = models.BooleanField()
     target_locks_ok = models.BooleanField()
     actor_authorized_ok = models.BooleanField()
+    verification_plan_ok = models.BooleanField(null=True, blank=True)
+    runner_pool_ok = models.BooleanField(null=True, blank=True)
+    runner_pool_key = models.CharField(max_length=64, blank=True)
+    runner_pool_id = models.CharField(max_length=36, blank=True)
+    runner_pool_reason = models.CharField(max_length=255, blank=True)
     checks = models.JSONField(default=list)
     conflicts = models.JSONField(default=list)
     input_snapshot_sha256 = models.CharField(max_length=64)

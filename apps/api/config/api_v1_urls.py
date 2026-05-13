@@ -11,6 +11,9 @@ from rest_framework.routers import SimpleRouter
 
 from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
+from apps.runners.urls import internal_urlpatterns as runner_internal_urlpatterns
+from apps.runners.urls import public_urlpatterns as runner_public_urlpatterns
+from apps.runners.views import ChangeRunnerEligibilityView
 from apps.audit.views import ExecutionAuditEventListView
 from apps.auditor.urls import urlpatterns as auditor_public_urlpatterns
 from apps.changes.urls import (
@@ -65,7 +68,16 @@ urlpatterns = [
         StreamExecutionView.as_view(),
         name="execution-stream",
     ),
+    path("", include((runner_public_urlpatterns, "runners"))),
+    path(
+        "changes/<uuid:change_id>/runner-eligibility/",
+        ChangeRunnerEligibilityView.as_view(),
+        name="change-runner-eligibility",
+    ),
     path("internal/", include(artifact_internal_urlpatterns)),
+    path(
+        "internal/runners/", include((runner_internal_urlpatterns, "runners-internal"))
+    ),
     path(
         "internal/changes/", include((change_internal_urlpatterns, "changes-internal"))
     ),

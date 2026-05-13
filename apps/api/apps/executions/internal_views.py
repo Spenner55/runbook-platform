@@ -128,9 +128,35 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
         except Exception:
             logger.exception("promote_due_scheduled_changes failed during claim-next")
 
-        result = services.claim_next_execution(runner_id=runner_id)
+        # Resolve runner record from authenticated principal when available.
+        runner_instance = None
+        auth_principal = request.user
+        db_runner_id = getattr(auth_principal, "runner_id", None)
+        if db_runner_id:
+            try:
+                from apps.runners.models import Runner
+
+                runner_instance = Runner.objects.select_related("pool", "organization").get(
+                    pk=db_runner_id
+                )
+            except Exception:
+                logger.exception("Failed to resolve Runner record for principal %s", db_runner_id)
+
+        result = services.claim_next_execution(
+            runner_id=runner_id, runner=runner_instance
+        )
         if result is None:
             return Response({"execution": None, "poll_after_seconds": 5})
+
+        if isinstance(result, dict) and result.get("drain"):
+            return Response(
+                {
+                    "execution": None,
+                    "claim_token": None,
+                    "poll_after_seconds": 30,
+                    "runner_action": "drain",
+                }
+            )
 
         execution = result["execution"]
         return Response(

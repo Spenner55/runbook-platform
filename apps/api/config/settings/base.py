@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "apps.changes.apps.ChangesConfig",
     "apps.evidence.apps.EvidenceConfig",
     "apps.auditor.apps.AuditorConfig",
+    "apps.runners.apps.RunnersConfig",
 ]
 
 MIDDLEWARE = [
@@ -223,6 +224,10 @@ RUNNER_TOKENS = [
     if token
 ]
 RUNNER_STALE_HEARTBEAT_SECONDS = env.int("RUNNER_STALE_HEARTBEAT_SECONDS", default=60)
+RUNNER_ONLINE_SECONDS = env.int("RUNNER_ONLINE_SECONDS", default=30)
+RUNNER_OFFLINE_SECONDS = env.int("RUNNER_OFFLINE_SECONDS", default=120)
+RUNNER_LEGACY_TOKEN_MODE = env.bool("RUNNER_LEGACY_TOKEN_MODE", default=True)
+RUNNER_ORG_MAX_CONCURRENT = env.int("RUNNER_ORG_MAX_CONCURRENT", default=5)
 ARTIFACT_STORAGE_BACKEND = env("ARTIFACT_STORAGE_BACKEND", default="local")
 ARTIFACT_MEDIA_ROOT = env(
     "ARTIFACT_MEDIA_ROOT", default=str(BASE_DIR / "media" / "artifacts")

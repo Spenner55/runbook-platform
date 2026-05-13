@@ -4239,6 +4239,61 @@ def run_dispatch_preflight(
     actor_authorized_ok = _preflight_check_actor(actor, checks)
     verification_plan_ok = _preflight_check_verification_plan(change, checks, conflicts)
 
+    # Runner pool check — only blocks dispatch when routing policy is configured.
+    runner_pool_ok = None  # None = not evaluated (no policy configured)
+    runner_pool_key = ""
+    runner_pool_id = ""
+    runner_pool_reason = ""
+    _runner_pool_blocks = False
+    try:
+        from apps.runners.route_matching import find_pool_for_change
+
+        pool, reason = find_pool_for_change(change)
+        runner_pool_reason = reason
+        if reason == "no_routes_configured":
+            # No connectivity policy has been set up — do not block dispatch.
+            runner_pool_ok = None
+        elif pool is not None:
+            runner_pool_ok = True
+            runner_pool_key = pool.key
+            runner_pool_id = str(pool.id)
+            _runner_pool_blocks = False
+            checks.append(
+                {
+                    "name": "runner_pool",
+                    "ok": True,
+                    "detail": f"Pool '{runner_pool_key}' matched and has online runners.",
+                    "pool_key": runner_pool_key,
+                    "pool_id": runner_pool_id,
+                    "reason": reason,
+                }
+            )
+        else:
+            runner_pool_ok = False
+            _runner_pool_blocks = True
+            checks.append(
+                {
+                    "name": "runner_pool",
+                    "ok": False,
+                    "detail": f"No eligible runner pool: {reason}",
+                    "reason": reason,
+                }
+            )
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).exception("Runner pool check failed during preflight")
+        runner_pool_ok = False
+        runner_pool_reason = "check_error"
+        _runner_pool_blocks = True
+        checks.append(
+            {
+                "name": "runner_pool",
+                "ok": False,
+                "detail": "Runner pool check encountered an error.",
+                "reason": "check_error",
+            }
+        )
+
     overall = all(
         [
             approved_status_ok,
@@ -4248,6 +4303,7 @@ def run_dispatch_preflight(
             target_locks_ok,
             actor_authorized_ok,
             verification_plan_ok,
+            not _runner_pool_blocks,
         ]
     )
     result = (
@@ -4277,6 +4333,11 @@ def run_dispatch_preflight(
         freeze_conflicts_ok=freeze_conflicts_ok,
         target_locks_ok=target_locks_ok,
         actor_authorized_ok=actor_authorized_ok,
+        verification_plan_ok=verification_plan_ok,
+        runner_pool_ok=runner_pool_ok,
+        runner_pool_key=runner_pool_key,
+        runner_pool_id=runner_pool_id,
+        runner_pool_reason=runner_pool_reason,
         checks=checks,
         conflicts=conflicts,
         input_snapshot_sha256=input_snapshot_sha256,

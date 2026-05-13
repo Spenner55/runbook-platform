@@ -27,6 +27,9 @@ import { WorkflowCreatePage } from '../routes/workflows/WorkflowCreatePage'
 import { WorkflowDetailPage } from '../routes/workflows/WorkflowDetailPage'
 import { WorkflowReviewPage } from '../routes/workflows/WorkflowReviewPage'
 import { WorkflowsPage } from '../routes/workflows/WorkflowsPage'
+import { RunnerPoolsPage } from '../routes/runners/RunnerPoolsPage'
+import { RunnerPoolDetailPage } from '../routes/runners/RunnerPoolDetailPage'
+import { RunnerDetailPage } from '../routes/runners/RunnerDetailPage'
 
 export const router = createBrowserRouter([
   {
@@ -65,6 +68,9 @@ export const router = createBrowserRouter([
           { path: 'retro-reviews', element: <RetroReviewInboxPage /> },
           { path: 'freeze-rules', element: <FreezeRulesPage /> },
           { path: 'settings', element: <SettingsPage /> },
+          { path: 'runners', element: <RunnerPoolsPage /> },
+          { path: 'runners/pools/:poolId', element: <RunnerPoolDetailPage /> },
+          { path: 'runners/runners/:runnerId', element: <RunnerDetailPage /> },
         ],
       },
     ],
