@@ -443,7 +443,7 @@ def test_shell_command_validate_requires_command():
     h = ShellCommandHandler()
     with pytest.raises(ActionValidationError):
         h.validate({})
-    h.validate({"command": "echo hi"})
+    h.validate({"commandMode": "shell", "command": "echo hi"})
 
 
 def test_http_request_validate_requires_url():
