@@ -11,9 +11,18 @@ from apps.runners.models import (
 
 @admin.register(RunnerPool)
 class RunnerPoolAdmin(admin.ModelAdmin):
-    list_display = ("key", "name", "organization", "environment", "status", "created_at")
-    list_filter = ("status", "environment")
-    search_fields = ("key", "name")
+    list_display = (
+        "key",
+        "name",
+        "display_name",
+        "organization",
+        "environment",
+        "status",
+        "default_for_non_change_executions",
+        "created_at",
+    )
+    list_filter = ("status", "environment", "default_for_non_change_executions")
+    search_fields = ("key", "name", "display_name")
     readonly_fields = ("id", "created_at", "updated_at")
 
 
