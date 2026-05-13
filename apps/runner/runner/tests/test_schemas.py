@@ -349,7 +349,9 @@ def test_retry_spec_unknown_fields_ignored():
 
 
 def test_idempotency_spec_parses():
-    spec = IdempotencySpec.model_validate({"mode": "keyed", "key": "deploy-abc", "reason": "safe"})
+    spec = IdempotencySpec.model_validate(
+        {"mode": "keyed", "key": "deploy-abc", "reason": "safe"}
+    )
     assert spec.mode == "keyed"
     assert spec.key == "deploy-abc"
 
@@ -416,7 +418,13 @@ def _v1_step_dict(**overrides) -> dict:
         "command": "echo hello",
         "requires_approval": False,
         "status": "pending",
-        "step_snapshot": {"id": "step-1", "name": "Step 1", "type": "shell", "risk": "low", "command": "echo hello"},
+        "step_snapshot": {
+            "id": "step-1",
+            "name": "Step 1",
+            "type": "shell",
+            "risk": "low",
+            "command": "echo hello",
+        },
     }
     d.update(overrides)
     return d
@@ -444,7 +452,10 @@ def _v2_step_dict(**overrides) -> dict:
             "idempotency": {"mode": "natural"},
             "artifacts": [{"key": "stdout", "kind": "stdout"}],
         },
-        "action_snapshot": {"type": "shell_command", "params": {"command": "echo hello"}},
+        "action_snapshot": {
+            "type": "shell_command",
+            "params": {"command": "echo hello"},
+        },
         "timeout_seconds": 120,
         "retry": {"maxAttempts": 2, "backoffSeconds": 3},
         "idempotency": {"mode": "natural"},

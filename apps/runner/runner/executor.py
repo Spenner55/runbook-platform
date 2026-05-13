@@ -624,9 +624,7 @@ class Executor:
             else:
                 logger.info("Step %d '%s': succeeded", step.position, step.name)
         except httpx.HTTPError as exc:
-            logger.error(
-                "Failed to mark step %s %s: %s", step.id, result.status, exc
-            )
+            logger.error("Failed to mark step %s %s: %s", step.id, result.status, exc)
             return True
 
         return result.status == "failed"

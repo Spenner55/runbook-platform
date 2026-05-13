@@ -101,7 +101,10 @@ export function WorkflowReviewPage() {
                       <td>
                         <code className="code-inline">{step.action.type}</code>
                         {step.action.version ? (
-                          <span className="muted" style={{ marginLeft: '0.3em', fontSize: '0.85em' }}>
+                          <span
+                            className="muted"
+                            style={{ marginLeft: '0.3em', fontSize: '0.85em' }}
+                          >
                             v{step.action.version}
                           </span>
                         ) : null}
@@ -117,9 +120,7 @@ export function WorkflowReviewPage() {
                           '—'
                         )}
                       </td>
-                      <td>
-                        {step.secrets?.length ? step.secrets.join(', ') : '—'}
-                      </td>
+                      <td>{step.secrets?.length ? step.secrets.join(', ') : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -137,7 +138,11 @@ export function WorkflowReviewPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(wf.definition as { steps: import('../../features/workflows/types').WorkflowStep[] }).steps.map((step, index) => (
+                  {(
+                    wf.definition as {
+                      steps: import('../../features/workflows/types').WorkflowStep[]
+                    }
+                  ).steps.map((step, index) => (
                     <tr key={step.id}>
                       <td>{index + 1}</td>
                       <td>{step.name}</td>

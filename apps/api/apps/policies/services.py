@@ -450,15 +450,17 @@ def persist_policy_evaluation_error(
 _VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
-_ENUM_CONDITION_TYPES = frozenset({
-    PolicyRule.ConditionType.RISK_LEVEL,
-    PolicyRule.ConditionType.STEP_TYPE,
-    PolicyRule.ConditionType.ACTION_TYPE,
-    PolicyRule.ConditionType.ACTION_VERSION,
-    PolicyRule.ConditionType.EXECUTION_MODE,
-    PolicyRule.ConditionType.IDEMPOTENCY_MODE,
-    PolicyRule.ConditionType.MUTATES_TARGET,
-})
+_ENUM_CONDITION_TYPES = frozenset(
+    {
+        PolicyRule.ConditionType.RISK_LEVEL,
+        PolicyRule.ConditionType.STEP_TYPE,
+        PolicyRule.ConditionType.ACTION_TYPE,
+        PolicyRule.ConditionType.ACTION_VERSION,
+        PolicyRule.ConditionType.EXECUTION_MODE,
+        PolicyRule.ConditionType.IDEMPOTENCY_MODE,
+        PolicyRule.ConditionType.MUTATES_TARGET,
+    }
+)
 
 
 def _validate_condition_params(condition_type: str, condition_params: dict) -> None:
@@ -593,15 +595,25 @@ def _evaluate_condition(
             condition_params, context.get("evaluated_at")
         )
     if condition_type == PolicyRule.ConditionType.ACTION_TYPE:
-        return _evaluate_enum_condition(condition_params, context.get("action_type", ""))
+        return _evaluate_enum_condition(
+            condition_params, context.get("action_type", "")
+        )
     if condition_type == PolicyRule.ConditionType.ACTION_VERSION:
-        return _evaluate_enum_condition(condition_params, context.get("action_version", ""))
+        return _evaluate_enum_condition(
+            condition_params, context.get("action_version", "")
+        )
     if condition_type == PolicyRule.ConditionType.EXECUTION_MODE:
-        return _evaluate_enum_condition(condition_params, context.get("execution_mode", ""))
+        return _evaluate_enum_condition(
+            condition_params, context.get("execution_mode", "")
+        )
     if condition_type == PolicyRule.ConditionType.IDEMPOTENCY_MODE:
-        return _evaluate_enum_condition(condition_params, context.get("idempotency_mode", ""))
+        return _evaluate_enum_condition(
+            condition_params, context.get("idempotency_mode", "")
+        )
     if condition_type == PolicyRule.ConditionType.MUTATES_TARGET:
-        return _evaluate_enum_condition(condition_params, context.get("mutates_target", ""))
+        return _evaluate_enum_condition(
+            condition_params, context.get("mutates_target", "")
+        )
     return False
 
 

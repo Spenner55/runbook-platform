@@ -432,7 +432,9 @@ def validate_definition_report(definition: dict, schema_version: str) -> dict:
 
 def compute_definition_hash(definition: dict) -> str:
     """Return a deterministic SHA-256 hex digest of the canonical JSON form of *definition*."""
-    canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(
+        definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

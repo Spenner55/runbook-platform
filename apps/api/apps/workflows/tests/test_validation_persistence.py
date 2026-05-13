@@ -215,9 +215,9 @@ def test_hash_is_stable_regardless_of_key_ordering():
         "schemaVersion": "2",
         "name": "Deploy",
     }
-    assert services.compute_definition_hash(definition_a) == services.compute_definition_hash(
-        definition_b
-    )
+    assert services.compute_definition_hash(
+        definition_a
+    ) == services.compute_definition_hash(definition_b)
 
 
 def test_hash_differs_for_different_definitions():

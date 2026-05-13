@@ -59,7 +59,10 @@ def _shell_step(step_id="run", dry_run_strategy=None, **overrides) -> dict:
         },
     }
     if dry_run_strategy is not None:
-        step["dryRun"] = {"supported": dry_run_strategy != "unsupported", "strategy": dry_run_strategy}
+        step["dryRun"] = {
+            "supported": dry_run_strategy != "unsupported",
+            "strategy": dry_run_strategy,
+        }
     step.update(overrides)
     return step
 
@@ -83,7 +86,9 @@ def published_v1_workflow(runbook):
 
 
 def _publish_v2(runbook, definition):
-    wf = workflow_services.create_workflow_v2_draft(runbook=runbook, definition=definition)
+    wf = workflow_services.create_workflow_v2_draft(
+        runbook=runbook, definition=definition
+    )
     return workflow_services.publish_workflow(workflow=wf)
 
 
@@ -154,8 +159,20 @@ def test_v2_execution_creation_succeeds(runbook):
 def test_v2_execution_step_count_matches_definition(runbook):
     definition = _minimal_v2(
         steps=[
-            {"id": "s1", "name": "Step 1", "type": "manual_task", "risk": "low", "action": {"type": "manual_task"}},
-            {"id": "s2", "name": "Step 2", "type": "manual_task", "risk": "low", "action": {"type": "manual_task"}},
+            {
+                "id": "s1",
+                "name": "Step 1",
+                "type": "manual_task",
+                "risk": "low",
+                "action": {"type": "manual_task"},
+            },
+            {
+                "id": "s2",
+                "name": "Step 2",
+                "type": "manual_task",
+                "risk": "low",
+                "action": {"type": "manual_task"},
+            },
         ]
     )
     wf = _publish_v2(runbook, definition)
@@ -254,7 +271,9 @@ def test_execution_mode_live_is_default(runbook):
 @pytest.mark.django_db
 def test_execution_mode_dry_run_persists(runbook):
     wf = _publish_v2(runbook, _minimal_v2())
-    execution = services.create_execution(workflow=wf, mode=Execution.ExecutionMode.DRY_RUN)
+    execution = services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.DRY_RUN
+    )
     assert execution.execution_mode == Execution.ExecutionMode.DRY_RUN
 
     execution.refresh_from_db()
@@ -289,7 +308,9 @@ def test_dry_run_rejects_step_with_unsupported_strategy(runbook):
 def test_dry_run_accepts_step_with_native_strategy(runbook):
     definition = _minimal_v2(steps=[_shell_step(dry_run_strategy="native")])
     wf = _publish_v2(runbook, definition)
-    execution = services.create_execution(workflow=wf, mode=Execution.ExecutionMode.DRY_RUN)
+    execution = services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.DRY_RUN
+    )
     assert execution.execution_mode == Execution.ExecutionMode.DRY_RUN
 
 
@@ -297,7 +318,9 @@ def test_dry_run_accepts_step_with_native_strategy(runbook):
 def test_dry_run_accepts_steps_without_dry_run_declaration(runbook):
     # Steps with no dryRun field should pass dry-run validation.
     wf = _publish_v2(runbook, _minimal_v2())
-    execution = services.create_execution(workflow=wf, mode=Execution.ExecutionMode.DRY_RUN)
+    execution = services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.DRY_RUN
+    )
     assert execution.execution_mode == Execution.ExecutionMode.DRY_RUN
 
 
@@ -322,7 +345,9 @@ def test_live_mode_does_not_check_dry_run_strategy(runbook):
     # unsupported strategy is OK for live mode
     definition = _minimal_v2(steps=[_shell_step(dry_run_strategy="unsupported")])
     wf = _publish_v2(runbook, definition)
-    execution = services.create_execution(workflow=wf, mode=Execution.ExecutionMode.LIVE)
+    execution = services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.LIVE
+    )
     assert execution.execution_mode == Execution.ExecutionMode.LIVE
 
 
@@ -399,7 +424,9 @@ def test_snapshot_hash_is_deterministic(runbook):
     # Reorder keys in the definition dict to verify canonical serialization.
     reordered = dict(reversed(list(definition.items())))
     expected_hash = hashlib.sha256(
-        json.dumps(reordered, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        json.dumps(
+            reordered, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
     ).hexdigest()
 
     assert e1.workflow_snapshot_hash_sha256 == expected_hash

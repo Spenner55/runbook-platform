@@ -109,7 +109,6 @@ const PENDING_REVIEW_WORKFLOW = {
   parse_source: 'ai_parse',
 }
 
-
 describe('WorkflowDetailPage', () => {
   const fetchMock = vi.fn<typeof fetch>()
 

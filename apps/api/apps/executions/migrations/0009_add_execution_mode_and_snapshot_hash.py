@@ -4,26 +4,32 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('executions', '0008_execution_cancellation_and_step_result'),
-        ('organizations', '0004_membership_operator_role'),
-        ('workflows', '0004_workflow_validation_fields'),
+        ("executions", "0008_execution_cancellation_and_step_result"),
+        ("organizations", "0004_membership_operator_role"),
+        ("workflows", "0004_workflow_validation_fields"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='execution',
-            name='execution_mode',
-            field=models.CharField(choices=[('live', 'Live'), ('dry_run', 'Dry Run')], default='live', max_length=16),
+            model_name="execution",
+            name="execution_mode",
+            field=models.CharField(
+                choices=[("live", "Live"), ("dry_run", "Dry Run")],
+                default="live",
+                max_length=16,
+            ),
         ),
         migrations.AddField(
-            model_name='execution',
-            name='workflow_snapshot_hash_sha256',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="execution",
+            name="workflow_snapshot_hash_sha256",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddConstraint(
-            model_name='execution',
-            constraint=models.CheckConstraint(condition=models.Q(('execution_mode__in', ['live', 'dry_run'])), name='exec_mode_valid_chk'),
+            model_name="execution",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("execution_mode__in", ["live", "dry_run"])),
+                name="exec_mode_valid_chk",
+            ),
         ),
     ]

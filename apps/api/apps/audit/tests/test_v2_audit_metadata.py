@@ -115,16 +115,22 @@ def test_execution_created_audit_includes_catalog_version(org, runbook):
     wf = _publish_v2(runbook, _v2_def())
     execution = exec_services.create_execution(workflow=wf)
 
-    event = AuditEvent.objects.get(object_id=execution.id, event_type="execution.created")
+    event = AuditEvent.objects.get(
+        object_id=execution.id, event_type="execution.created"
+    )
     assert event.metadata["catalog_version"] == "pilot.v1"
 
 
 @pytest.mark.django_db
 def test_execution_created_audit_dry_run_mode_false_for_live(org, runbook):
     wf = _publish_v2(runbook, _v2_def())
-    execution = exec_services.create_execution(workflow=wf, mode=Execution.ExecutionMode.LIVE)
+    execution = exec_services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.LIVE
+    )
 
-    event = AuditEvent.objects.get(object_id=execution.id, event_type="execution.created")
+    event = AuditEvent.objects.get(
+        object_id=execution.id, event_type="execution.created"
+    )
     assert event.metadata["dry_run_mode"] is False
 
 
@@ -132,17 +138,25 @@ def test_execution_created_audit_dry_run_mode_false_for_live(org, runbook):
 def test_execution_created_audit_dry_run_mode_true_for_dry_run(org, runbook):
     step = _v2_step()  # dryRun.supported=True, strategy=native
     wf = _publish_v2(runbook, _v2_def(step=step))
-    execution = exec_services.create_execution(workflow=wf, mode=Execution.ExecutionMode.DRY_RUN)
+    execution = exec_services.create_execution(
+        workflow=wf, mode=Execution.ExecutionMode.DRY_RUN
+    )
 
-    event = AuditEvent.objects.get(object_id=execution.id, event_type="execution.created")
+    event = AuditEvent.objects.get(
+        object_id=execution.id, event_type="execution.created"
+    )
     assert event.metadata["dry_run_mode"] is True
 
 
 @pytest.mark.django_db
-def test_execution_created_audit_schema_version_empty_for_v1(org, published_v1_workflow):
+def test_execution_created_audit_schema_version_empty_for_v1(
+    org, published_v1_workflow
+):
     execution = exec_services.create_execution(workflow=published_v1_workflow)
 
-    event = AuditEvent.objects.get(object_id=execution.id, event_type="execution.created")
+    event = AuditEvent.objects.get(
+        object_id=execution.id, event_type="execution.created"
+    )
     assert event.metadata["schema_version"] == ""
 
 

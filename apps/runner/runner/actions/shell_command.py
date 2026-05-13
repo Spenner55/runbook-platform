@@ -96,7 +96,11 @@ class ShellCommandHandler:
         params = ctx.step.action_snapshot.params if ctx.step.action_snapshot else {}
         mode = _command_mode(params)
 
-        if mode == "shell" and "commandMode" in params and not settings.sandbox_allow_shell:
+        if (
+            mode == "shell"
+            and "commandMode" in params
+            and not settings.sandbox_allow_shell
+        ):
             return ActionResult(
                 status="failed",
                 exit_code=None,
@@ -122,9 +126,7 @@ class ShellCommandHandler:
         else:
             cmd_str = params.get("command", "")
 
-        script = (
-            f"cd {shlex.quote(working_dir)}\n{cmd_str}" if working_dir else cmd_str
-        )
+        script = f"cd {shlex.quote(working_dir)}\n{cmd_str}" if working_dir else cmd_str
 
         env = _build_env(settings)
 
@@ -146,7 +148,9 @@ class ShellCommandHandler:
 
         timeout_seconds = settings.sandbox_default_timeout_seconds
         if ctx.step.timeout_seconds and ctx.step.timeout_seconds > 0:
-            timeout_seconds = min(ctx.step.timeout_seconds, settings.sandbox_default_timeout_seconds)
+            timeout_seconds = min(
+                ctx.step.timeout_seconds, settings.sandbox_default_timeout_seconds
+            )
 
         limits = SandboxLimits(
             timeout_seconds=timeout_seconds,
@@ -247,14 +251,17 @@ class ShellCommandHandler:
             or (result.exit_code is not None and result.exit_code != 0)
         )
         cleanup_policy = settings.sandbox_cleanup_policy
-        if cleanup_policy == "always" or (cleanup_policy == "on_success" and not step_failed):
+        if cleanup_policy == "always" or (
+            cleanup_policy == "on_success" and not step_failed
+        ):
             provider.cleanup(spec, result)
 
         if result.timed_out:
             return ActionResult(
                 status="failed",
                 exit_code=result.exit_code,
-                error_message=result.error_message or f"Step timed out after {timeout_seconds}s",
+                error_message=result.error_message
+                or f"Step timed out after {timeout_seconds}s",
                 failure_kind="timeout",
                 started_at=result.started_at,
                 finished_at=result.finished_at,
@@ -342,7 +349,9 @@ def _build_env(settings: Any) -> dict[str, str]:
     }
 
 
-def _build_artifact_specs(declarations: list[ArtifactDeclaration]) -> list[ArtifactSpec]:
+def _build_artifact_specs(
+    declarations: list[ArtifactDeclaration],
+) -> list[ArtifactSpec]:
     specs = []
     for decl in declarations:
         if not decl.path:

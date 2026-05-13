@@ -339,7 +339,9 @@ class ArtifactUploader:
             metadata["step_key"] = step_key
         if dry_run:
             metadata["dry_run"] = True
-        return self._upload_bytes(step_id, content, kind=kind, name=name, metadata=metadata)
+        return self._upload_bytes(
+            step_id, content, kind=kind, name=name, metadata=metadata
+        )
 
     def _upload_bytes(
         self,

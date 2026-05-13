@@ -67,7 +67,12 @@ def _v2_step(**overrides) -> dict:
         "secrets": ["DB_PASS", "API_KEY"],
         "artifacts": [
             {"key": "output_log", "kind": "file", "path": "out.log", "required": True},
-            {"key": "report", "kind": "report", "path": "report.json", "required": False},
+            {
+                "key": "report",
+                "kind": "report",
+                "path": "report.json",
+                "required": False,
+            },
         ],
     }
     step.update(overrides)
@@ -314,7 +319,10 @@ def test_action_type_condition_validates_enum_params(org):
         name="action type rule",
         priority=10,
         condition_type="action_type",
-        condition_params={"operator": "in", "values": ["shell_command", "http_request"]},
+        condition_params={
+            "operator": "in",
+            "values": ["shell_command", "http_request"],
+        },
         outcome="approval_required",
     )
     assert rule.condition_type == "action_type"
@@ -426,7 +434,9 @@ def test_action_type_condition_does_not_match_manual_task(org, runbook):
 
     evaluation = services.evaluate_step_policy(execution=execution, step=step)
     assert evaluation.matched is False
-    assert evaluation.decision_source == PolicyEvaluation.DecisionSource.WORKFLOW_DEFAULT
+    assert (
+        evaluation.decision_source == PolicyEvaluation.DecisionSource.WORKFLOW_DEFAULT
+    )
 
 
 @pytest.mark.django_db

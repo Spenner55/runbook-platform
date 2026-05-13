@@ -15,7 +15,9 @@ import type {
 } from '../../features/workflows/types'
 import { getApiErrorMessage } from '../../shared/api/client'
 
-function isV2(detail: WorkflowDetail): detail is WorkflowDetail & { definition: WorkflowDefinitionV2 } {
+function isV2(
+  detail: WorkflowDetail
+): detail is WorkflowDetail & { definition: WorkflowDefinitionV2 } {
   return detail.definition_schema_version === 'workflow.schema.v2'
 }
 
@@ -68,7 +70,11 @@ function ValidationStatusBadge({ status }: { status: WorkflowDetail['validation_
     invalid: 'Invalid',
     pending: 'Pending',
   }
-  return <span className={`pill${status === 'invalid' ? ' pill--risk-high' : ''}`}>{labels[status] ?? status}</span>
+  return (
+    <span className={`pill${status === 'invalid' ? ' pill--risk-high' : ''}`}>
+      {labels[status] ?? status}
+    </span>
+  )
 }
 
 export function WorkflowDetailPage() {
@@ -153,7 +159,11 @@ export function WorkflowDetailPage() {
             {v2 ? (
               <div>
                 <p className="detail-grid__label">Catalog</p>
-                <p>{(wf.definition as WorkflowDefinitionV2).catalogVersion ?? wf.catalog_version ?? '—'}</p>
+                <p>
+                  {(wf.definition as WorkflowDefinitionV2).catalogVersion ??
+                    wf.catalog_version ??
+                    '—'}
+                </p>
               </div>
             ) : null}
             {wf.validation_status !== 'not_applicable' ? (
@@ -201,9 +211,7 @@ export function WorkflowDetailPage() {
             <button
               className="button button--secondary"
               disabled={
-                createExecution.isPending ||
-                wf.status !== 'published' ||
-                wf.requires_review
+                createExecution.isPending || wf.status !== 'published' || wf.requires_review
               }
               onClick={handleCreateExecution}
               type="button"
@@ -230,7 +238,9 @@ export function WorkflowDetailPage() {
             <p className="banner banner--error">{getApiErrorMessage(createExecution.error)}</p>
           ) : null}
           {createV2DraftMutation.error ? (
-            <p className="banner banner--error">{getApiErrorMessage(createV2DraftMutation.error)}</p>
+            <p className="banner banner--error">
+              {getApiErrorMessage(createV2DraftMutation.error)}
+            </p>
           ) : null}
 
           <div className="stack-md">
@@ -286,7 +296,11 @@ export function WorkflowDetailPage() {
                       </li>
                     )
                   })
-                : (wf.definition as { steps: import('../../features/workflows/types').WorkflowStep[] }).steps.map((step) => (
+                : (
+                    wf.definition as {
+                      steps: import('../../features/workflows/types').WorkflowStep[]
+                    }
+                  ).steps.map((step) => (
                     <li className="step-list__item" key={step.id} id={`step-${step.id}`}>
                       <div>
                         <strong>{step.name}</strong>

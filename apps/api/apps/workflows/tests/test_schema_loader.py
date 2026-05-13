@@ -4,7 +4,6 @@ Tests for schema_loader and action_catalog.
 Pure unit tests — no database access required.
 """
 
-
 import pytest
 
 from apps.common.exceptions import DomainValidationError
@@ -117,7 +116,13 @@ def test_unknown_catalog_version_raises():
 
 @pytest.mark.parametrize(
     "action_type",
-    ["manual_task", "approval_gate", "shell_command", "http_request", "artifact_assertion"],
+    [
+        "manual_task",
+        "approval_gate",
+        "shell_command",
+        "http_request",
+        "artifact_assertion",
+    ],
 )
 def test_known_action_contracts_resolve(action_type):
     contract = catalog_mod.lookup_action_contract(action_type, "pilot.v1")

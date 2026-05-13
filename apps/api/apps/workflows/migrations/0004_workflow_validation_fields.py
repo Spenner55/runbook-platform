@@ -4,30 +4,38 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('workflows', '0003_workflow_requires_review_parse_source'),
+        ("workflows", "0003_workflow_requires_review_parse_source"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='workflow',
-            name='catalog_version',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="workflow",
+            name="catalog_version",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='workflow',
-            name='definition_hash_sha256',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="workflow",
+            name="definition_hash_sha256",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='workflow',
-            name='validation_report',
+            model_name="workflow",
+            name="validation_report",
             field=models.JSONField(default=dict),
         ),
         migrations.AddField(
-            model_name='workflow',
-            name='validation_status',
-            field=models.CharField(choices=[('valid', 'Valid'), ('invalid', 'Invalid'), ('pending', 'Pending'), ('not_applicable', 'Not Applicable')], default='not_applicable', max_length=24),
+            model_name="workflow",
+            name="validation_status",
+            field=models.CharField(
+                choices=[
+                    ("valid", "Valid"),
+                    ("invalid", "Invalid"),
+                    ("pending", "Pending"),
+                    ("not_applicable", "Not Applicable"),
+                ],
+                default="not_applicable",
+                max_length=24,
+            ),
         ),
     ]

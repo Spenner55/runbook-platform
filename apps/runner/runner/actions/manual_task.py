@@ -31,6 +31,8 @@ class ManualTaskHandler:
             "manual_task: step %d/%s acknowledged%s",
             ctx.step.position,
             ctx.step.name,
-            f" — instructions present ({len(instructions)} chars)" if instructions else "",
+            f" — instructions present ({len(instructions)} chars)"
+            if instructions
+            else "",
         )
         return ActionResult(status="succeeded", exit_code=0)

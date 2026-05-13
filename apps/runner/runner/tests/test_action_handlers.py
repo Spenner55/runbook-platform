@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from runner.actions.base import ActionExecutionContext, ActionValidationError
+from runner.sandbox import SandboxValidationError
 from runner.schemas import (
     ActionSnapshot,
     ArtifactDeclaration,
@@ -159,7 +160,9 @@ class TestManualTaskExecute:
     def test_returns_succeeded_with_instructions(self):
         from runner.actions.manual_task import ManualTaskHandler
 
-        ctx = _make_ctx(step=_make_step("manual_task", {"instructions": "Press the button."}))
+        ctx = _make_ctx(
+            step=_make_step("manual_task", {"instructions": "Press the button."})
+        )
         result = ManualTaskHandler().execute(ctx)
 
         assert result.status == "succeeded"
@@ -250,12 +253,16 @@ class TestShellCommandValidate:
         from runner.actions.shell_command import ShellCommandHandler
 
         with pytest.raises(ActionValidationError, match="strings"):
-            ShellCommandHandler().validate({"commandMode": "argv", "argv": ["echo", 42]})
+            ShellCommandHandler().validate(
+                {"commandMode": "argv", "argv": ["echo", 42]}
+            )
 
     def test_argv_mode_valid(self):
         from runner.actions.shell_command import ShellCommandHandler
 
-        ShellCommandHandler().validate({"commandMode": "argv", "argv": ["echo", "hello"]})
+        ShellCommandHandler().validate(
+            {"commandMode": "argv", "argv": ["echo", "hello"]}
+        )
 
     def test_current_schema_command_param_valid(self):
         from runner.actions.shell_command import ShellCommandHandler
@@ -292,7 +299,11 @@ class TestShellCommandValidate:
 
         with pytest.raises(ActionValidationError, match="\\.\\."):
             ShellCommandHandler().validate(
-                {"commandMode": "argv", "argv": ["ls"], "workingDirectory": "../secrets"}
+                {
+                    "commandMode": "argv",
+                    "argv": ["ls"],
+                    "workingDirectory": "../secrets",
+                }
             )
 
     def test_relative_working_directory_accepted(self):
@@ -334,7 +345,9 @@ class TestShellCommandExecute:
 
         settings = _make_settings(sandbox_allow_shell=False)
         ctx = _make_ctx(
-            step=_make_step("shell_command", {"commandMode": "shell", "command": "rm -rf /"}),
+            step=_make_step(
+                "shell_command", {"commandMode": "shell", "command": "rm -rf /"}
+            ),
             settings=settings,
         )
         result = ShellCommandHandler().execute(ctx)
@@ -346,7 +359,9 @@ class TestShellCommandExecute:
         from runner.actions.shell_command import ShellCommandHandler
 
         settings = _make_settings(sandbox_workspace_root=str(tmp_path))
-        step = _make_step("shell_command", {"commandMode": "argv", "argv": ["echo", "hello"]})
+        step = _make_step(
+            "shell_command", {"commandMode": "argv", "argv": ["echo", "hello"]}
+        )
         ctx = _make_ctx(step=step, settings=settings)
 
         mock_result = _make_sandbox_result(exit_code=0, stdout=b"hello\n")
@@ -354,7 +369,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "succeeded"
@@ -373,7 +390,9 @@ class TestShellCommandExecute:
         settings = _make_settings(
             sandbox_workspace_root=str(tmp_path), sandbox_allow_shell=True
         )
-        step = _make_step("shell_command", {"commandMode": "shell", "command": "echo hi"})
+        step = _make_step(
+            "shell_command", {"commandMode": "shell", "command": "echo hi"}
+        )
         ctx = _make_ctx(step=step, settings=settings)
 
         mock_result = _make_sandbox_result(exit_code=0)
@@ -381,7 +400,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "succeeded"
@@ -412,7 +433,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
@@ -423,7 +446,9 @@ class TestShellCommandExecute:
         from runner.actions.shell_command import ShellCommandHandler
 
         settings = _make_settings(sandbox_workspace_root=str(tmp_path))
-        step = _make_step("shell_command", {"commandMode": "argv", "argv": ["sleep", "9999"]})
+        step = _make_step(
+            "shell_command", {"commandMode": "argv", "argv": ["sleep", "9999"]}
+        )
         ctx = _make_ctx(step=step, settings=settings)
 
         mock_result = _make_sandbox_result(timed_out=True, exit_code=None)
@@ -431,7 +456,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
@@ -441,7 +468,9 @@ class TestShellCommandExecute:
         from runner.actions.shell_command import ShellCommandHandler
 
         settings = _make_settings(sandbox_workspace_root=str(tmp_path))
-        step = _make_step("shell_command", {"commandMode": "argv", "argv": ["sleep", "9999"]})
+        step = _make_step(
+            "shell_command", {"commandMode": "argv", "argv": ["sleep", "9999"]}
+        )
         ctx = _make_ctx(step=step, settings=settings)
 
         mock_result = _make_sandbox_result(cancelled=True, exit_code=None)
@@ -449,7 +478,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
@@ -467,7 +498,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.side_effect = SandboxError("infra failure")
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
@@ -486,7 +519,9 @@ class TestShellCommandExecute:
         mock_provider = MagicMock()
         mock_provider.validate.side_effect = SandboxValidationError("bad spec")
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
@@ -507,7 +542,9 @@ class TestShellCommandExecute:
             call_order.append("execute") or mock_result
         )
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             ShellCommandHandler().execute(ctx)
 
         assert call_order.index("validate") < call_order.index("execute")
@@ -532,7 +569,9 @@ class TestShellCommandExecute:
         mock_provider.validate.side_effect = lambda spec: captured_specs.append(spec)
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             ShellCommandHandler().execute(ctx)
 
         assert captured_specs[0].limits.timeout_seconds == 60
@@ -557,7 +596,9 @@ class TestShellCommandExecute:
         mock_provider.validate.side_effect = lambda spec: captured_specs.append(spec)
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             ShellCommandHandler().execute(ctx)
 
         assert captured_specs[0].limits.timeout_seconds == 30
@@ -576,7 +617,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             ShellCommandHandler().execute(ctx)
 
         mock_provider.cleanup.assert_called_once()
@@ -595,7 +638,9 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             ShellCommandHandler().execute(ctx)
 
         mock_provider.cleanup.assert_not_called()
@@ -614,15 +659,14 @@ class TestShellCommandExecute:
         mock_provider.validate.return_value = None
         mock_provider.execute.return_value = mock_result
 
-        with patch("runner.actions.shell_command.get_provider", return_value=mock_provider):
+        with patch(
+            "runner.actions.shell_command.get_provider", return_value=mock_provider
+        ):
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
         assert result.failure_kind == "action_input_invalid"
 
-
-# Import for sandbox validation error tests
-from runner.sandbox import SandboxValidationError
 
 # ===========================================================================
 # http_request — validate
@@ -651,13 +695,17 @@ class TestHttpRequestValidate:
         from runner.actions.http_request import HttpRequestHandler
 
         with pytest.raises(ActionValidationError, match="method"):
-            HttpRequestHandler().validate({"url": "https://example.com", "method": "CONNECT"})
+            HttpRequestHandler().validate(
+                {"url": "https://example.com", "method": "CONNECT"}
+            )
 
     def test_allowed_methods_accepted(self):
         from runner.actions.http_request import HttpRequestHandler
 
         for method in ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]:
-            HttpRequestHandler().validate({"url": "https://example.com", "method": method})
+            HttpRequestHandler().validate(
+                {"url": "https://example.com", "method": method}
+            )
 
     def test_headers_not_dict_rejected(self):
         from runner.actions.http_request import HttpRequestHandler
@@ -684,7 +732,9 @@ class TestHttpRequestExecute:
     def test_dry_run_skips_live_request(self):
         from runner.actions.http_request import HttpRequestHandler
 
-        step = _make_step("http_request", {"url": "https://example.com", "dry_run": True})
+        step = _make_step(
+            "http_request", {"url": "https://example.com", "dry_run": True}
+        )
         ctx = _make_ctx(step=step)
 
         with patch("runner.actions.http_request.httpx.Client") as mock_client_cls:
@@ -709,7 +759,9 @@ class TestHttpRequestExecute:
     def test_validate_only_skips_live_request(self):
         from runner.actions.http_request import HttpRequestHandler
 
-        step = _make_step("http_request", {"url": "https://example.com", "validate_only": True})
+        step = _make_step(
+            "http_request", {"url": "https://example.com", "validate_only": True}
+        )
         ctx = _make_ctx(step=step)
 
         with patch("runner.actions.http_request.httpx.Client") as mock_client_cls:
@@ -787,7 +839,9 @@ class TestHttpRequestExecute:
     def test_get_request_succeeds(self):
         from runner.actions.http_request import HttpRequestHandler
 
-        step = _make_step("http_request", {"url": "https://example.com", "method": "GET"})
+        step = _make_step(
+            "http_request", {"url": "https://example.com", "method": "GET"}
+        )
         ctx = _make_ctx(step=step)
 
         mock_response = MagicMock()
@@ -890,8 +944,6 @@ class TestHttpRequestExecute:
         assert result.status == "succeeded"
 
 
-
-
 # ===========================================================================
 # artifact_assertion — validate
 # ===========================================================================
@@ -950,7 +1002,9 @@ class TestArtifactAssertionExecute:
     def test_undeclared_key_fails_with_artifact_not_declared(self):
         from runner.actions.artifact_assertion import ArtifactAssertionHandler
 
-        step = _make_step("artifact_assertion", {"artifact_key": "missing-key"}, artifacts=[])
+        step = _make_step(
+            "artifact_assertion", {"artifact_key": "missing-key"}, artifacts=[]
+        )
         ctx = _make_ctx(step=step)
 
         result = ArtifactAssertionHandler().execute(ctx)
@@ -962,7 +1016,9 @@ class TestArtifactAssertionExecute:
         from runner.actions.artifact_assertion import ArtifactAssertionHandler
 
         artifacts = [self._make_decl("report")]
-        step = _make_step("artifact_assertion", {"artifact_key": "report"}, artifacts=artifacts)
+        step = _make_step(
+            "artifact_assertion", {"artifact_key": "report"}, artifacts=artifacts
+        )
         ctx = _make_ctx(step=step)
 
         result = ArtifactAssertionHandler().execute(ctx)

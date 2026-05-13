@@ -28,7 +28,9 @@ class Execution(BaseModel):
     )
     workflow_version = models.PositiveIntegerField()
     workflow_snapshot = models.JSONField(default=dict)
-    workflow_snapshot_hash_sha256 = models.CharField(max_length=64, blank=True, default="")
+    workflow_snapshot_hash_sha256 = models.CharField(
+        max_length=64, blank=True, default=""
+    )
     execution_mode = models.CharField(
         max_length=16,
         choices=ExecutionMode.choices,

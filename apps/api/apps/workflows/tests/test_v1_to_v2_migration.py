@@ -360,7 +360,9 @@ def test_create_v2_draft_endpoint_returns_201(runbook, api_client_for_org):
 
 
 @pytest.mark.django_db
-def test_create_v2_draft_endpoint_returns_400_for_v2_source(runbook, api_client_for_org):
+def test_create_v2_draft_endpoint_returns_400_for_v2_source(
+    runbook, api_client_for_org
+):
     source = _make_v1_draft(runbook)
     Workflow.objects.filter(pk=source.pk).update(
         definition_schema_version="workflow.schema.v2"
@@ -373,7 +375,9 @@ def test_create_v2_draft_endpoint_returns_400_for_v2_source(runbook, api_client_
 
 
 @pytest.mark.django_db
-def test_create_v2_draft_endpoint_wrong_org_returns_404(org, runbook, api_client_for_org):
+def test_create_v2_draft_endpoint_wrong_org_returns_404(
+    org, runbook, api_client_for_org
+):
     from apps.organizations.models import Organization
 
     source = _make_v1_draft(runbook)

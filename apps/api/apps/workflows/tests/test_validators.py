@@ -193,9 +193,7 @@ def test_v2_missing_action_fails():
     doc = {
         "schemaVersion": "2",
         "name": "No action",
-        "steps": [
-            {"id": "s1", "name": "Step", "type": "manual_task", "risk": "low"}
-        ],
+        "steps": [{"id": "s1", "name": "Step", "type": "manual_task", "risk": "low"}],
     }
     with pytest.raises(InvalidWorkflowDefinitionError) as exc_info:
         _validate_v2(doc)
@@ -486,9 +484,7 @@ def test_v2_artifact_empty_path_for_file_kind_rejected():
 
 def test_v2_artifact_safe_relative_path_passes():
     step = _shell_step()
-    step["artifacts"] = [
-        {"key": "log", "kind": "file", "path": "artifacts/run.log"}
-    ]
+    step["artifacts"] = [{"key": "log", "kind": "file", "path": "artifacts/run.log"}]
     _validate_v2(_minimal_v2(steps=[step]))  # must not raise
 
 

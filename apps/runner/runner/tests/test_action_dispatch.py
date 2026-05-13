@@ -103,7 +103,9 @@ def make_mock_handler(
         handler.validate.side_effect = validate_raises
     else:
         handler.validate.return_value = None
-    handler.execute.return_value = result or ActionResult(status="succeeded", exit_code=0)
+    handler.execute.return_value = result or ActionResult(
+        status="succeeded", exit_code=0
+    )
     return handler
 
 
@@ -289,7 +291,9 @@ def test_v2_unknown_type_fails_closed():
     """A v2 step whose type is not registered must fail with unsupported_action_contract."""
     client = make_client()
     executor = Executor(client)
-    execution = make_execution([make_v2_step(1, action_type="nonexistent_type", version="pilot.v1")])
+    execution = make_execution(
+        [make_v2_step(1, action_type="nonexistent_type", version="pilot.v1")]
+    )
 
     with patch("runner.executor.ACTION_REGISTRY", ActionRegistry()):
         run_execution(executor, execution)
@@ -308,7 +312,9 @@ def test_v2_unknown_type_does_not_call_update_succeeded():
     """No succeeded update must be emitted when the action type is unknown."""
     client = make_client()
     executor = Executor(client)
-    execution = make_execution([make_v2_step(1, action_type="does_not_exist", version="pilot.v1")])
+    execution = make_execution(
+        [make_v2_step(1, action_type="does_not_exist", version="pilot.v1")]
+    )
 
     with patch("runner.executor.ACTION_REGISTRY", ActionRegistry()):
         run_execution(executor, execution)
@@ -333,7 +339,9 @@ def test_v2_unknown_version_fails_closed():
     registry = ActionRegistry()
     registry.register("manual_task", "pilot.v1", make_mock_handler())
     executor = Executor(client)
-    execution = make_execution([make_v2_step(1, action_type="manual_task", version="pilot.v99")])
+    execution = make_execution(
+        [make_v2_step(1, action_type="manual_task", version="pilot.v99")]
+    )
 
     with patch("runner.executor.ACTION_REGISTRY", registry):
         run_execution(executor, execution)
@@ -361,7 +369,9 @@ def test_v2_validate_failure_reports_action_input_invalid():
     )
     registry = registry_with("shell_command", "pilot.v1", handler)
     executor = Executor(client)
-    execution = make_execution([make_v2_step(1, "shell_command", "pilot.v1", params={})])
+    execution = make_execution(
+        [make_v2_step(1, "shell_command", "pilot.v1", params={})]
+    )
 
     with patch("runner.executor.ACTION_REGISTRY", registry):
         run_execution(executor, execution)

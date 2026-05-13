@@ -163,7 +163,9 @@ class WorkflowViewSet(
         new_workflow = services.create_v2_draft_from_v1(
             workflow=workflow, actor=actor_from_request(request)
         )
-        return Response(WorkflowDetailSerializer(new_workflow).data, status=status.HTTP_201_CREATED)
+        return Response(
+            WorkflowDetailSerializer(new_workflow).data, status=status.HTTP_201_CREATED
+        )
 
     @action(detail=False, methods=["post"])
     def validate(self, request):

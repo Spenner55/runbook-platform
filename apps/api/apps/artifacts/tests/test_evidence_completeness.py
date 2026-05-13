@@ -74,8 +74,18 @@ def claimed_result_for_step(org, runbook):
             "risk": "low",
             "action": {"type": "shell_command", "params": {"command": "echo hi"}},
             "artifacts": [
-                {"key": "output_log", "kind": "file", "path": "out.log", "required": True},
-                {"key": "report", "kind": "report", "path": "report.json", "required": False},
+                {
+                    "key": "output_log",
+                    "kind": "file",
+                    "path": "out.log",
+                    "required": True,
+                },
+                {
+                    "key": "report",
+                    "kind": "report",
+                    "path": "report.json",
+                    "required": False,
+                },
             ],
         }
     ]
@@ -197,7 +207,9 @@ def test_upload_with_declaration_key_satisfies_requirement(
 
 
 @pytest.mark.django_db
-def test_partial_satisfaction_leaves_evidence_incomplete(org, runbook, artifact_media_root):
+def test_partial_satisfaction_leaves_evidence_incomplete(
+    org, runbook, artifact_media_root
+):
     steps = [
         {
             "id": "s1",

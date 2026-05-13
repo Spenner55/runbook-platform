@@ -35,12 +35,12 @@ _CONTROL_PLANE_ONLY = frozenset({"manual_task", "approval_gate"})
 _SECRET_PATTERNS = re.compile(
     r"(?x)"
     r"(?:"
-    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"        # Bearer <token>
-    r"|Token\s+[A-Za-z0-9\-._~+/]+=*"         # Token <token>
-    r"|ghp_[A-Za-z0-9]{36}"                    # GitHub personal access token
-    r"|ghs_[A-Za-z0-9]{36}"                    # GitHub server-to-server token
-    r"|sk-[A-Za-z0-9]{48}"                     # OpenAI API key
-    r"|xox[bpoa]-[0-9]+-[A-Za-z0-9\-]+"       # Slack token
+    r"Bearer\s+[A-Za-z0-9\-._~+/]+=*"  # Bearer <token>
+    r"|Token\s+[A-Za-z0-9\-._~+/]+=*"  # Token <token>
+    r"|ghp_[A-Za-z0-9]{36}"  # GitHub personal access token
+    r"|ghs_[A-Za-z0-9]{36}"  # GitHub server-to-server token
+    r"|sk-[A-Za-z0-9]{48}"  # OpenAI API key
+    r"|xox[bpoa]-[0-9]+-[A-Za-z0-9\-]+"  # Slack token
     r"|ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"  # JWT
     r")"
 )
@@ -216,10 +216,9 @@ def _check_action_inputs(step_id: str, action: dict, catalog_version: str) -> No
         ) from exc
 
     # Action schemas define a top-level 'params' or 'inputs' sub-schema.
-    params_schema = (
-        action_schema.get("properties", {}).get("params")
-        or action_schema.get("properties", {}).get("inputs")
-    )
+    params_schema = action_schema.get("properties", {}).get(
+        "params"
+    ) or action_schema.get("properties", {}).get("inputs")
     if params_schema is None:
         return
 
@@ -390,9 +389,7 @@ def _check_shell_command_restrictions(step_id: str, params: dict) -> None:
         if ".." in working_dir.replace("\\", "/").split("/"):
             raise InvalidWorkflowDefinitionError(
                 code="invalid_working_directory",
-                detail=(
-                    f"Step '{step_id}': working_directory must not contain '..'."
-                ),
+                detail=(f"Step '{step_id}': working_directory must not contain '..'."),
             )
 
 

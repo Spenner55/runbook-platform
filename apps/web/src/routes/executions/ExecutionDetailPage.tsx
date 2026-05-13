@@ -111,7 +111,15 @@ function StepRow({ step, workflowId }: { step: ExecutionStep; workflowId: string
 
   return (
     <li className="step-list__item" style={{ flexDirection: 'column', gap: '0.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start', width: '100%' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: '1rem',
+          alignItems: 'flex-start',
+          width: '100%',
+        }}
+      >
         <div>
           <strong>
             {step.position}. {step.name}
@@ -186,7 +194,10 @@ function StepRow({ step, workflowId }: { step: ExecutionStep; workflowId: string
             fontSize: '0.88em',
           }}
         >
-          <div className="detail-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+          <div
+            className="detail-grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
+          >
             <div>
               <p className="detail-grid__label">Step key</p>
               <p>{step.step_key}</p>
