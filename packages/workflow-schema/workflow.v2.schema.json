@@ -13,10 +13,23 @@
     },
     "name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "maxLength": 255
     },
     "description": {
       "type": "string"
+    },
+    "catalogVersion": {
+      "type": "string",
+      "description": "Action catalog version. Supported values are validated semantically. Defaults to 'pilot.v1' when absent."
+    },
+    "defaults": {
+      "$ref": "#/definitions/WorkflowDefaults"
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/SecretDeclaration" },
+      "default": []
     },
     "steps": {
       "type": "array",
@@ -29,12 +42,103 @@
       "type": "string",
       "enum": ["low", "medium", "high", "critical"]
     },
+    "WorkflowDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "retry": { "$ref": "#/definitions/RetrySpec" }
+      }
+    },
+    "SecretDeclaration": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string" },
+        "provider": { "type": "string" },
+        "ref": { "type": "string" },
+        "scope": { "type": "object" },
+        "requiredBy": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "injectAs": { "type": "object" },
+        "redactionHints": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "ArtifactDeclaration": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["file", "report", "stdout", "stderr", "log"]
+        },
+        "mimeType": { "type": "string" },
+        "required": { "type": "boolean", "default": false },
+        "maxBytes": { "type": "integer", "minimum": 1 },
+        "contentDisposition": { "type": "string" },
+        "evidenceRole": { "type": "string" }
+      }
+    },
+    "RetrySpec": {
+      "type": "object",
+      "required": ["maxAttempts"],
+      "additionalProperties": false,
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "backoffSeconds": { "type": "integer", "minimum": 0 },
+        "retryOn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["runner_transient", "network_transient", "timeout", "rate_limited"]
+          }
+        }
+      }
+    },
+    "IdempotencySpec": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["none", "natural", "keyed", "external"]
+        },
+        "key": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "DryRunSpec": {
+      "type": "object",
+      "required": ["supported", "strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "supported": { "type": "boolean" },
+        "strategy": {
+          "type": "string",
+          "description": "Supported strategies validated semantically: native, validate_only, mock, unsupported."
+        },
+        "requiresSecrets": { "type": "boolean", "default": false }
+      }
+    },
     "ManualTaskAction": {
       "type": "object",
       "required": ["type"],
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "const": "manual_task" },
+        "version": { "type": "string" },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -42,7 +146,9 @@
             "instructions": { "type": "string", "minLength": 1 },
             "expected_outcome": { "type": "string" }
           }
-        }
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" }
       }
     },
     "ApprovalGateAction": {
@@ -51,6 +157,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "const": "approval_gate" },
+        "version": { "type": "string" },
         "params": {
           "type": "object",
           "additionalProperties": false,
@@ -58,7 +165,9 @@
             "message": { "type": "string", "minLength": 1 },
             "timeout_seconds": { "type": "integer", "minimum": 1 }
           }
-        }
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" }
       }
     },
     "ShellCommandAction": {
@@ -67,6 +176,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "const": "shell_command" },
+        "version": { "type": "string" },
         "params": {
           "type": "object",
           "required": ["command"],
@@ -80,7 +190,9 @@
               "additionalProperties": { "type": "string" }
             }
           }
-        }
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" }
       }
     },
     "HttpRequestAction": {
@@ -89,6 +201,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "const": "http_request" },
+        "version": { "type": "string" },
         "params": {
           "type": "object",
           "required": ["method", "url"],
@@ -111,7 +224,9 @@
               "minItems": 1
             }
           }
-        }
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" }
       }
     },
     "ArtifactAssertionAction": {
@@ -120,6 +235,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "const": "artifact_assertion" },
+        "version": { "type": "string" },
         "params": {
           "type": "object",
           "required": ["artifact_key", "assertion"],
@@ -137,7 +253,9 @@
             "required": ["assertion"]
           },
           "then": { "required": ["pattern"] }
-        }
+        },
+        "inputs": { "type": "object" },
+        "outputs": { "type": "object" }
       }
     },
     "Action": {
@@ -163,7 +281,20 @@
         "risk": { "$ref": "#/definitions/RiskLevel" },
         "requiresApproval": { "type": "boolean" },
         "approvalTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "action": { "$ref": "#/definitions/Action" }
+        "action": { "$ref": "#/definitions/Action" },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "retry": { "$ref": "#/definitions/RetrySpec" },
+        "idempotency": { "$ref": "#/definitions/IdempotencySpec" },
+        "dryRun": { "$ref": "#/definitions/DryRunSpec" },
+        "secrets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "References to top-level secret declaration keys."
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ArtifactDeclaration" }
+        }
       },
       "allOf": [
         {
