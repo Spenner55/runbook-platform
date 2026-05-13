@@ -624,7 +624,6 @@ class TestShellCommandExecute:
 # Import for sandbox validation error tests
 from runner.sandbox import SandboxValidationError
 
-
 # ===========================================================================
 # http_request — validate
 # ===========================================================================
@@ -867,7 +866,10 @@ class TestHttpRequestExecute:
         assert result.failure_kind == "action_failed"
 
     def test_response_body_capped(self):
-        from runner.actions.http_request import HttpRequestHandler, _MAX_RESPONSE_BODY_BYTES
+        from runner.actions.http_request import (
+            _MAX_RESPONSE_BODY_BYTES,
+            HttpRequestHandler,
+        )
 
         step = _make_step("http_request", {"url": "https://example.com"})
         ctx = _make_ctx(step=step)

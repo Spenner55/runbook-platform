@@ -20,7 +20,7 @@ from uuid import UUID
 import httpx
 
 from runner.client import ApiClient
-from runner.sandbox.base import ArtifactSpec, CollectedArtifact
+from runner.sandbox.base import CollectedArtifact
 from runner.schemas import ArtifactDeclaration, ArtifactUploadResponse
 
 logger = logging.getLogger(__name__)

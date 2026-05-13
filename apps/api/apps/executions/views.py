@@ -2,7 +2,7 @@ import time
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import F, Prefetch, Subquery, OuterRef, Window
+from django.db.models import F, OuterRef, Prefetch, Subquery, Window
 from django.db.models.functions import RowNumber
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action

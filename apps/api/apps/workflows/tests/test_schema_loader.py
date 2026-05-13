@@ -4,14 +4,12 @@ Tests for schema_loader and action_catalog.
 Pure unit tests — no database access required.
 """
 
-import json
 
 import pytest
 
 from apps.common.exceptions import DomainValidationError
 from apps.workflows import action_catalog as catalog_mod
 from apps.workflows import schema_loader
-
 
 # ---------------------------------------------------------------------------
 # schema_loader: workflow schemas

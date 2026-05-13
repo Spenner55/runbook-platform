@@ -8,7 +8,11 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from runner.actions.base import ActionExecutionContext, ActionResult, ActionValidationError
+from runner.actions.base import (
+    ActionExecutionContext,
+    ActionResult,
+    ActionValidationError,
+)
 from runner.sandbox import (
     ArtifactSpec,
     SandboxError,

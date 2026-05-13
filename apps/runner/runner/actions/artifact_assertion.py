@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from runner.actions.base import ActionExecutionContext, ActionResult, ActionValidationError
+from runner.actions.base import (
+    ActionExecutionContext,
+    ActionResult,
+    ActionValidationError,
+)
 
 logger = logging.getLogger(__name__)
 

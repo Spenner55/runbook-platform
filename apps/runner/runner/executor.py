@@ -15,8 +15,6 @@ from runner.actions.base import ActionExecutionContext, ActionValidationError
 from runner.actions.registry import ACTION_REGISTRY
 from runner.artifact_uploader import ArtifactUploader
 from runner.client import ApiClient
-from runner.secrets.base import SecretUnavailableError
-from runner.secrets.null_provider import NullProvider
 from runner.sandbox import (
     SandboxError,
     SandboxExecutionSpec,
@@ -31,6 +29,8 @@ from runner.schemas import (
     ClaimedStep,
     RunnerSettings,
 )
+from runner.secrets.base import SecretUnavailableError
+from runner.secrets.null_provider import NullProvider
 
 logger = logging.getLogger(__name__)
 

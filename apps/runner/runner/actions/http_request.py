@@ -8,7 +8,11 @@ from typing import Any
 
 import httpx
 
-from runner.actions.base import ActionExecutionContext, ActionResult, ActionValidationError
+from runner.actions.base import (
+    ActionExecutionContext,
+    ActionResult,
+    ActionValidationError,
+)
 
 logger = logging.getLogger(__name__)
 

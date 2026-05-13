@@ -18,7 +18,6 @@ from apps.runbooks import services as runbook_services
 from apps.workflows import services as wf_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------

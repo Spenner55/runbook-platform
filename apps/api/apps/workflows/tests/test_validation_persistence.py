@@ -18,7 +18,6 @@ from apps.runbooks import services as runbook_services
 from apps.workflows import services
 from apps.workflows.models import Workflow
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------

@@ -8,9 +8,12 @@ from uuid import uuid4
 
 import pytest
 
-from runner.actions.base import ActionExecutionContext, ActionResult, ActionValidationError
+from runner.actions.base import (
+    ActionResult,
+    ActionValidationError,
+)
 from runner.actions.registry import ACTION_REGISTRY, ActionRegistry
-from runner.executor import Executor, _HeartbeatThread
+from runner.executor import Executor
 from runner.schemas import (
     ActionSnapshot,
     ClaimedExecution,

@@ -16,11 +16,9 @@ import io
 import pytest
 
 from apps.artifacts import services as artifact_services
-from apps.artifacts.models import Artifact
 from apps.executions import services as exec_services
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as wf_services
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

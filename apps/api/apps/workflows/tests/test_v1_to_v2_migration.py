@@ -19,7 +19,6 @@ from apps.workflows.internal_clients import StubWorkflowTransformClient
 from apps.workflows.models import Workflow
 from apps.workflows.validators import validate_workflow_definition
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
