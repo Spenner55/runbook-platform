@@ -30,6 +30,7 @@ from apps.workflows.serializers import (
     WorkflowDetailSerializer,
     WorkflowListSerializer,
     WorkflowPublishSerializer,
+    WorkflowValidateSerializer,
 )
 
 
@@ -56,6 +57,8 @@ class WorkflowViewSet(
             return WorkflowPublishSerializer
         if self.action == "archive":
             return WorkflowArchiveSerializer
+        if self.action == "validate":
+            return WorkflowValidateSerializer
         return WorkflowListSerializer
 
     @method_decorator(
@@ -150,3 +153,13 @@ class WorkflowViewSet(
             workflow=workflow, actor=actor_from_request(request)
         )
         return Response(WorkflowDetailSerializer(workflow).data)
+
+    @action(detail=False, methods=["post"])
+    def validate(self, request):
+        serializer = WorkflowValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        report = services.validate_definition_report(
+            definition=serializer.validated_data["definition"],
+            schema_version=serializer.validated_data["schema_version"],
+        )
+        return Response(report)

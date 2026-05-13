@@ -1,3 +1,4 @@
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -74,6 +75,9 @@ def create_workflow(
                 status=Workflow.Status.DRAFT,
                 definition_schema_version="workflow.schema.v1",
                 definition=definition,
+                definition_hash_sha256=compute_definition_hash(definition),
+                validation_status=Workflow.ValidationStatus.NOT_APPLICABLE,
+                validation_report={},
                 requires_review=requires_review,
                 parse_source=parse_source,
             )
@@ -193,6 +197,17 @@ def publish_workflow(
                 code="invalid_state_transition",
                 detail=f"Cannot publish workflow with status '{workflow.status}', expected 'draft'.",
             )
+        if (
+            workflow.definition_schema_version == "workflow.schema.v2"
+            and workflow.validation_status != Workflow.ValidationStatus.VALID
+        ):
+            raise DomainConflictError(
+                code="workflow_invalid_definition",
+                detail=(
+                    "Cannot publish a v2 workflow with an invalid or unvalidated "
+                    f"definition (validation_status='{workflow.validation_status}')."
+                ),
+            )
         Workflow.objects.filter(
             runbook=workflow.runbook,
             status=Workflow.Status.PUBLISHED,
@@ -242,9 +257,104 @@ def archive_workflow(
     return workflow
 
 
+def create_workflow_v2_draft(
+    *,
+    runbook: Runbook,
+    definition: dict,
+    actor: AuditActor | None = None,
+) -> Workflow:
+    """
+    Create a draft Workflow from a v2 definition supplied directly.
+
+    Invalid definitions are allowed as drafts — validation_status records the
+    outcome.  Publish will reject invalid v2 workflows.
+    """
+    schema_version = "workflow.schema.v2"
+    report = _build_validation_report(definition, schema_version)
+    validation_status = (
+        Workflow.ValidationStatus.VALID
+        if report["valid"]
+        else Workflow.ValidationStatus.INVALID
+    )
+    catalog_version = definition.get("catalogVersion", "pilot.v1")
+
+    try:
+        with transaction.atomic():
+            locked_runbook = (
+                Runbook.objects.select_for_update()
+                .select_related("organization")
+                .get(pk=runbook.pk)
+            )
+            existing_max = (
+                Workflow.objects.filter(runbook=locked_runbook).aggregate(
+                    max_version=Max("version")
+                )["max_version"]
+                or 0
+            )
+            workflow = Workflow.objects.create(
+                organization=locked_runbook.organization,
+                runbook=locked_runbook,
+                name=definition.get("name", locked_runbook.title),
+                version=existing_max + 1,
+                status=Workflow.Status.DRAFT,
+                definition_schema_version=schema_version,
+                definition=definition,
+                definition_hash_sha256=compute_definition_hash(definition),
+                catalog_version=catalog_version,
+                validation_status=validation_status,
+                validation_report=report,
+                requires_review=False,
+                parse_source=Workflow.ParseSource.MANUAL,
+            )
+            _emit_workflow_audit(
+                workflow=workflow,
+                event_type="workflow.created",
+                actor=actor,
+                metadata={
+                    "runbook_id": str(locked_runbook.id),
+                    "version": workflow.version,
+                    "status": workflow.status,
+                    "definition_schema_version": schema_version,
+                    "validation_status": validation_status,
+                },
+            )
+            return workflow
+    except IntegrityError as exc:
+        raise ConcurrencyConflictError(
+            code="workflow_version_conflict",
+            detail="Workflow version allocation conflicted with another request.",
+        ) from exc
+
+
+def validate_definition_report(definition: dict, schema_version: str) -> dict:
+    """Return a validation report dict without persisting anything."""
+    return _build_validation_report(definition, schema_version)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def compute_definition_hash(definition: dict) -> str:
+    """Return a deterministic SHA-256 hex digest of the canonical JSON form of *definition*."""
+    canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _build_validation_report(definition: dict, schema_version: str) -> dict:
+    """Run validation and return a report dict; never raises."""
+    from apps.workflows.validators import validate_workflow_definition
+
+    try:
+        validate_workflow_definition(definition, schema_version)
+        return {"valid": True, "errors": [], "warnings": []}
+    except InvalidWorkflowDefinitionError as exc:
+        return {
+            "valid": False,
+            "errors": [{"code": exc.code, "detail": exc.detail}],
+            "warnings": [],
+        }
 
 
 def _emit_workflow_audit(

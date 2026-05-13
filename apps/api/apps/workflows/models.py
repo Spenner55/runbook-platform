@@ -14,6 +14,12 @@ class Workflow(BaseModel):
         MANUAL = "manual", "Manual"
         AI_PARSE = "ai_parse", "AI Parse"
 
+    class ValidationStatus(models.TextChoices):
+        VALID = "valid", "Valid"
+        INVALID = "invalid", "Invalid"
+        PENDING = "pending", "Pending"
+        NOT_APPLICABLE = "not_applicable", "Not Applicable"
+
     organization = models.ForeignKey(
         "organizations.Organization",
         on_delete=models.PROTECT,
@@ -35,6 +41,14 @@ class Workflow(BaseModel):
         max_length=32, default="workflow.schema.v1"
     )
     definition = models.JSONField(default=dict)
+    definition_hash_sha256 = models.CharField(max_length=64, blank=True, default="")
+    catalog_version = models.CharField(max_length=64, blank=True, default="")
+    validation_status = models.CharField(
+        max_length=24,
+        choices=ValidationStatus.choices,
+        default=ValidationStatus.NOT_APPLICABLE,
+    )
+    validation_report = models.JSONField(default=dict)
     requires_review = models.BooleanField(default=False)
     parse_source = models.CharField(
         max_length=16,
