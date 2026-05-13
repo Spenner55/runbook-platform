@@ -13,7 +13,7 @@ from apps.runners.tests.conftest import make_runner
 class TestPerRunnerTokenAuthentication:
     def test_valid_per_runner_token_authenticates(self, pool):
         clear, h = generate_runner_token()
-        runner = make_runner(pool, token_hash=h)
+        make_runner(pool, token_hash=h)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
 
@@ -25,9 +25,23 @@ class TestPerRunnerTokenAuthentication:
         )
         assert resp.status_code == 200
 
+    def test_claim_next_rejects_mismatched_body_runner_id(self, pool):
+        clear, h = generate_runner_token()
+        make_runner(pool, token_hash=h)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
+
+        resp = client.post(
+            "/api/v1/internal/executions/claim-next/",
+            {"runner_id": "00000000-0000-0000-0000-000000000000", "runner_version": "0.1.0"},
+            format="json",
+        )
+        assert resp.status_code == 403
+        assert resp.data["errors"][0]["code"] == "runner_identity_mismatch"
+
     def test_revoked_runner_token_returns_401(self, pool):
         clear, h = generate_runner_token()
-        runner = make_runner(pool, token_hash=h, status=Runner.Status.REVOKED)
+        make_runner(pool, token_hash=h, status=Runner.Status.REVOKED)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
 
@@ -40,7 +54,7 @@ class TestPerRunnerTokenAuthentication:
 
     def test_disabled_runner_token_returns_401(self, pool):
         clear, h = generate_runner_token()
-        runner = make_runner(pool, token_hash=h, status=Runner.Status.DISABLED)
+        make_runner(pool, token_hash=h, status=Runner.Status.DISABLED)
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
 

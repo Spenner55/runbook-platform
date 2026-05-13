@@ -38,12 +38,15 @@ def legacy_client(settings):
 
 @pytest.mark.django_db
 class TestRunnerRegisterView:
-    def test_register_returns_runner_id_and_token(self, legacy_client, pool):
+    def test_register_returns_runner_id_and_token(self, pool):
         clear = _make_reg_token(pool)
-        resp = legacy_client.post(
+        client = APIClient()
+        resp = client.post(
             "/api/v1/internal/runners/register/",
             {
                 "registration_token": clear,
+                "organization_id": str(pool.organization_id),
+                "pool_key": pool.key,
                 "display_name": "prod-runner-01",
                 "runner_version": "0.2.0",
                 "fingerprint_sha256": "fp-test",
@@ -60,8 +63,9 @@ class TestRunnerRegisterView:
         assert "pool_key" in data
         assert data["pool_key"] == pool.key
 
-    def test_register_with_invalid_token_returns_400(self, legacy_client, pool):
-        resp = legacy_client.post(
+    def test_register_with_invalid_token_returns_400(self, pool):
+        client = APIClient()
+        resp = client.post(
             "/api/v1/internal/runners/register/",
             {
                 "registration_token": "not-valid",
@@ -77,7 +81,7 @@ class TestRunnerRegisterView:
         assert resp.status_code == 400
         assert resp.data["code"] == "invalid_registration_token"
 
-    def test_register_without_auth_returns_401(self, pool):
+    def test_register_uses_bootstrap_token_without_runner_auth(self, pool):
         clear = _make_reg_token(pool)
         client = APIClient()
         resp = client.post(
@@ -86,7 +90,47 @@ class TestRunnerRegisterView:
              "fingerprint_sha256": "fp", "hostname": "h", "labels": {}, "capabilities": []},
             format="json",
         )
-        assert resp.status_code == 401
+        assert resp.status_code == 201
+
+    def test_register_wrong_pool_scope_returns_400(self, pool, pool2):
+        clear = _make_reg_token(pool)
+        client = APIClient()
+        resp = client.post(
+            "/api/v1/internal/runners/register/",
+            {
+                "registration_token": clear,
+                "pool_key": pool2.key,
+                "display_name": "r",
+                "runner_version": "0.1.0",
+                "fingerprint_sha256": "fp",
+                "hostname": "h",
+                "labels": {},
+                "capabilities": [],
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert resp.data["code"] == "registration_scope_mismatch"
+
+    def test_register_wrong_organization_scope_returns_400(self, pool, org2):
+        clear = _make_reg_token(pool)
+        client = APIClient()
+        resp = client.post(
+            "/api/v1/internal/runners/register/",
+            {
+                "registration_token": clear,
+                "organization_id": str(org2.id),
+                "display_name": "r",
+                "runner_version": "0.1.0",
+                "fingerprint_sha256": "fp",
+                "hostname": "h",
+                "labels": {},
+                "capabilities": [],
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+        assert resp.data["code"] == "registration_scope_mismatch"
 
 
 @pytest.mark.django_db
@@ -109,10 +153,40 @@ class TestRunnerHeartbeatView:
         assert resp.data["runner_action"] == "continue"
         runner.refresh_from_db()
         assert runner.last_heartbeat_at > old_heartbeat
+        assert runner.last_seen_at > old_heartbeat
+
+    def test_heartbeat_rejects_body_runner_id_mismatch(self, pool):
+        clear, h = generate_runner_token()
+        make_runner(pool, token_hash=h)
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
+        resp = client.post(
+            "/api/v1/internal/runners/heartbeat/",
+            {"runner_id": "00000000-0000-0000-0000-000000000000"},
+            format="json",
+        )
+        assert resp.status_code == 403
+
+    def test_heartbeat_rejects_header_runner_id_mismatch(self, pool):
+        clear, h = generate_runner_token()
+        make_runner(pool, token_hash=h)
+
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {clear}",
+            HTTP_X_RUNNER_ID="00000000-0000-0000-0000-000000000000",
+        )
+        resp = client.post(
+            "/api/v1/internal/runners/heartbeat/",
+            {},
+            format="json",
+        )
+        assert resp.status_code == 403
 
     def test_heartbeat_drain_response_for_draining_runner(self, pool):
         clear, h = generate_runner_token()
-        runner = make_runner(pool, token_hash=h, status=Runner.Status.DRAINING)
+        make_runner(pool, token_hash=h, status=Runner.Status.DRAINING)
 
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
@@ -126,7 +200,7 @@ class TestRunnerHeartbeatView:
 
     def test_heartbeat_drain_response_for_draining_pool(self, pool):
         clear, h = generate_runner_token()
-        runner = make_runner(pool, token_hash=h)
+        make_runner(pool, token_hash=h)
         pool.status = "draining"
         pool.save()
 

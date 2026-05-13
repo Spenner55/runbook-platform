@@ -1,5 +1,6 @@
 import logging
 
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -8,7 +9,6 @@ from apps.common.exceptions import DomainValidationError
 from apps.common.permissions import IsRunnerAuthenticated
 from apps.runners.internal_serializers import (
     RunnerHeartbeatRequestSerializer,
-    RunnerHeartbeatResponseSerializer,
     RunnerRegisterRequestSerializer,
 )
 from apps.runners.services import register_runner, update_runner_heartbeat
@@ -24,6 +24,9 @@ class RunnerInternalAPIView(APIView):
 class RunnerRegisterView(RunnerInternalAPIView):
     """POST /api/v1/internal/runners/register/"""
 
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = RunnerRegisterRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -38,6 +41,8 @@ class RunnerRegisterView(RunnerInternalAPIView):
                 hostname=d["hostname"],
                 labels=d["labels"],
                 capabilities=d["capabilities"],
+                organization_id=str(d["organization_id"] or ""),
+                pool_key=d["pool_key"],
             )
         except DomainValidationError as exc:
             return Response(
@@ -71,7 +76,6 @@ class RunnerHeartbeatView(RunnerInternalAPIView):
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
 
-        principal = request.auth if hasattr(request, "auth") else None
         # request.user is the RunnerPrincipal when using RunnerBearerTokenAuthentication
         auth_principal = request.user
 
@@ -80,6 +84,18 @@ class RunnerHeartbeatView(RunnerInternalAPIView):
             return Response(
                 {"detail": "Runner ID not resolved; use per-runner bearer token for heartbeat."},
                 status=400,
+            )
+        supplied_runner_id = d.get("runner_id")
+        header_runner_id = request.headers.get("X-Runner-ID", "")
+        if supplied_runner_id and str(supplied_runner_id) != str(runner_id):
+            return Response(
+                {"detail": "runner_id does not match authenticated runner."},
+                status=403,
+            )
+        if header_runner_id and header_runner_id != str(runner_id):
+            return Response(
+                {"detail": "X-Runner-ID does not match authenticated runner."},
+                status=403,
             )
 
         from apps.runners.models import Runner

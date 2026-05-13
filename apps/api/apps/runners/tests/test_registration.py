@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.common.exceptions import DomainValidationError
 from apps.runners.models import Runner, RunnerRegistrationToken
-from apps.runners.services import register_runner
+from apps.runners.services import create_registration_token, register_runner
 
 
 def _make_reg_token(pool, *, max_reg=1, extra_seconds=3600, label_policy=None, cap_policy=None):
@@ -31,6 +31,23 @@ def _make_reg_token(pool, *, max_reg=1, extra_seconds=3600, label_policy=None, c
 
 @pytest.mark.django_db
 class TestRegisterRunner:
+    def test_create_registration_token_stores_hash_only(self, pool):
+        reg, clear = create_registration_token(
+            organization=pool.organization,
+            pool=pool,
+            expires_at=timezone.now() + timedelta(hours=1),
+            max_registrations=2,
+            label_policy=["region"],
+            capability_policy=["action.shell_command"],
+        )
+
+        assert clear
+        assert reg.token_hash != clear
+        assert reg.token_hash == hashlib.sha256(clear.encode()).hexdigest()
+        assert reg.max_registrations == 2
+        assert reg.label_policy == ["region"]
+        assert reg.capability_policy == ["action.shell_command"]
+
     def test_valid_registration_creates_runner(self, pool):
         clear, _ = _make_reg_token(pool)
         runner, token = register_runner(

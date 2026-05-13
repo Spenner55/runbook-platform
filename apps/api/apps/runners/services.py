@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
-from apps.audit.services import AuditService, system_actor
+from apps.audit.services import AuditService
 from apps.common.exceptions import DomainValidationError
 
 
@@ -19,23 +19,48 @@ def generate_runner_token() -> tuple[str, str]:
     return clear, _hash_token(clear)
 
 
+def create_registration_token(
+    *,
+    organization,
+    pool,
+    expires_at,
+    max_registrations: int = 1,
+    label_policy: list | None = None,
+    capability_policy: list | None = None,
+    created_by=None,
+):
+    """Create a bootstrap registration token and return (token_record, clear_token)."""
+    from apps.runners.models import RunnerRegistrationToken
+
+    if pool.organization_id != organization.id:
+        raise DomainValidationError(
+            code="registration_scope_mismatch",
+            detail="Registration token pool must belong to the supplied organization.",
+        )
+
+    clear_token, token_hash = generate_runner_token()
+    registration_token = RunnerRegistrationToken.objects.create(
+        organization=organization,
+        pool=pool,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        max_registrations=max_registrations,
+        label_policy=label_policy or [],
+        capability_policy=capability_policy or [],
+        created_by=created_by,
+    )
+    return registration_token, clear_token
+
+
 @transaction.atomic
-def register_runner(
+def validate_registration_token(
     *,
     registration_token: str,
-    display_name: str,
-    runner_version: str,
-    fingerprint_sha256: str,
-    hostname: str,
-    labels: dict,
-    capabilities: list,
-) -> tuple:
-    """Validate the registration token, create or reactivate a Runner, rotate its bearer token.
-
-    Returns (runner, clear_bearer_token).
-    Raises DomainValidationError on invalid/expired/revoked token.
-    """
-    from apps.runners.models import Runner, RunnerRegistrationToken
+    organization_id: str = "",
+    pool_key: str = "",
+):
+    """Resolve and validate a bootstrap registration token under row lock."""
+    from apps.runners.models import RunnerPool, RunnerRegistrationToken
 
     now = timezone.now()
     token_hash = _hash_token(registration_token)
@@ -65,13 +90,60 @@ def register_runner(
             code="registration_token_exhausted",
             detail="Registration token has reached its maximum use count.",
         )
-
-    pool = reg_token.pool
-    if pool.status != "active":
+    if organization_id and str(reg_token.organization_id) != str(organization_id):
+        raise DomainValidationError(
+            code="registration_scope_mismatch",
+            detail="Registration token is not valid for this organization.",
+        )
+    if pool_key and reg_token.pool.key != pool_key:
+        raise DomainValidationError(
+            code="registration_scope_mismatch",
+            detail="Registration token is not valid for this runner pool.",
+        )
+    if reg_token.pool.organization_id != reg_token.organization_id:
+        raise DomainValidationError(
+            code="registration_scope_mismatch",
+            detail="Registration token pool does not belong to its organization.",
+        )
+    if reg_token.pool.status != RunnerPool.Status.ACTIVE:
         raise DomainValidationError(
             code="pool_not_active",
-            detail=f"Runner pool '{pool.key}' is not active (status: {pool.status}).",
+            detail=(
+                f"Runner pool '{reg_token.pool.key}' is not active "
+                f"(status: {reg_token.pool.status})."
+            ),
         )
+
+    return reg_token
+
+
+@transaction.atomic
+def register_runner(
+    *,
+    registration_token: str,
+    display_name: str,
+    runner_version: str,
+    fingerprint_sha256: str,
+    hostname: str,
+    labels: dict,
+    capabilities: list,
+    organization_id: str = "",
+    pool_key: str = "",
+) -> tuple:
+    """Validate the registration token, create or reactivate a Runner, rotate its bearer token.
+
+    Returns (runner, clear_bearer_token).
+    Raises DomainValidationError on invalid/expired/revoked token.
+    """
+    from apps.runners.models import Runner
+
+    now = timezone.now()
+    reg_token = validate_registration_token(
+        registration_token=registration_token,
+        organization_id=organization_id,
+        pool_key=pool_key,
+    )
+    pool = reg_token.pool
 
     # Filter labels and capabilities to only allowed values (silently drop extras).
     allowed_labels_keys = set(reg_token.label_policy) if reg_token.label_policy else None
@@ -108,6 +180,10 @@ def register_runner(
         existing.display_name = display_name
         existing.last_seen_at = now
         existing.last_heartbeat_at = now
+        existing.metadata = {
+            "accepted_labels": accepted_labels,
+            "accepted_capabilities": accepted_capabilities,
+        }
         existing.save(
             update_fields=[
                 "status",
@@ -117,6 +193,7 @@ def register_runner(
                 "display_name",
                 "last_seen_at",
                 "last_heartbeat_at",
+                "metadata",
                 "updated_at",
             ]
         )
@@ -140,7 +217,6 @@ def register_runner(
     reg_token.used_count += 1
     reg_token.save(update_fields=["used_count", "updated_at"])
 
-    actor = system_actor("Runner registration")
     AuditService.emit(
         organization_id=reg_token.organization_id,
         actor_type=AuditEvent.ActorType.RUNNER,
