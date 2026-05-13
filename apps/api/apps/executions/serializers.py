@@ -62,6 +62,11 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
 
 class ExecutionCreateSerializer(serializers.Serializer):
     workflow_id = serializers.UUIDField()
+    mode = serializers.ChoiceField(
+        choices=["live", "dry_run"],
+        default="live",
+        required=False,
+    )
 
 
 class ExecutionListSerializer(serializers.ModelSerializer):
@@ -72,6 +77,7 @@ class ExecutionListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "status",
+            "execution_mode",
             "workflow_id",
             "workflow_name",
             "organization_id",
@@ -86,9 +92,17 @@ class ExecutionListSerializer(serializers.ModelSerializer):
         ]
 
     def get_workflow_name(self, obj):
-        name = obj.workflow_snapshot.get("name")
-        if name:
-            return name
+        # _workflow_name is annotated by the list view queryset via scalar
+        # subquery to avoid fetching the large workflow_snapshot JSON field.
+        annotated = getattr(obj, "_workflow_name", None)
+        if annotated:
+            return annotated
+        # Fallback when called outside the list view (e.g. in tests that
+        # construct executions without the annotation).
+        if "workflow_snapshot" in obj.__dict__:
+            name = obj.workflow_snapshot.get("name")
+            if name:
+                return name
         return obj.workflow.name
 
 
@@ -101,10 +115,12 @@ class ExecutionDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "status",
+            "execution_mode",
             "workflow_id",
             "organization_id",
             "workflow_version",
             "workflow_snapshot",
+            "workflow_snapshot_hash_sha256",
             "claimed_by_runner_id",
             "claim_token_present",
             "claimed_at",

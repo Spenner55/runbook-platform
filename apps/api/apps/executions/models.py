@@ -12,6 +12,10 @@ class Execution(BaseModel):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
+    class ExecutionMode(models.TextChoices):
+        LIVE = "live", "Live"
+        DRY_RUN = "dry_run", "Dry Run"
+
     organization = models.ForeignKey(
         "organizations.Organization",
         on_delete=models.PROTECT,
@@ -24,6 +28,12 @@ class Execution(BaseModel):
     )
     workflow_version = models.PositiveIntegerField()
     workflow_snapshot = models.JSONField(default=dict)
+    workflow_snapshot_hash_sha256 = models.CharField(max_length=64, blank=True, default="")
+    execution_mode = models.CharField(
+        max_length=16,
+        choices=ExecutionMode.choices,
+        default=ExecutionMode.LIVE,
+    )
     status = models.CharField(
         max_length=24,
         choices=Status.choices,
@@ -71,6 +81,10 @@ class Execution(BaseModel):
                     ]
                 ),
                 name="exec_status_valid_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(execution_mode__in=["live", "dry_run"]),
+                name="exec_mode_valid_chk",
             ),
         ]
 

@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import uuid
 from datetime import timedelta
@@ -31,6 +33,7 @@ from apps.executions.event_bus import StreamEvent, execution_event_bus
 from apps.executions.models import Execution, ExecutionStep
 from apps.integrations.services import IntegrationService
 from apps.workflows.models import Workflow
+from apps.workflows.validators import validate_workflow_definition
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,7 @@ def create_execution(
     *,
     workflow: Workflow,
     actor: AuditActor | None = None,
+    mode: str = Execution.ExecutionMode.LIVE,
     _from_change_service: bool = False,
 ) -> Execution:
     """
@@ -85,7 +89,28 @@ def create_execution(
             )
 
     definition = workflow.definition
-    _validate_workflow_definition(definition)
+    schema_version = workflow.definition_schema_version
+
+    # Validate against schema-specific rules.  v1 uses the existing structural
+    # check (behaviour unchanged); v2 runs the full JSON schema + semantic pass;
+    # any unknown schema version fails closed.
+    if schema_version == "workflow.schema.v2":
+        validate_workflow_definition(definition, schema_version)
+    elif schema_version == "workflow.schema.v1":
+        _validate_workflow_definition(definition)
+    else:
+        raise InvalidWorkflowDefinitionError(
+            code="unsupported_schema_version",
+            detail=(
+                f"Workflow schema version {schema_version!r} is not supported. "
+                "Supported: 'workflow.schema.v1', 'workflow.schema.v2'."
+            ),
+        )
+
+    if mode == Execution.ExecutionMode.DRY_RUN:
+        _enforce_dry_run_compatibility(definition)
+
+    snapshot_hash = _compute_snapshot_hash(definition)
 
     try:
         with transaction.atomic():
@@ -94,6 +119,8 @@ def create_execution(
                 workflow=workflow,
                 workflow_version=workflow.version,
                 workflow_snapshot=definition,
+                workflow_snapshot_hash_sha256=snapshot_hash,
+                execution_mode=mode,
                 status=Execution.Status.QUEUED,
             )
 
@@ -105,7 +132,7 @@ def create_execution(
                     name=step["name"],
                     step_type=step.get("type", ""),
                     risk_level=step.get("risk", ""),
-                    command=step.get("command", ""),
+                    command=_extract_step_command(step, schema_version),
                     requires_approval=step.get("requiresApproval", False),
                     step_snapshot=step,
                     status=ExecutionStep.Status.PENDING,
@@ -125,6 +152,7 @@ def create_execution(
                     "workflow_id": str(workflow.id),
                     "workflow_version": workflow.version,
                     "initial_status": execution.status,
+                    "execution_mode": mode,
                 },
             )
 
@@ -570,6 +598,38 @@ def fail_execution_for_approval_timeout(
             execution.id,
         )
     return True
+
+
+def _extract_step_command(step: dict, schema_version: str) -> str:
+    """Extract the command string from a step, accounting for schema version differences."""
+    if schema_version == "workflow.schema.v2":
+        action = step.get("action", {})
+        params = action.get("params") or action.get("inputs") or {}
+        return params.get("command", "")
+    return step.get("command", "")
+
+
+def _enforce_dry_run_compatibility(definition: dict) -> None:
+    """Raise DomainValidationError if any step declares dryRun.strategy='unsupported'."""
+    for step in definition.get("steps", []):
+        dry_run = step.get("dryRun")
+        if dry_run is not None and dry_run.get("strategy") == "unsupported":
+            step_id = step.get("id", "<unknown>")
+            raise DomainValidationError(
+                code="step_not_dry_run_compatible",
+                detail=(
+                    f"Step '{step_id}' declares dry-run strategy 'unsupported' "
+                    "and cannot be used in a dry-run execution."
+                ),
+            )
+
+
+def _compute_snapshot_hash(definition: dict) -> str:
+    """Compute a stable SHA-256 hash of the workflow snapshot for integrity verification."""
+    canonical = json.dumps(
+        definition, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _validate_workflow_definition(definition: dict) -> None:
