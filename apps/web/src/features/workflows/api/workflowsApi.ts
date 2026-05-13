@@ -1,5 +1,11 @@
 import { apiRequest } from '../../../shared/api/client'
-import type { CreateWorkflowInput, WorkflowDetail, WorkflowSummary } from '../types'
+import type {
+  CreateWorkflowInput,
+  ValidateWorkflowInput,
+  ValidationReport,
+  WorkflowDetail,
+  WorkflowSummary,
+} from '../types'
 
 export function listWorkflows() {
   return apiRequest<WorkflowSummary[]>('/api/v1/workflows/')
@@ -31,5 +37,18 @@ export function acceptWorkflowReview(workflowId: string) {
 export function rejectWorkflowReview(workflowId: string) {
   return apiRequest<WorkflowDetail>(`/api/v1/workflows/${workflowId}/reject-review/`, {
     method: 'POST',
+  })
+}
+
+export function createV2Draft(workflowId: string) {
+  return apiRequest<WorkflowDetail>(`/api/v1/workflows/${workflowId}/create-v2-draft/`, {
+    method: 'POST',
+  })
+}
+
+export function validateWorkflowDefinition(input: ValidateWorkflowInput) {
+  return apiRequest<ValidationReport>('/api/v1/workflows/validate/', {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 }
