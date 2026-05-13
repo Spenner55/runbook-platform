@@ -153,6 +153,9 @@ def create_execution(
                     "workflow_version": workflow.version,
                     "initial_status": execution.status,
                     "execution_mode": mode,
+                    "schema_version": definition.get("schemaVersion", ""),
+                    "catalog_version": definition.get("catalogVersion", ""),
+                    "dry_run_mode": mode == Execution.ExecutionMode.DRY_RUN,
                 },
             )
 
@@ -1281,6 +1284,34 @@ def _emit_step_status_changed_event(
     )
 
 
+def _extract_v2_step_audit_metadata(step: ExecutionStep, execution: Execution) -> dict:
+    """Extract v2 action facts from the step snapshot for audit metadata.
+
+    Safe for v1 steps — all values default to empty/None when snapshot fields
+    are absent.  Secret values are never included; only declaration key names.
+    """
+    snapshot = step.step_snapshot or {}
+    action = snapshot.get("action") or {}
+    retry = snapshot.get("retry") or {}
+    idempotency = snapshot.get("idempotency") or {}
+    dry_run = snapshot.get("dryRun") or {}
+    workflow_snapshot = execution.workflow_snapshot or {}
+    return {
+        "schema_version": workflow_snapshot.get("schemaVersion", ""),
+        "action_type": action.get("type", ""),
+        "action_version": action.get("version", ""),
+        "dry_run_supported": dry_run.get("supported") if dry_run else None,
+        "retry_max_attempts": retry.get("maxAttempts"),
+        "idempotency_mode": idempotency.get("mode", ""),
+        "declared_artifact_keys": [
+            a.get("key", "") for a in (snapshot.get("artifacts") or [])
+        ],
+        # Use a distinct key so the audit scrubber does not strip it
+        # ("secrets" is a FORBIDDEN_METADATA_KEY; this key is not).
+        "declared_secret_key_names": list(snapshot.get("secrets") or []),
+    }
+
+
 def _emit_step_transition_audit(
     *,
     execution: Execution,
@@ -1319,6 +1350,7 @@ def _emit_step_transition_audit(
         "cancelled": step.cancelled,
         "sandbox_provider": step.sandbox_provider,
         "sandbox_run_id": step.sandbox_run_id,
+        **_extract_v2_step_audit_metadata(step, execution),
     }
     audit_actor = actor_from_runner(runner_id)
     AuditService.emit(

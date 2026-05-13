@@ -450,16 +450,24 @@ def persist_policy_evaluation_error(
 _VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
+_ENUM_CONDITION_TYPES = frozenset({
+    PolicyRule.ConditionType.RISK_LEVEL,
+    PolicyRule.ConditionType.STEP_TYPE,
+    PolicyRule.ConditionType.ACTION_TYPE,
+    PolicyRule.ConditionType.ACTION_VERSION,
+    PolicyRule.ConditionType.EXECUTION_MODE,
+    PolicyRule.ConditionType.IDEMPOTENCY_MODE,
+    PolicyRule.ConditionType.MUTATES_TARGET,
+})
+
+
 def _validate_condition_params(condition_type: str, condition_params: dict) -> None:
     if condition_type not in (ct.value for ct in PolicyRule.ConditionType):
         raise DomainValidationError(
             code="unknown_condition_type",
             detail=f"Unknown condition type: '{condition_type}'.",
         )
-    if condition_type in (
-        PolicyRule.ConditionType.RISK_LEVEL,
-        PolicyRule.ConditionType.STEP_TYPE,
-    ):
+    if condition_type in _ENUM_CONDITION_TYPES:
         _validate_enum_condition(condition_params)
     elif condition_type == PolicyRule.ConditionType.TIME_WINDOW:
         _validate_time_window_condition(condition_params)
@@ -584,6 +592,16 @@ def _evaluate_condition(
         return _evaluate_time_window_condition(
             condition_params, context.get("evaluated_at")
         )
+    if condition_type == PolicyRule.ConditionType.ACTION_TYPE:
+        return _evaluate_enum_condition(condition_params, context.get("action_type", ""))
+    if condition_type == PolicyRule.ConditionType.ACTION_VERSION:
+        return _evaluate_enum_condition(condition_params, context.get("action_version", ""))
+    if condition_type == PolicyRule.ConditionType.EXECUTION_MODE:
+        return _evaluate_enum_condition(condition_params, context.get("execution_mode", ""))
+    if condition_type == PolicyRule.ConditionType.IDEMPOTENCY_MODE:
+        return _evaluate_enum_condition(condition_params, context.get("idempotency_mode", ""))
+    if condition_type == PolicyRule.ConditionType.MUTATES_TARGET:
+        return _evaluate_enum_condition(condition_params, context.get("mutates_target", ""))
     return False
 
 
@@ -632,6 +650,22 @@ def _apply_requires_approval_floor(outcome: str, step: ExecutionStep) -> str:
 def _build_evaluation_context(
     execution: Execution, step: ExecutionStep, evaluated_at
 ) -> dict:
+    snapshot = step.step_snapshot or {}
+    action = snapshot.get("action") or {}
+    retry = snapshot.get("retry") or {}
+    idempotency = snapshot.get("idempotency") or {}
+    dry_run = snapshot.get("dryRun") or {}
+    workflow_snapshot = execution.workflow_snapshot or {}
+
+    # Serialize mutates_target as a string so enum condition can compare it.
+    mutates_target_raw = snapshot.get("mutatesTarget")
+    if mutates_target_raw is True:
+        mutates_target = "true"
+    elif mutates_target_raw is False:
+        mutates_target = "false"
+    else:
+        mutates_target = ""
+
     return {
         "organization_id": str(execution.organization_id),
         "execution_id": str(execution.id),
@@ -644,6 +678,21 @@ def _build_evaluation_context(
         if hasattr(evaluated_at, "isoformat")
         else str(evaluated_at),
         "workflow_id": str(execution.workflow_id) if execution.workflow_id else None,
+        # v2 action facts — empty for v1 where the snapshot fields are absent
+        "schema_version": workflow_snapshot.get("schemaVersion", ""),
+        "catalog_version": workflow_snapshot.get("catalogVersion", ""),
+        "execution_mode": execution.execution_mode,
+        "action_type": action.get("type", ""),
+        "action_version": action.get("version", ""),
+        "timeout_seconds": snapshot.get("timeoutSeconds"),
+        "retry_max_attempts": retry.get("maxAttempts"),
+        "idempotency_mode": idempotency.get("mode", ""),
+        "declared_secret_keys": list(snapshot.get("secrets") or []),
+        "declared_artifact_keys": [
+            a.get("key", "") for a in (snapshot.get("artifacts") or [])
+        ],
+        "mutates_target": mutates_target,
+        "dry_run_supported": dry_run.get("supported") if dry_run else None,
     }
 
 

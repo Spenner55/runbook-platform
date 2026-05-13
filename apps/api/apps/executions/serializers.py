@@ -9,6 +9,7 @@ from apps.executions.models import Execution, ExecutionStep
 
 class ExecutionStepSerializer(serializers.ModelSerializer):
     policy_evaluation = serializers.SerializerMethodField()
+    evidence_status = serializers.SerializerMethodField()
 
     class Meta:
         model = ExecutionStep
@@ -32,6 +33,7 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
             "sandbox_provider",
             "sandbox_run_id",
             "result_metadata",
+            "evidence_status",
         ]
 
     def get_policy_evaluation(self, obj):
@@ -51,6 +53,11 @@ class ExecutionStepSerializer(serializers.ModelSerializer):
         from apps.policies.serializers import PolicyEvaluationSummarySerializer
 
         return PolicyEvaluationSummarySerializer(evaluation).data
+
+    def get_evidence_status(self, obj):
+        from apps.artifacts.services import check_step_evidence_completeness
+
+        return check_step_evidence_completeness(obj)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
