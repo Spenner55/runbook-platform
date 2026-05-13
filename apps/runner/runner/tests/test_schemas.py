@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -168,6 +170,19 @@ def test_claimed_execution_no_claim_token_field():
         not hasattr(exe, "claim_token")
         or exe.__class__.model_fields.get("claim_token") is None
     )
+
+
+def test_claimed_v2_execution_fixture_round_trips():
+    fixture = Path(__file__).parent / "fixtures" / "claimed_execution_v2.json"
+    data = json.loads(fixture.read_text())
+
+    exe = ClaimedExecution.model_validate(data)
+
+    assert exe.execution_mode == "live"
+    assert exe.steps[0].action_snapshot is not None
+    assert exe.steps[0].action_snapshot.type == "shell_command"
+    assert exe.steps[0].action_snapshot.version == "pilot.v1"
+    assert exe.steps[0].action_snapshot.params["command"].startswith("printf")
 
 
 def test_claimed_execution_parses_django_response_shape():

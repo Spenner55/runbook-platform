@@ -12,6 +12,7 @@ from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
+from apps.workflows.tests.fixtures.workflow_v2 import valid_v2_shell_command_workflow
 
 
 @pytest.fixture
@@ -86,6 +87,31 @@ def test_claim_next_response_includes_steps(queued_execution):
     body = response.json()
     assert "steps" in body["execution"]
     assert len(body["execution"]["steps"]) > 0
+
+
+@pytest.mark.django_db
+def test_claim_next_v2_execution_includes_action_snapshot(runbook):
+    workflow = workflow_services.create_workflow_v2_draft(
+        runbook=runbook,
+        definition=valid_v2_shell_command_workflow(),
+    )
+    workflow = workflow_services.publish_workflow(workflow=workflow)
+    queued = execution_services.create_execution(workflow=workflow)
+
+    client = Client(HTTP_AUTHORIZATION="Bearer test-runner-token")
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "runner-1"},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["execution"]["id"] == str(queued.id)
+    step = body["execution"]["steps"][0]
+    assert step["action_snapshot"] == workflow.definition["steps"][0]["action"]
+    assert step["step_snapshot"] == workflow.definition["steps"][0]
+    assert step["timeout_seconds"] == 30
 
 
 @pytest.mark.django_db

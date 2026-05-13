@@ -257,6 +257,11 @@ class TestShellCommandValidate:
 
         ShellCommandHandler().validate({"commandMode": "argv", "argv": ["echo", "hello"]})
 
+    def test_current_schema_command_param_valid(self):
+        from runner.actions.shell_command import ShellCommandHandler
+
+        ShellCommandHandler().validate({"command": "echo hello"})
+
     def test_shell_mode_requires_command(self):
         from runner.actions.shell_command import ShellCommandHandler
 
@@ -322,7 +327,7 @@ class TestShellCommandExecute:
         result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "configuration_error"
+        assert result.failure_kind == "sandbox_setup_failed"
 
     def test_shell_mode_without_allow_shell_fails_closed(self):
         from runner.actions.shell_command import ShellCommandHandler
@@ -335,7 +340,7 @@ class TestShellCommandExecute:
         result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "shell_mode_not_permitted"
+        assert result.failure_kind == "policy_blocked"
 
     def test_argv_mode_success(self, tmp_path):
         from runner.actions.shell_command import ShellCommandHandler
@@ -381,6 +386,20 @@ class TestShellCommandExecute:
 
         assert result.status == "succeeded"
 
+    def test_dry_run_skips_sandbox_provider(self, tmp_path):
+        from runner.actions.shell_command import ShellCommandHandler
+
+        settings = _make_settings(sandbox_workspace_root=str(tmp_path))
+        step = _make_step("shell_command", {"command": "echo live-only"})
+        ctx = _make_ctx(step=step, settings=settings)
+        ctx.execution.execution_mode = "dry_run"
+
+        with patch("runner.actions.shell_command.get_provider") as mock_get_provider:
+            result = ShellCommandHandler().execute(ctx)
+
+        mock_get_provider.assert_not_called()
+        assert result.status == "succeeded"
+
     def test_nonzero_exit_code_fails_with_failure_kind(self, tmp_path):
         from runner.actions.shell_command import ShellCommandHandler
 
@@ -398,7 +417,7 @@ class TestShellCommandExecute:
 
         assert result.status == "failed"
         assert result.exit_code == 1
-        assert result.failure_kind == "nonzero_exit"
+        assert result.failure_kind == "action_failed"
 
     def test_timeout_maps_to_timeout_failure_kind(self, tmp_path):
         from runner.actions.shell_command import ShellCommandHandler
@@ -452,7 +471,7 @@ class TestShellCommandExecute:
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "sandbox_error"
+        assert result.failure_kind == "sandbox_setup_failed"
         # cleanup must be called with (spec, None) when execute raises
         args, _ = mock_provider.cleanup.call_args
         assert args[1] is None
@@ -471,7 +490,7 @@ class TestShellCommandExecute:
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "validation_error"
+        assert result.failure_kind == "sandbox_setup_failed"
 
     def test_provider_validate_called_before_execute(self, tmp_path):
         from runner.actions.shell_command import ShellCommandHandler
@@ -599,7 +618,7 @@ class TestShellCommandExecute:
             result = ShellCommandHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "artifact_error"
+        assert result.failure_kind == "action_input_invalid"
 
 
 # Import for sandbox validation error tests
@@ -675,6 +694,19 @@ class TestHttpRequestExecute:
         mock_client_cls.assert_not_called()
         assert result.status == "succeeded"
 
+    def test_execution_mode_dry_run_skips_live_request(self):
+        from runner.actions.http_request import HttpRequestHandler
+
+        step = _make_step("http_request", {"url": "https://example.com"})
+        ctx = _make_ctx(step=step)
+        ctx.execution.execution_mode = "dry_run"
+
+        with patch("runner.actions.http_request.httpx.Client") as mock_client_cls:
+            result = HttpRequestHandler().execute(ctx)
+
+        mock_client_cls.assert_not_called()
+        assert result.status == "succeeded"
+
     def test_validate_only_skips_live_request(self):
         from runner.actions.http_request import HttpRequestHandler
 
@@ -700,7 +732,7 @@ class TestHttpRequestExecute:
         result = HttpRequestHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "mutating_request_without_idempotency"
+        assert result.failure_kind == "policy_blocked"
 
     def test_mutating_method_with_idempotency_proceeds(self):
         from runner.actions.http_request import HttpRequestHandler
@@ -731,7 +763,11 @@ class TestHttpRequestExecute:
 
         step = _make_step(
             "http_request",
-            {"url": "https://example.com", "method": "DELETE"},
+            {
+                "url": "https://example.com",
+                "method": "DELETE",
+                "expected_status_codes": [204],
+            },
             requires_approval=True,
         )
         ctx = _make_ctx(step=step)
@@ -769,6 +805,33 @@ class TestHttpRequestExecute:
         assert result.status == "succeeded"
         assert result.exit_code == 0
 
+    def test_unexpected_status_maps_to_http_status_unexpected(self):
+        from runner.actions.http_request import HttpRequestHandler
+
+        step = _make_step(
+            "http_request",
+            {
+                "url": "https://example.com",
+                "method": "GET",
+                "expected_status_codes": [204],
+            },
+        )
+        ctx = _make_ctx(step=step)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"OK"
+        mock_http = MagicMock()
+        mock_http.__enter__ = MagicMock(return_value=mock_http)
+        mock_http.__exit__ = MagicMock(return_value=False)
+        mock_http.request.return_value = mock_response
+
+        with patch("runner.actions.http_request.httpx.Client", return_value=mock_http):
+            result = HttpRequestHandler().execute(ctx)
+
+        assert result.status == "failed"
+        assert result.failure_kind == "http_status_unexpected"
+
     def test_timeout_exception_maps_to_timeout_failure_kind(self):
         from runner.actions.http_request import HttpRequestHandler
 
@@ -801,7 +864,7 @@ class TestHttpRequestExecute:
             result = HttpRequestHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "http_error"
+        assert result.failure_kind == "action_failed"
 
     def test_response_body_capped(self):
         from runner.actions.http_request import HttpRequestHandler, _MAX_RESPONSE_BODY_BYTES
@@ -891,7 +954,7 @@ class TestArtifactAssertionExecute:
         result = ArtifactAssertionHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "artifact_not_declared"
+        assert result.failure_kind == "required_artifact_missing"
 
     def test_declared_key_succeeds(self):
         from runner.actions.artifact_assertion import ArtifactAssertionHandler
@@ -919,7 +982,7 @@ class TestArtifactAssertionExecute:
         result = ArtifactAssertionHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "artifact_metadata_mismatch"
+        assert result.failure_kind == "assertion_failed"
 
     def test_kind_match_succeeds(self):
         from runner.actions.artifact_assertion import ArtifactAssertionHandler
@@ -950,7 +1013,7 @@ class TestArtifactAssertionExecute:
         result = ArtifactAssertionHandler().execute(ctx)
 
         assert result.status == "failed"
-        assert result.failure_kind == "artifact_metadata_mismatch"
+        assert result.failure_kind == "assertion_failed"
 
     def test_mime_type_match_succeeds(self):
         from runner.actions.artifact_assertion import ArtifactAssertionHandler

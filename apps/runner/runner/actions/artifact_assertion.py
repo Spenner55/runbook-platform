@@ -46,7 +46,7 @@ class ArtifactAssertionHandler:
                     f"Artifact {artifact_key!r} is not declared on this step. "
                     f"Declared keys: {sorted(declared)}"
                 ),
-                failure_kind="artifact_not_declared",
+                failure_kind="required_artifact_missing",
             )
 
         decl = declared[artifact_key]
@@ -60,7 +60,7 @@ class ArtifactAssertionHandler:
                     f"Artifact {artifact_key!r} has kind {decl.kind!r}, "
                     f"expected {expected_kind!r}"
                 ),
-                failure_kind="artifact_metadata_mismatch",
+                failure_kind="assertion_failed",
             )
 
         expected_mime = params.get("expected_mime_type")
@@ -72,7 +72,7 @@ class ArtifactAssertionHandler:
                     f"Artifact {artifact_key!r} has mime_type {decl.mime_type!r}, "
                     f"expected {expected_mime!r}"
                 ),
-                failure_kind="artifact_metadata_mismatch",
+                failure_kind="assertion_failed",
             )
 
         logger.info(

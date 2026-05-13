@@ -84,7 +84,7 @@ def main() -> None:
             api_retries_enabled=settings.api_retries_enabled,
             retry_sleep=shutdown_event.wait,
         )
-        executor = Executor(client=api_client)
+        executor = Executor(client=api_client, settings=settings)
         poller = Poller(
             client=api_client,
             executor=executor,

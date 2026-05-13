@@ -21,6 +21,7 @@ Covers all acceptance-criteria validation failures from the Pilot Phase B bluepr
 import pytest
 
 from apps.common.exceptions import InvalidWorkflowDefinitionError
+from apps.workflows.tests.fixtures.workflow_v2 import invalid_secret_ref_workflow
 from apps.workflows.validators import validate_workflow_definition
 
 # ---------------------------------------------------------------------------
@@ -355,6 +356,12 @@ def test_v2_step_refs_undeclared_secret_rejected():
         _validate_v2(_minimal_v2(steps=[step]))
     assert exc_info.value.code == "unknown_secret_reference"
     assert "my_api_token" in exc_info.value.detail
+
+
+def test_shared_invalid_secret_ref_fixture_rejected():
+    with pytest.raises(InvalidWorkflowDefinitionError) as exc_info:
+        _validate_v2(invalid_secret_ref_workflow())
+    assert exc_info.value.code == "unknown_secret_reference"
 
 
 def test_v2_step_refs_declared_secret_passes():

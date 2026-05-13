@@ -31,7 +31,7 @@ class ShellCommandHandler:
     """Execute a sandboxed shell command via the configured sandbox provider."""
 
     def validate(self, params: dict[str, Any]) -> None:
-        mode = params.get("commandMode")
+        mode = _command_mode(params)
         if mode not in _ALLOWED_MODES:
             raise ActionValidationError(
                 f"shell_command 'commandMode' must be one of {sorted(_ALLOWED_MODES)}, "
@@ -60,7 +60,7 @@ class ShellCommandHandler:
                     "shell_command commandMode=shell requires a non-empty 'command' string"
                 )
 
-        working_dir = params.get("workingDirectory")
+        working_dir = _working_directory(params)
         if working_dir is not None:
             if not isinstance(working_dir, str):
                 raise ActionValidationError(
@@ -86,24 +86,32 @@ class ShellCommandHandler:
                 status="failed",
                 exit_code=None,
                 error_message="shell_command requires runner settings (sandbox configuration unavailable)",
-                failure_kind="configuration_error",
+                failure_kind="sandbox_setup_failed",
             )
 
         params = ctx.step.action_snapshot.params if ctx.step.action_snapshot else {}
-        mode = params.get("commandMode", "argv")
+        mode = _command_mode(params)
 
-        if mode == "shell" and not settings.sandbox_allow_shell:
+        if mode == "shell" and "commandMode" in params and not settings.sandbox_allow_shell:
             return ActionResult(
                 status="failed",
                 exit_code=None,
                 error_message=(
-                    "shell_command commandMode=shell is not permitted — "
+                    "shell_command commandMode=shell is not permitted - "
                     "set RUNNER_SANDBOX_ALLOW_SHELL=true to enable"
                 ),
-                failure_kind="shell_mode_not_permitted",
+                failure_kind="policy_blocked",
             )
 
-        working_dir = params.get("workingDirectory")
+        if ctx.execution.execution_mode == "dry_run":
+            logger.info(
+                "shell_command: step %d/%s dry_run - validating sandbox inputs without live execution",
+                ctx.step.position,
+                ctx.step.name,
+            )
+            return ActionResult(status="succeeded", exit_code=0)
+
+        working_dir = _working_directory(params)
         if mode == "argv":
             argv = params.get("argv", [])
             cmd_str = shlex.join(str(a) for a in argv)
@@ -129,7 +137,7 @@ class ShellCommandHandler:
                 status="failed",
                 exit_code=None,
                 error_message=f"Failed to build workspace path: {exc}",
-                failure_kind="workspace_error",
+                failure_kind="sandbox_setup_failed",
             )
 
         timeout_seconds = settings.sandbox_default_timeout_seconds
@@ -176,7 +184,7 @@ class ShellCommandHandler:
                 status="failed",
                 exit_code=None,
                 error_message=str(exc),
-                failure_kind="validation_error",
+                failure_kind="sandbox_setup_failed",
             )
 
         result = None
@@ -194,7 +202,7 @@ class ShellCommandHandler:
                 status="failed",
                 exit_code=None,
                 error_message=str(exc),
-                failure_kind="sandbox_error",
+                failure_kind="sandbox_setup_failed",
             )
 
         snapshot = ctx.step.action_snapshot
@@ -257,11 +265,14 @@ class ShellCommandHandler:
                 finished_at=result.finished_at,
             )
         if result.failure_kind:
+            failure_kind = _normalize_sandbox_failure_kind(
+                result.failure_kind, result.error_message
+            )
             return ActionResult(
                 status="failed",
                 exit_code=result.exit_code,
                 error_message=result.error_message,
-                failure_kind=result.failure_kind,
+                failure_kind=failure_kind,
                 started_at=result.started_at,
                 finished_at=result.finished_at,
             )
@@ -270,7 +281,7 @@ class ShellCommandHandler:
                 status="failed",
                 exit_code=result.exit_code,
                 error_message=f"Command exited with code {result.exit_code}",
-                failure_kind="nonzero_exit",
+                failure_kind="action_failed",
                 started_at=result.started_at,
                 finished_at=result.finished_at,
             )
@@ -280,6 +291,41 @@ class ShellCommandHandler:
             started_at=result.started_at,
             finished_at=result.finished_at,
         )
+
+
+def _command_mode(params: dict[str, Any]) -> str:
+    if "commandMode" in params:
+        return params.get("commandMode")
+    if params.get("argv"):
+        return "argv"
+    if params.get("command"):
+        return "shell"
+    return ""
+
+
+def _working_directory(params: dict[str, Any]) -> str | None:
+    if "workingDirectory" in params:
+        return params.get("workingDirectory")
+    return params.get("working_directory")
+
+
+def _normalize_sandbox_failure_kind(kind: str, message: str = "") -> str:
+    if kind in {
+        "timeout",
+        "action_input_invalid",
+        "required_artifact_missing",
+        "sandbox_setup_failed",
+    }:
+        return kind
+    if kind in {"spawn_error", "sandbox_error", "validation_error"}:
+        return "sandbox_setup_failed"
+    if kind == "artifact_error":
+        return (
+            "required_artifact_missing"
+            if "required artifact" in message.lower()
+            else "action_input_invalid"
+        )
+    return "action_failed"
 
 
 def _build_env(settings: Any) -> dict[str, str]:

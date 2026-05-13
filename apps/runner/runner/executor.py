@@ -44,6 +44,20 @@ def _utcnow() -> datetime:
     return datetime.now(tz=UTC)
 
 
+def _normalize_sandbox_failure_kind(kind: str, message: str = "") -> str:
+    if kind in {"timeout", "sandbox_setup_failed", "required_artifact_missing"}:
+        return kind
+    if kind in {"spawn_error", "sandbox_error", "validation_error"}:
+        return "sandbox_setup_failed"
+    if kind == "artifact_error":
+        return (
+            "required_artifact_missing"
+            if "required artifact" in message.lower()
+            else "action_input_invalid"
+        )
+    return kind
+
+
 class _HeartbeatThread(threading.Thread):
     """Background thread that sends periodic heartbeats while an execution is active."""
 
@@ -751,7 +765,7 @@ class Executor:
                         f"Unsupported step_type {step.step_type!r}"
                         " for sandboxed execution."
                     ),
-                    failure_kind="unsupported_step_type",
+                    failure_kind="unsupported_action_contract",
                 )
             except httpx.HTTPError as exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, exc)
@@ -809,7 +823,7 @@ class Executor:
                     claim_token,
                     status="failed",
                     error_message=str(exc),
-                    failure_kind="validation_error",
+                    failure_kind="sandbox_setup_failed",
                 )
             except httpx.HTTPError as http_exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
@@ -832,7 +846,7 @@ class Executor:
                     claim_token,
                     status="failed",
                     error_message=str(exc),
-                    failure_kind="sandbox_error",
+                    failure_kind="sandbox_setup_failed",
                 )
             except httpx.HTTPError as http_exc:
                 logger.error("Failed to mark step %s failed: %s", step.id, http_exc)
@@ -852,11 +866,13 @@ class Executor:
             error_message = result.error_message or "Step was cancelled"
         elif result.failure_kind:
             step_status = "failed"
-            failure_kind = result.failure_kind
+            failure_kind = _normalize_sandbox_failure_kind(
+                result.failure_kind, result.error_message
+            )
             error_message = result.error_message
         elif result.exit_code is not None and result.exit_code != 0:
             step_status = "failed"
-            failure_kind = ""
+            failure_kind = "action_failed"
             error_message = f"Command exited with code {result.exit_code}"
         else:
             step_status = "succeeded"

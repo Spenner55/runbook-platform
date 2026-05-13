@@ -31,7 +31,7 @@
         "params": {
           "command": "bash scripts/deploy.sh --env production",
           "timeout_seconds": 600,
-          "working_directory": "/app",
+          "working_directory": ".",
           "environment": {
             "TARGET_ENV": "production",
             "ROLLBACK_ON_FAILURE": "true"

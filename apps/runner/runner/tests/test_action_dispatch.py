@@ -195,6 +195,60 @@ def test_v2_known_action_validate_called_with_params():
     handler.validate.assert_called_once_with(params)
 
 
+def test_v2_shell_command_dispatch_uses_sandbox_provider(tmp_path):
+    client = make_client()
+    settings = MagicMock()
+    settings.sandbox_allow_shell = False
+    settings.sandbox_workspace_root = str(tmp_path)
+    settings.sandbox_provider = "local_process"
+    settings.sandbox_default_timeout_seconds = 300
+    settings.sandbox_stdout_max_bytes = 1024
+    settings.sandbox_stderr_max_bytes = 1024
+    settings.sandbox_artifact_max_bytes = 1024
+    settings.sandbox_max_artifacts_per_step = 10
+    settings.sandbox_allowed_env_names = []
+    settings.sandbox_allowed_env_prefixes = []
+    settings.sandbox_cleanup_policy = "always"
+    executor = Executor(client, settings=settings)
+    step = make_v2_step(
+        1,
+        "shell_command",
+        "pilot.v1",
+        params={"command": "printf pilot-b"},
+    )
+    execution = make_execution([step])
+
+    result = MagicMock()
+    result.exit_code = 0
+    result.timed_out = False
+    result.cancelled = False
+    result.failure_kind = ""
+    result.error_message = ""
+    result.stdout.content = b"pilot-b"
+    result.stderr.content = b""
+    result.artifacts = []
+    result.provider = "local_process"
+    result.sandbox_run_id = "sandbox-1"
+    result.started_at = None
+    result.finished_at = None
+    provider = MagicMock()
+    provider.validate.return_value = None
+    provider.execute.return_value = result
+
+    with patch("runner.actions.shell_command.get_provider", return_value=provider):
+        run_execution(executor, execution)
+
+    provider.validate.assert_called_once()
+    provider.execute.assert_called_once()
+    succeeded = [
+        c
+        for c in client.update_step.call_args_list
+        if c.kwargs.get("status") == "succeeded"
+    ]
+    assert len(succeeded) == 1
+    assert client.complete_execution.call_args.kwargs["final_status"] == "succeeded"
+
+
 def test_v2_failed_handler_result_reports_failed():
     """If handler.execute returns status=failed, update_step must reflect failed."""
     client = make_client()

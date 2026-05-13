@@ -22,7 +22,7 @@ from apps.executions.models import Execution, ExecutionStep
 from apps.runbooks import services as runbook_services
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
-
+from apps.workflows.tests.fixtures.workflow_v2 import valid_v2_shell_command_workflow
 
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures
@@ -128,6 +128,19 @@ def test_v1_execution_mode_defaults_to_live(published_v1_workflow):
 
 
 @pytest.mark.django_db
+@pytest.mark.django_db
+def test_published_shared_v2_shell_workflow_creates_execution(runbook):
+    definition = valid_v2_shell_command_workflow()
+    wf = _publish_v2(runbook, definition)
+    execution = services.create_execution(workflow=wf)
+
+    assert execution.status == Execution.Status.QUEUED
+    assert execution.workflow_snapshot == definition
+    step = execution.steps.get()
+    assert step.step_snapshot == definition["steps"][0]
+    assert step.step_type == "shell_command"
+
+
 def test_v2_execution_creation_succeeds(runbook):
     wf = _publish_v2(runbook, _minimal_v2())
     execution = services.create_execution(workflow=wf)
@@ -343,6 +356,33 @@ def test_invalid_v2_workflow_cannot_create_execution(runbook):
 
 
 @pytest.mark.django_db
+@pytest.mark.django_db
+def test_secret_values_are_not_persisted_in_v2_execution_snapshots(runbook):
+    secret_value = "SHOULD_NOT_BE_PERSISTED_12345"
+    definition = valid_v2_shell_command_workflow()
+    definition["secrets"] = [
+        {
+            "key": "deploy_token",
+            "displayName": "Deploy token",
+            "provider": "external",
+            "ref": "vault://platform/pilot/deploy-token",
+            "requiredBy": ["run-echo"],
+        }
+    ]
+    definition["steps"][0]["secrets"] = ["deploy_token"]
+
+    wf = _publish_v2(runbook, definition)
+    execution = services.create_execution(workflow=wf)
+    step = execution.steps.get()
+
+    persisted = json.dumps(
+        [wf.definition, execution.workflow_snapshot, step.step_snapshot],
+        sort_keys=True,
+    )
+    assert secret_value not in persisted
+    assert "deploy_token" in persisted
+
+
 def test_snapshot_hash_is_set_on_v2_execution(runbook):
     wf = _publish_v2(runbook, _minimal_v2())
     execution = services.create_execution(workflow=wf)

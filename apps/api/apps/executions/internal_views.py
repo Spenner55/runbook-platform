@@ -428,6 +428,7 @@ class ExecutionStepStartView(RunnerInternalAPIView):
                     claim_token=claim_token,
                     new_status=ExecutionStep.Status.FAILED,
                     error_message="policy_blocked",
+                    failure_kind="policy_blocked",
                 )
                 execution.refresh_from_db()
                 return Response(

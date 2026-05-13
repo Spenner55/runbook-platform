@@ -182,7 +182,7 @@ class LocalProcessSandboxProvider:
                 exit_code=None,
                 timed_out=False,
                 cancelled=False,
-                failure_kind="spawn_error",
+                failure_kind="sandbox_setup_failed",
                 error_message=str(exc),
                 stdout=_empty_stream(),
                 stderr=_empty_stream(),
@@ -271,8 +271,12 @@ class LocalProcessSandboxProvider:
                     workspace, spec.artifact_specs, limits
                 )
             except SandboxValidationError as exc:
-                failure_kind = "artifact_error"
                 error_message = str(exc)
+                failure_kind = (
+                    "required_artifact_missing"
+                    if "required artifact" in error_message.lower()
+                    else "action_input_invalid"
+                )
 
         return SandboxResult(
             provider=self.name,

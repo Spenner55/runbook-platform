@@ -46,9 +46,13 @@ class HttpRequestHandler:
     def execute(self, ctx: ActionExecutionContext) -> ActionResult:
         params = ctx.step.action_snapshot.params if ctx.step.action_snapshot else {}
 
-        if params.get("dry_run") or params.get("validate_only"):
+        if (
+            ctx.execution.execution_mode == "dry_run"
+            or params.get("dry_run")
+            or params.get("validate_only")
+        ):
             logger.info(
-                "http_request: step %d/%s dry_run — skipping live request",
+                "http_request: step %d/%s dry_run - skipping live request",
                 ctx.step.position,
                 ctx.step.name,
             )
@@ -69,7 +73,7 @@ class HttpRequestHandler:
                         f"http_request with mutating method {method!r} requires either "
                         "an idempotency spec or requires_approval=true on the step"
                     ),
-                    failure_kind="mutating_request_without_idempotency",
+                    failure_kind="policy_blocked",
                 )
 
         body_param = params.get("body")
@@ -107,6 +111,17 @@ class HttpRequestHandler:
                 response.status_code,
                 len(_body),
             )
+            expected = params.get("expected_status_codes") or [200]
+            if response.status_code not in expected:
+                return ActionResult(
+                    status="failed",
+                    exit_code=None,
+                    error_message=(
+                        f"HTTP status {response.status_code} did not match expected "
+                        f"status codes {expected}"
+                    ),
+                    failure_kind="http_status_unexpected",
+                )
             return ActionResult(status="succeeded", exit_code=0)
 
         except httpx.TimeoutException as exc:
@@ -121,5 +136,5 @@ class HttpRequestHandler:
                 status="failed",
                 exit_code=None,
                 error_message=f"HTTP request failed: {exc}",
-                failure_kind="http_error",
+                failure_kind="action_failed",
             )

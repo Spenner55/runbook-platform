@@ -404,7 +404,7 @@ def test_required_artifact_missing_sets_failure_kind(provider, tmp_path):
     )
     result = provider.execute(spec, None)
 
-    assert result.failure_kind == "artifact_error"
+    assert result.failure_kind == "required_artifact_missing"
     assert (
         "report.txt" in result.error_message
         or "Required artifact" in result.error_message
@@ -457,7 +457,7 @@ def test_unsafe_artifact_path_traversal_rejected(provider, tmp_path):
     )
     result = provider.execute(spec, None)
 
-    assert result.failure_kind == "artifact_error"
+    assert result.failure_kind == "action_input_invalid"
 
 
 def test_unsafe_artifact_absolute_path_rejected(provider, tmp_path):
@@ -468,7 +468,7 @@ def test_unsafe_artifact_absolute_path_rejected(provider, tmp_path):
     )
     result = provider.execute(spec, None)
 
-    assert result.failure_kind == "artifact_error"
+    assert result.failure_kind == "action_input_invalid"
 
 
 def test_unsafe_optional_artifact_path_traversal_skipped(provider, tmp_path):

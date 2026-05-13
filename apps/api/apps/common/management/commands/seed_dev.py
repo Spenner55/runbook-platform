@@ -81,7 +81,7 @@ class Command(BaseCommand):
             "  viewer@acme.test   / Viewer1234!  (viewer)\n"
             "\nSeeded execution scenarios (representational):\n"
             "  SUCCEEDED          — deploy run with sandbox metadata on all steps\n"
-            "  FAILED             — deploy step exit_nonzero + failure_kind\n"
+            "  FAILED             — deploy step action_failed failure_kind\n"
             "  RUNNING/approval   — incident runbook awaiting approval\n"
             "  QUEUED             — deploy run waiting to be claimed\n"
             "  CANCELLED          — deploy run cancelled before it started (queued path)\n"
@@ -450,7 +450,7 @@ class Command(BaseCommand):
                 1: {
                     "sandbox_provider": "local_process",
                     "sandbox_run_id": "seed-fail-step1",
-                    "failure_kind": "exit_nonzero",
+                    "failure_kind": "action_failed",
                 },
             },
         )

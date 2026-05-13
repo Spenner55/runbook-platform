@@ -65,6 +65,18 @@ def test_valid_mixed_workflow(validator):
     assert errors == [], [e.message for e in errors]
 
 
+def test_shared_valid_shell_command_workflow(validator):
+    doc = _load_example("workflow-v2-shell-command.valid.json")
+    errors = list(validator.iter_errors(doc))
+    assert errors == [], [e.message for e in errors]
+
+
+def test_shared_valid_http_request_workflow(validator):
+    doc = _load_example("workflow-v2-http-request.valid.json")
+    errors = list(validator.iter_errors(doc))
+    assert errors == [], [e.message for e in errors]
+
+
 def test_valid_manual_task_minimal(validator):
     doc = {
         "schemaVersion": "2",
