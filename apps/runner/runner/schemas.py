@@ -38,6 +38,11 @@ class RunnerSettings(BaseModel):
     runner_id: str
     runner_version: str = "0.1.0"
     registration_token: str = ""
+    registered_runner_id: str = ""
+    runner_bearer_token: str = ""
+    runner_display_name: str = ""
+    runner_install_fingerprint: str = ""
+    runner_state_file: str = ""
     api_retries_enabled: bool = True
     poll_interval_seconds: int = 5
     heartbeat_interval_seconds: int = 10
@@ -63,9 +68,15 @@ class RunnerSettings(BaseModel):
 
     @model_validator(mode="after")
     def validate_registration_token(self) -> RunnerSettings:
-        if self.registration_token.strip() in {"", "change-me"}:
+        # Allow empty/placeholder only when runner_bearer_token is already set
+        # (post-registration mode).
+        if not self.runner_bearer_token and self.registration_token.strip() in {
+            "",
+            "change-me",
+        }:
             raise ValueError(
-                "RUNNER_REGISTRATION_TOKEN must be set to a non-placeholder value."
+                "RUNNER_REGISTRATION_TOKEN must be set to a non-placeholder value, "
+                "or RUNNER_BEARER_TOKEN must be set (post-registration mode)."
             )
         return self
 
@@ -82,7 +93,12 @@ class RunnerSettings(BaseModel):
             errors.append("API_BASE_URL is empty — set it to the Django API base URL")
         if not self.runner_id.strip():
             errors.append("RUNNER_ID is empty — set it to a unique runner identifier")
-        if self.registration_token.strip() in {"", "change-me"}:
+        # In legacy mode: registration_token is used directly as bearer.
+        # In registered mode: runner_bearer_token takes precedence.
+        if not self.runner_bearer_token and self.registration_token.strip() in {
+            "",
+            "change-me",
+        }:
             errors.append(
                 "RUNNER_REGISTRATION_TOKEN must not be empty or the placeholder 'change-me'"
             )
@@ -173,6 +189,11 @@ class RunnerSettings(BaseModel):
             ),
             runner_version=os.environ.get("RUNNER_VERSION", "0.1.0"),
             registration_token=os.environ.get("RUNNER_REGISTRATION_TOKEN", ""),
+            registered_runner_id=os.environ.get("RUNNER_REGISTERED_ID", ""),
+            runner_bearer_token=os.environ.get("RUNNER_BEARER_TOKEN", ""),
+            runner_display_name=os.environ.get("RUNNER_DISPLAY_NAME", ""),
+            runner_install_fingerprint=os.environ.get("RUNNER_INSTALL_FINGERPRINT", ""),
+            runner_state_file=os.environ.get("RUNNER_STATE_FILE", ""),
             api_retries_enabled=_env_bool("RUNNER_API_RETRIES_ENABLED", True),
             poll_interval_seconds=int(
                 os.environ.get("RUNNER_POLL_INTERVAL_SECONDS", "5")
@@ -374,6 +395,8 @@ class ClaimNextResponse(BaseModel):
     execution: ClaimedExecution | None
     claim_token: UUID | None = None
     poll_after_seconds: int
+    runner_action: str = "continue"  # "continue" | "drain"
+    drain_reason: str = ""
 
     model_config = ConfigDict(extra="ignore")
 

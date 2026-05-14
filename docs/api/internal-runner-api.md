@@ -9,9 +9,25 @@ For full contract status, see [API contracts](../architecture/api-contracts.md).
 ## Design Principles
 
 - Runner state mutations use explicit `POST` actions.
-- Mutating endpoints validate `runner_id` and `claim_token`.
+- Internal runner endpoints default to per-runner bearer token authentication.
+- Request `runner_id` and `X-Runner-ID` are compatibility echoes; when a
+  per-runner token is used, they must match the authenticated canonical runner.
+- Mutating execution endpoints validate `runner_id` and `claim_token`.
 - Step transitions are allowlisted in the service layer.
 - Claiming work uses `SELECT FOR UPDATE SKIP LOCKED`.
+
+## Registration And Token Handling
+
+`POST /api/v1/internal/runners/register/` accepts a short-lived registration
+token and returns the canonical `runner_id` plus a clear per-runner bearer token.
+The clear bearer token is shown once and must be stored only in the runner state
+file or a local secret store. Registration tokens, per-runner tokens, token
+hashes, claim tokens, and dispatch tokens must not be logged or copied into
+operator notes.
+
+Legacy shared runner token mode is restricted to local/dev-test settings. Pilot
+operators should register runners and use per-runner bearer tokens for all
+internal runner calls.
 
 ## Claim Next
 

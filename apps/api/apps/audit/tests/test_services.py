@@ -69,6 +69,46 @@ def test_emit_scrubs_sensitive_metadata_keys(org):
 
 
 @pytest.mark.django_db
+def test_emit_scrubs_phase_c_runner_secret_metadata_keys(org):
+    event = AuditService.emit(
+        organization_id=org.id,
+        actor_type=AuditEvent.ActorType.SYSTEM,
+        event_type="runner_pool.checked",
+        object_type=AuditEvent.ObjectType.RUNNER_POOL,
+        object_id=org.id,
+        metadata={
+            "pool_key": "prod",
+            "registration_token_hash": "hash-secret",
+            "target_credentials": {"username": "deploy", "password": "secret"},
+        },
+    )
+
+    assert event.metadata == {"pool_key": "prod"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "key",
+    [
+        "registration_token",
+        "runner_bearer_token",
+        "runner_registration_token",
+        "token_hash",
+    ],
+)
+def test_emit_rejects_phase_c_raw_runner_tokens(org, key):
+    with pytest.raises(ValidationError):
+        AuditService.emit(
+            organization_id=org.id,
+            actor_type=AuditEvent.ActorType.SYSTEM,
+            event_type="runner.registered",
+            object_type=AuditEvent.ObjectType.RUNNER,
+            object_id=org.id,
+            metadata={key: "secret"},
+        )
+
+
+@pytest.mark.django_db
 def test_emit_rejects_phase_11_forbidden_metadata_keys(org):
     with pytest.raises(ValidationError):
         AuditService.emit(

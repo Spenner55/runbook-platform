@@ -927,3 +927,286 @@ def test_conflicts_include_freeze_rule_and_target_lock(
     assert "id" in lock_conflict
     assert "target_type" in lock_conflict
     assert "acquired_at" in lock_conflict
+
+
+# ---------------------------------------------------------------------------
+# Runner pool route matching in preflight
+# ---------------------------------------------------------------------------
+
+
+def _make_pool_and_runner(org, *, key="test-pool", capabilities=None):
+    """Create an active RunnerPool with one fresh online runner."""
+    from apps.runners.models import Runner, RunnerPool
+    from apps.runners.services import generate_runner_token
+
+    pool = RunnerPool.objects.create(
+        organization=org,
+        key=key,
+        name=key,
+        environment="production",
+        status=RunnerPool.Status.ACTIVE,
+        capabilities=capabilities or [],
+    )
+    _, token_hash = generate_runner_token()
+    Runner.objects.create(
+        organization=org,
+        pool=pool,
+        display_name=f"runner-{key}",
+        status=Runner.Status.ACTIVE,
+        token_hash=token_hash,
+        last_heartbeat_at=timezone.now(),
+    )
+    return pool
+
+
+def _make_route(
+    org,
+    pool,
+    *,
+    target_type="server",
+    pattern="prod-server-01",
+    required_capabilities=None,
+):
+    from apps.runners.models import TargetConnectivityRoute
+
+    return TargetConnectivityRoute.objects.create(
+        organization=org,
+        environment="production",
+        target_type=target_type,
+        normalized_identifier_pattern=pattern,
+        pool=pool,
+        required_capabilities=required_capabilities or [],
+        is_active=True,
+    )
+
+
+@pytest.mark.django_db
+def test_preflight_runner_pool_route_miss_fails(approved_change, org):
+    """When routes are configured but no route matches, preflight must fail."""
+    pool = _make_pool_and_runner(org)
+    # Route exists but for a different target pattern — won't match prod-server-01.
+    _make_route(org, pool, pattern="other-host.prod")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    assert check.runner_pool_ok is False
+    assert check.runner_pool_reason == "route_miss"
+    pool_check = next((c for c in check.checks if c["name"] == "runner_pool"), None)
+    assert pool_check is not None
+    assert pool_check["ok"] is False
+
+
+@pytest.mark.django_db
+def test_preflight_runner_pool_matching_route_passes(approved_change, org):
+    """When a matching route and online runner exist, the runner_pool check passes."""
+    pool = _make_pool_and_runner(org)
+    _make_route(org, pool, pattern="prod-server-01")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.runner_pool_ok is True
+    assert check.runner_pool_key == pool.key
+    assert check.runner_pool_reason == "ok"
+    assert check.result == DispatchEligibilityCheck.Result.PASSED
+
+
+@pytest.mark.django_db
+def test_preflight_runner_pool_no_online_runner_fails(approved_change, org):
+    """A matching route whose pool has no recent heartbeat fails preflight."""
+    from apps.runners.models import Runner, RunnerPool
+    from apps.runners.services import generate_runner_token
+
+    pool = RunnerPool.objects.create(
+        organization=org,
+        key="dead-pool",
+        name="dead-pool",
+        environment="production",
+        status=RunnerPool.Status.ACTIVE,
+    )
+    _, token_hash = generate_runner_token()
+    stale_runner = Runner.objects.create(
+        organization=org,
+        pool=pool,
+        display_name="stale",
+        status=Runner.Status.ACTIVE,
+        token_hash=token_hash,
+        last_heartbeat_at=timezone.now() - timedelta(seconds=200),
+    )
+    _ = stale_runner
+    _make_route(org, pool, pattern="prod-server-01")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    assert check.runner_pool_ok is False
+    assert check.runner_pool_reason == "no_online_runner"
+
+
+@pytest.mark.django_db
+def test_preflight_runner_pool_missing_capability_fails(approved_change, org):
+    """Route requires a capability the pool doesn't have → preflight fails."""
+    pool = _make_pool_and_runner(org, capabilities=[])  # empty capabilities
+    _make_route(
+        org,
+        pool,
+        pattern="prod-server-01",
+        required_capabilities=["action.database_query"],
+    )
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    assert check.runner_pool_ok is False
+    assert check.runner_pool_reason == "missing_required_capability"
+
+
+@pytest.mark.django_db
+def test_preflight_runner_pool_draining_pool_fails(approved_change, org):
+    """A draining pool fails dispatch eligibility for new dispatch."""
+    from apps.runners.models import RunnerPool
+
+    pool = _make_pool_and_runner(org)
+    _make_route(org, pool, pattern="prod-server-01")
+    pool.status = RunnerPool.Status.DRAINING
+    pool.save(update_fields=["status", "updated_at"])
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    assert check.runner_pool_ok is False
+    assert check.runner_pool_reason == "pool_draining"
+
+
+@pytest.mark.django_db
+def test_preflight_all_existing_checks_still_run_with_route_miss(approved_change, org):
+    """Existing checks (freeze, window, etc.) still execute even when pool route miss occurs."""
+    now = _now()
+    FreezeRule.objects.create(
+        organization=org,
+        name="Parallel Freeze",
+        behavior=FreezeRule.Behavior.BLOCK,
+        starts_at=now - timedelta(hours=1),
+        ends_at=now + timedelta(hours=2),
+        scope_type=FreezeRule.ScopeType.ALL_PRODUCTION,
+        requires_exception_reference=False,
+        is_active=True,
+    )
+
+    pool = _make_pool_and_runner(org)
+    # Route for wrong pattern → route_miss
+    _make_route(org, pool, pattern="other-host.prod")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    assert check.result == DispatchEligibilityCheck.Result.FAILED
+    # Both freeze_conflicts and runner_pool checks ran and failed.
+    assert check.freeze_conflicts_ok is False
+    assert check.runner_pool_ok is False
+    # All 8 checks are present (7 base + runner_pool).
+    check_names = [c["name"] for c in check.checks]
+    assert "freeze_conflicts" in check_names
+    assert "runner_pool" in check_names
+    assert len(check_names) == 8
+
+
+# ---------------------------------------------------------------------------
+# Dispatch diagnostics — public-safe serializer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_diagnostics_serializer_includes_runner_pool_fields(approved_change, org):
+    """DispatchEligibilityCheckSerializer exposes runner_pool_key and runner_pool_reason."""
+    from apps.changes.serializers import DispatchEligibilityCheckSerializer
+
+    pool = _make_pool_and_runner(org)
+    _make_route(org, pool, pattern="prod-server-01")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+    data = DispatchEligibilityCheckSerializer(check).data
+
+    assert "runner_pool_ok" in data
+    assert "runner_pool_key" in data
+    assert "runner_pool_reason" in data
+    assert data["runner_pool_ok"] is True
+    assert data["runner_pool_key"] == pool.key
+    assert data["runner_pool_reason"] == "ok"
+
+
+@pytest.mark.django_db
+def test_diagnostics_serializer_excludes_sensitive_check_keys(approved_change, org):
+    """Serializer strips secret-bearing keys from the checks list."""
+    from apps.changes.models import DispatchEligibilityCheck
+    from apps.changes.serializers import DispatchEligibilityCheckSerializer
+
+    # Manually inject a check entry that contains a secret-bearing key.
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
+
+    # Bypass immutability to inject a poisoned check entry for serializer testing.
+    poisoned_checks = list(check.checks) + [
+        {
+            "name": "fake_check",
+            "ok": True,
+            "detail": "looks fine",
+            "api_key": "secret-value-that-must-not-leak",
+            "token": "bearer-xyz",
+            "pool_key": "safe-key",
+        }
+    ]
+    DispatchEligibilityCheck.objects.filter(pk=check.pk).update(checks=poisoned_checks)
+    check.refresh_from_db()
+
+    data = DispatchEligibilityCheckSerializer(check).data
+    checks_out = data["checks"]
+    last = checks_out[-1]
+
+    assert "api_key" not in last
+    assert "token" not in last
+    assert last["pool_key"] == "safe-key"  # explicitly safe key passes through
+    assert last["detail"] == "looks fine"
+
+
+@pytest.mark.django_db
+def test_diagnostics_serializer_never_exposes_runner_pool_id(
+    approved_change, org, api_client, org_user
+):
+    """API response for preflight does not expose the runner pool's internal UUID."""
+    from apps.organizations.models import Membership, MembershipRole
+
+    pool = _make_pool_and_runner(org)
+    _make_route(org, pool, pattern="prod-server-01")
+
+    Membership.objects.create(
+        organization=org, user=org_user, role=MembershipRole.OPERATOR
+    )
+    api_client.force_authenticate(user=org_user)
+
+    url = f"/api/v1/changes/{approved_change.id}/preflight/"
+    response = api_client.post(
+        url,
+        data={},
+        content_type="application/json",
+        HTTP_X_ORGANIZATION_ID=str(org.id),
+    )
+    assert response.status_code == 201
+    data = response.json()
+
+    # runner_pool_id must not be a top-level field in the API response.
+    assert "runner_pool_id" not in data

@@ -31,6 +31,13 @@ def _validate_prometheus_settings_logic(*, enabled: bool, token: str) -> None:
         _require_env_logic(token, "PROMETHEUS_METRICS_TOKEN")
 
 
+def _validate_runner_legacy_mode_logic(*, enabled: bool) -> None:
+    if enabled:
+        raise ImproperlyConfigured(
+            "RUNNER_LEGACY_TOKEN_MODE must be disabled in production; use per-runner tokens."
+        )
+
+
 class TestRequireEnvLogic:
     def test_raises_for_empty_string(self):
         with pytest.raises(ImproperlyConfigured, match="DJANGO_SECRET_KEY"):
@@ -53,7 +60,7 @@ class TestRequireEnvLogic:
         [
             "DJANGO_SECRET_KEY",
             "DATABASE_URL",
-            "RUNNER_REGISTRATION_TOKEN",
+            "CHANGE_DISPATCH_TOKEN_SECRET",
         ],
     )
     def test_required_production_keys_fail_when_empty(self, key):
@@ -69,6 +76,15 @@ def test_prometheus_metrics_startup_validation_fails_when_enabled_without_token(
 
 def test_prometheus_metrics_startup_validation_allows_disabled_without_token():
     _validate_prometheus_settings_logic(enabled=False, token="")
+
+
+def test_production_rejects_legacy_runner_token_mode():
+    with pytest.raises(ImproperlyConfigured, match="RUNNER_LEGACY_TOKEN_MODE"):
+        _validate_runner_legacy_mode_logic(enabled=True)
+
+
+def test_production_allows_per_runner_token_mode():
+    _validate_runner_legacy_mode_logic(enabled=False)
 
 
 def _route_strings(patterns) -> set[str]:

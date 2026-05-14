@@ -26,6 +26,7 @@ import { BreakglassStatusPanel } from './components/BreakglassStatusPanel'
 import { EvidencePanel } from './components/EvidencePanel'
 import { ExceptionRequestForm } from './components/ExceptionRequestForm'
 import { RetroReviewPanel } from './components/RetroReviewPanel'
+import { RunnerEligibilityPanel } from './components/RunnerEligibilityPanel'
 import { ViolationBanner } from './components/ViolationBanner'
 
 function formatDateTime(value: string | null | undefined) {
@@ -1040,6 +1041,11 @@ function PreflightCard({ change }: { change: ChangeRecord }) {
       {runPreflightMutation.isError && (
         <p className="banner banner--error">{getApiErrorMessage(runPreflightMutation.error)}</p>
       )}
+
+      <RunnerEligibilityPanel
+        changeId={change.id}
+        enabled={PREFLIGHT_VISIBLE_STATUSES.has(change.status)}
+      />
     </section>
   )
 }

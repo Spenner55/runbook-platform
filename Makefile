@@ -207,6 +207,7 @@ check-prod: ## Run Django production deployment checks with local-only env value
 	  -e DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,api \
 	  -e CORS_ALLOWED_ORIGINS=http://localhost:5173 \
 	  -e RUNNER_REGISTRATION_TOKEN=local-prod-check-runner-token \
+	  -e CHANGE_DISPATCH_TOKEN_SECRET=local-prod-check-dispatch-token-secret \
 	  -e INTEGRATION_FERNET_KEY=local-prod-check-fernet-key \
 	  api python manage.py check --deploy --settings=config.settings.prod
 

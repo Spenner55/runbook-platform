@@ -113,13 +113,58 @@ class RunnerInternalAPIView(APIView):
     permission_classes = [IsRunnerAuthenticated]
 
 
+def _runner_identity_guard(request, supplied_runner_id: str = "") -> Response | None:
+    """Ensure compatibility runner-id echoes match per-runner bearer auth."""
+    authenticated_runner_id = getattr(request.user, "runner_id", None)
+    header_runner_id = request.headers.get("X-Runner-ID", "")
+
+    if authenticated_runner_id:
+        if supplied_runner_id and str(supplied_runner_id) != str(
+            authenticated_runner_id
+        ):
+            return Response(
+                {
+                    "errors": [
+                        {
+                            "code": "runner_identity_mismatch",
+                            "detail": "runner_id does not match authenticated runner.",
+                        }
+                    ]
+                },
+                status=http_status.HTTP_403_FORBIDDEN,
+            )
+        if header_runner_id and header_runner_id != str(authenticated_runner_id):
+            return Response(
+                {
+                    "errors": [
+                        {
+                            "code": "runner_identity_mismatch",
+                            "detail": "X-Runner-ID does not match authenticated runner.",
+                        }
+                    ]
+                },
+                status=http_status.HTTP_403_FORBIDDEN,
+            )
+
+    return None
+
+
+def _effective_runner_id(request, supplied_runner_id: str) -> str:
+    return str(getattr(request.user, "runner_id", None) or supplied_runner_id)
+
+
 class ClaimNextExecutionView(RunnerInternalAPIView):
     """POST /api/v1/internal/executions/claim-next/"""
 
     def post(self, request):
         serializer = ClaimNextRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        runner_id = serializer.validated_data["runner_id"]
+        guard = _runner_identity_guard(request, serializer.validated_data["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(
+            request, serializer.validated_data["runner_id"]
+        )
 
         try:
             from apps.changes import services as change_services
@@ -128,9 +173,37 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
         except Exception:
             logger.exception("promote_due_scheduled_changes failed during claim-next")
 
-        result = services.claim_next_execution(runner_id=runner_id)
+        # Resolve runner record from authenticated principal when available.
+        runner_instance = None
+        auth_principal = request.user
+        db_runner_id = getattr(auth_principal, "runner_id", None)
+        if db_runner_id:
+            try:
+                from apps.runners.models import Runner
+
+                runner_instance = Runner.objects.select_related(
+                    "pool", "organization"
+                ).get(pk=db_runner_id)
+            except Exception:
+                logger.exception(
+                    "Failed to resolve Runner record for principal %s", db_runner_id
+                )
+
+        result = services.claim_next_execution(
+            runner_id=runner_id, runner=runner_instance
+        )
         if result is None:
             return Response({"execution": None, "poll_after_seconds": 5})
+
+        if isinstance(result, dict) and result.get("drain"):
+            return Response(
+                {
+                    "execution": None,
+                    "claim_token": None,
+                    "poll_after_seconds": 30,
+                    "runner_action": "drain",
+                }
+            )
 
         execution = result["execution"]
         return Response(
@@ -150,10 +223,14 @@ class ExecutionHeartbeatView(RunnerInternalAPIView):
         serializer = HeartbeatSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
+        guard = _runner_identity_guard(request, d["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(request, d["runner_id"])
 
         services.heartbeat_execution(
             execution=execution,
-            runner_id=d["runner_id"],
+            runner_id=runner_id,
             claim_token=str(d["claim_token"]),
         )
         execution.refresh_from_db(
@@ -183,8 +260,12 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
         serializer = StepUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
+        guard = _runner_identity_guard(request, d["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(request, d["runner_id"])
         guard = _assert_change_bound_execution_ready(
-            execution, d["runner_id"], str(d["claim_token"])
+            execution, runner_id, str(d["claim_token"])
         )
         if guard is not None:
             return guard
@@ -192,7 +273,7 @@ class ExecutionStepUpdateView(RunnerInternalAPIView):
         step = services.update_execution_step(
             execution=execution,
             step_id=str(step_id),
-            runner_id=d["runner_id"],
+            runner_id=runner_id,
             claim_token=str(d["claim_token"]),
             new_status=d["status"],
             started_at=d.get("started_at"),
@@ -225,15 +306,19 @@ class ExecutionCompleteView(RunnerInternalAPIView):
         serializer = ExecutionCompleteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
+        guard = _runner_identity_guard(request, d["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(request, d["runner_id"])
         guard = _assert_change_bound_execution_ready(
-            execution, d["runner_id"], str(d["claim_token"])
+            execution, runner_id, str(d["claim_token"])
         )
         if guard is not None:
             return guard
 
         execution = services.complete_execution(
             execution=execution,
-            runner_id=d["runner_id"],
+            runner_id=runner_id,
             claim_token=str(d["claim_token"]),
             outcome=d["final_status"],
         )
@@ -262,7 +347,10 @@ class ExecutionStepStartView(RunnerInternalAPIView):
         serializer = StepStartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
-        runner_id = d["runner_id"]
+        guard = _runner_identity_guard(request, d["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(request, d["runner_id"])
         claim_token = str(d["claim_token"])
         guard = _assert_change_bound_execution_ready(execution, runner_id, claim_token)
         if guard is not None:
@@ -473,7 +561,10 @@ class ApprovalStatusView(RunnerInternalAPIView):
         serializer = ApprovalStatusRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
-        runner_id = d["runner_id"]
+        guard = _runner_identity_guard(request, d["runner_id"])
+        if guard is not None:
+            return guard
+        runner_id = _effective_runner_id(request, d["runner_id"])
         claim_token = str(d["claim_token"])
 
         guard = _assert_change_bound_execution_ready(execution, runner_id, claim_token)

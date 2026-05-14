@@ -35,6 +35,9 @@ from apps.executions.stream_views import StreamExecutionView
 from apps.executions.views import ExecutionViewSet
 from apps.organizations.views import OrganizationViewSet
 from apps.runbooks.views import RunbookViewSet
+from apps.runners.urls import internal_urlpatterns as runner_internal_urlpatterns
+from apps.runners.urls import public_urlpatterns as runner_public_urlpatterns
+from apps.runners.views import ChangeRunnerEligibilityView
 from apps.workflows.views import WorkflowViewSet
 
 router = SimpleRouter()
@@ -65,7 +68,16 @@ urlpatterns = [
         StreamExecutionView.as_view(),
         name="execution-stream",
     ),
+    path("", include((runner_public_urlpatterns, "runners"))),
+    path(
+        "changes/<uuid:change_id>/runner-eligibility/",
+        ChangeRunnerEligibilityView.as_view(),
+        name="change-runner-eligibility",
+    ),
     path("internal/", include(artifact_internal_urlpatterns)),
+    path(
+        "internal/runners/", include((runner_internal_urlpatterns, "runners-internal"))
+    ),
     path(
         "internal/changes/", include((change_internal_urlpatterns, "changes-internal"))
     ),

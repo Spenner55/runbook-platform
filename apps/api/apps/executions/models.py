@@ -49,6 +49,7 @@ class Execution(BaseModel):
     claim_token = models.UUIDField(null=True, blank=True, unique=True)
     claimed_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    runner_pool_key = models.CharField(max_length=64, blank=True, default="")
 
     # Cancellation intent — set when a user requests cancellation of a
     # claimed/running execution.  The runner observes this via the heartbeat

@@ -410,6 +410,21 @@ def recover_stuck_executions(*, stuck_threshold_seconds: int = 300) -> list[str]
                 _record_step_duration_if_available(_step)
 
         try:
+            from apps.runners.models import ExecutionLease
+
+            ExecutionLease.objects.filter(
+                execution=execution, status=ExecutionLease.Status.ACTIVE
+            ).update(
+                status=ExecutionLease.Status.EXPIRED,
+                released_at=timezone.now(),
+                release_reason="heartbeat_timeout",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to expire execution lease for stuck execution %s", execution.id
+            )
+
+        try:
             from apps.changes import services as change_services  # avoid circular
 
             change_services.handle_bound_execution_completed(execution=execution)
@@ -695,13 +710,62 @@ def _expire_unbound_change_dispatch_if_needed(execution: Execution, *, now) -> b
 
 
 @timed_execution_operation("claim_next_execution")
-def claim_next_execution(*, runner_id: str) -> dict | None:
+def claim_next_execution(*, runner_id: str, runner=None) -> dict | None:
     """
     Atomically claim the oldest queued execution for the given runner.
 
     Returns a dict with 'execution', 'steps', and 'claim_token' if work was
     found, or None if the queue is empty.
     """
+    if runner is not None:
+        from apps.runners.scheduling import schedule_execution_claim
+
+        result = schedule_execution_claim(runner)
+        if result is None or (isinstance(result, dict) and result.get("drain")):
+            return result
+
+        execution = result["execution"]
+        claim_token = result["claim_token"]
+        previous_status = Execution.Status.QUEUED
+
+        audit_actor = actor_from_runner(runner_id)
+        AuditService.emit(
+            organization_id=execution.organization_id,
+            actor_type=audit_actor.actor_type,
+            actor_id=audit_actor.actor_id,
+            actor_label=audit_actor.actor_label,
+            event_type="execution.claimed",
+            object_type=AuditEvent.ObjectType.EXECUTION,
+            object_id=execution.id,
+            metadata={
+                "previous_status": previous_status,
+                "new_status": execution.status,
+                "runner_id": runner_id,
+                "claimed_at": execution.claimed_at.isoformat()
+                if execution.claimed_at
+                else None,
+                "reclaimed": False,
+                "pool_key": execution.runner_pool_key,
+            },
+        )
+        _emit_on_commit(
+            str(execution.id),
+            StreamEvent(
+                event_type="execution.status_changed",
+                data={
+                    "execution_id": str(execution.id),
+                    "status": execution.status,
+                    "timestamp": execution.claimed_at.isoformat()
+                    if execution.claimed_at
+                    else None,
+                    "started_at": None,
+                    "finished_at": None,
+                },
+            ),
+        )
+        record_execution_event(event="claimed", status=execution.status)
+        return result
+
     with transaction.atomic():
         execution = None
         now = timezone.now()
@@ -765,6 +829,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
         execution.claim_token = claim_token
         execution.claimed_at = now
         execution.last_heartbeat_at = now
+        execution.runner_pool_key = ""
         execution.save(
             update_fields=[
                 "status",
@@ -772,6 +837,7 @@ def claim_next_execution(*, runner_id: str) -> dict | None:
                 "claim_token",
                 "claimed_at",
                 "last_heartbeat_at",
+                "runner_pool_key",
                 "updated_at",
             ]
         )
@@ -1202,6 +1268,21 @@ def complete_execution(
         ),
     )
     record_execution_event(event=event_type, status=execution.status)
+
+    try:
+        from apps.runners.models import ExecutionLease
+
+        ExecutionLease.objects.filter(
+            execution=execution, status=ExecutionLease.Status.ACTIVE
+        ).update(
+            status=ExecutionLease.Status.RELEASED,
+            released_at=timezone.now(),
+            release_reason=outcome,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to release execution lease for execution %s", execution.id
+        )
 
     # Update change lifecycle if this execution is change-bound
     try:

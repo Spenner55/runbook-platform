@@ -16,7 +16,8 @@ calls `Poller.run_forever()`. No orchestration logic lives here.
 | Env var | Purpose | Default |
 |---------|---------|---------|
 | `API_BASE_URL` | Base URL of the Django API | `http://api:8000` |
-| `RUNNER_REGISTRATION_TOKEN` | Used as the `runner_id` claim identity | `default-runner` |
+| `RUNNER_REGISTRATION_TOKEN` | Short-lived bootstrap token used only to register and receive a per-runner bearer token | none |
+| `RUNNER_STATE_FILE` | Persistent file containing the canonical runner ID and per-runner bearer token | none |
 | `RUNNER_API_RETRIES_ENABLED` | Enables bounded retries for runner API network errors and HTTP 502/503/504 responses | `true` |
 
 ---
