@@ -119,7 +119,9 @@ def _runner_identity_guard(request, supplied_runner_id: str = "") -> Response | 
     header_runner_id = request.headers.get("X-Runner-ID", "")
 
     if authenticated_runner_id:
-        if supplied_runner_id and str(supplied_runner_id) != str(authenticated_runner_id):
+        if supplied_runner_id and str(supplied_runner_id) != str(
+            authenticated_runner_id
+        ):
             return Response(
                 {
                     "errors": [
@@ -160,7 +162,9 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
         guard = _runner_identity_guard(request, serializer.validated_data["runner_id"])
         if guard is not None:
             return guard
-        runner_id = _effective_runner_id(request, serializer.validated_data["runner_id"])
+        runner_id = _effective_runner_id(
+            request, serializer.validated_data["runner_id"]
+        )
 
         try:
             from apps.changes import services as change_services
@@ -177,11 +181,13 @@ class ClaimNextExecutionView(RunnerInternalAPIView):
             try:
                 from apps.runners.models import Runner
 
-                runner_instance = Runner.objects.select_related("pool", "organization").get(
-                    pk=db_runner_id
-                )
+                runner_instance = Runner.objects.select_related(
+                    "pool", "organization"
+                ).get(pk=db_runner_id)
             except Exception:
-                logger.exception("Failed to resolve Runner record for principal %s", db_runner_id)
+                logger.exception(
+                    "Failed to resolve Runner record for principal %s", db_runner_id
+                )
 
         result = services.claim_next_execution(
             runner_id=runner_id, runner=runner_instance

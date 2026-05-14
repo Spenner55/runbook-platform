@@ -154,7 +154,9 @@ class TestScheduleExecutionClaim:
         result = schedule_execution_claim(runner_b)
         assert result is None
 
-    def test_org_isolation_different_org_cannot_claim(self, org, org2, pool, other_org_pool, runner):
+    def test_org_isolation_different_org_cannot_claim(
+        self, org, org2, pool, other_org_pool, runner
+    ):
         """Runner in org2's pool must not claim org's executions."""
         wf = _published_workflow(org)
         _make_execution(org, wf)

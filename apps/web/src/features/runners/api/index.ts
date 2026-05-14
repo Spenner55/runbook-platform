@@ -72,11 +72,9 @@ export interface RunnerEligibility {
 export const fetchRunnerPools = (orgId: string) =>
   apiRequest<{ results: RunnerPool[] }>(`/api/v1/runner-pools/?organization_id=${orgId}`)
 
-export const fetchRunnerPool = (id: string) =>
-  apiRequest<RunnerPool>(`/api/v1/runner-pools/${id}/`)
+export const fetchRunnerPool = (id: string) => apiRequest<RunnerPool>(`/api/v1/runner-pools/${id}/`)
 
-export const fetchRunner = (id: string) =>
-  apiRequest<Runner>(`/api/v1/runners/${id}/`)
+export const fetchRunner = (id: string) => apiRequest<Runner>(`/api/v1/runners/${id}/`)
 
 export const fetchRunners = (orgId: string) =>
   apiRequest<{ results: Runner[] }>(`/api/v1/runners/?organization_id=${orgId}`)

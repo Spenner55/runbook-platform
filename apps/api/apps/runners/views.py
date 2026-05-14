@@ -2,7 +2,6 @@ import logging
 
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -97,7 +96,9 @@ class RunnerPoolViewSet(
         if not org_id:
             return RunnerPool.objects.none()
         return _annotate_pool_qs(
-            RunnerPool.objects.filter(organization_id=org_id).select_related("organization")
+            RunnerPool.objects.filter(organization_id=org_id).select_related(
+                "organization"
+            )
         )
 
     def get_permissions(self):
@@ -121,7 +122,9 @@ class RunnerPoolViewSet(
         organization = get_object_or_404(Organization, pk=org_id)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        pool = RunnerPool.objects.create(organization=organization, **serializer.validated_data)
+        pool = RunnerPool.objects.create(
+            organization=organization, **serializer.validated_data
+        )
         AuditService.emit(
             organization_id=org_id,
             actor_type=AuditEvent.ActorType.USER,
@@ -268,7 +271,9 @@ class RunnerViewSet(
         if not org_id:
             return Runner.objects.none()
         return _annotate_runner_qs(
-            Runner.objects.filter(organization_id=org_id).select_related("organization", "pool")
+            Runner.objects.filter(organization_id=org_id).select_related(
+                "organization", "pool"
+            )
         )
 
     def get_permissions(self):

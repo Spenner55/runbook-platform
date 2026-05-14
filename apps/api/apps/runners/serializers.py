@@ -97,7 +97,9 @@ class RunnerSerializer(serializers.ModelSerializer):
 
 class RunnerRegistrationTokenCreateSerializer(serializers.Serializer):
     label_policy = serializers.ListField(child=serializers.CharField(), default=list)
-    capability_policy = serializers.ListField(child=serializers.CharField(), default=list)
+    capability_policy = serializers.ListField(
+        child=serializers.CharField(), default=list
+    )
     expires_at = serializers.DateTimeField()
     max_registrations = serializers.IntegerField(default=1, min_value=1)
 

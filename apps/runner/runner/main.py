@@ -64,7 +64,9 @@ def _ensure_registered(settings: RunnerSettings, api_client: ApiClient) -> None:
     Exits with code 1 if RUNNER_REGISTERED_ID is set but conflicts with the
     canonical runner_id resolved by the server.
     """
-    state_path = Path(settings.runner_state_file) if settings.runner_state_file else None
+    state_path = (
+        Path(settings.runner_state_file) if settings.runner_state_file else None
+    )
 
     # --- 1. Try state file ---
     state = RunnerState.load(state_path) if state_path else RunnerState()
@@ -74,7 +76,9 @@ def _ensure_registered(settings: RunnerSettings, api_client: ApiClient) -> None:
         _root_logger.info(
             "Loaded persisted runner identity: runner_id=%s", canonical_runner_id
         )
-        _check_runner_id_conflict(settings.registered_runner_id, canonical_runner_id, source="state file")
+        _check_runner_id_conflict(
+            settings.registered_runner_id, canonical_runner_id, source="state file"
+        )
         api_client.update_identity(canonical_runner_id, bearer_token)
         return
 
@@ -115,14 +119,22 @@ def _ensure_registered(settings: RunnerSettings, api_client: ApiClient) -> None:
         )
         raise SystemExit(1)
 
-    _check_runner_id_conflict(settings.registered_runner_id, canonical_runner_id, source="registration response")
+    _check_runner_id_conflict(
+        settings.registered_runner_id,
+        canonical_runner_id,
+        source="registration response",
+    )
 
     # Persist so next startup skips registration
     if state_path:
-        new_state = RunnerState(runner_id=canonical_runner_id, runner_bearer_token=bearer_token)
+        new_state = RunnerState(
+            runner_id=canonical_runner_id, runner_bearer_token=bearer_token
+        )
         new_state.save(state_path)
         _root_logger.info(
-            "Runner registered as %s — state persisted to %s", canonical_runner_id, state_path
+            "Runner registered as %s — state persisted to %s",
+            canonical_runner_id,
+            state_path,
         )
     else:
         _root_logger.info(

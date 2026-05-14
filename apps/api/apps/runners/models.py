@@ -22,7 +22,10 @@ def _validate_operational_metadata(value, *, field_name="metadata"):
         if isinstance(node, dict):
             for key, child in node.items():
                 normalized_key = str(key).lower()
-                if any(fragment in normalized_key for fragment in SECRET_METADATA_KEY_FRAGMENTS):
+                if any(
+                    fragment in normalized_key
+                    for fragment in SECRET_METADATA_KEY_FRAGMENTS
+                ):
                     raise ValidationError(
                         {
                             field_name: (
@@ -193,7 +196,9 @@ class Runner(BaseModel):
             and self.pool.organization_id != self.organization_id
         ):
             raise ValidationError(
-                {"pool": "Runner pool must belong to the same organization as the runner."}
+                {
+                    "pool": "Runner pool must belong to the same organization as the runner."
+                }
             )
         _validate_operational_metadata(self.metadata)
 
@@ -342,9 +347,15 @@ class TargetConnectivityRoute(BaseModel):
             and self.pool.organization_id != self.organization_id
         ):
             raise ValidationError(
-                {"pool": "Route pool must belong to the same organization as the route."}
+                {
+                    "pool": "Route pool must belong to the same organization as the route."
+                }
             )
-        if self.is_active and self.pool_id and self.pool.status != RunnerPool.Status.ACTIVE:
+        if (
+            self.is_active
+            and self.pool_id
+            and self.pool.status != RunnerPool.Status.ACTIVE
+        ):
             raise ValidationError(
                 {"pool": "Active routes require an active runner pool."}
             )

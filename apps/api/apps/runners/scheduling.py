@@ -22,7 +22,9 @@ def _execution_eligible_for_pool(execution, pool) -> bool:
     from apps.changes.models import ChangeExecutionBinding
     from apps.runners.models import RunnerPool
 
-    is_change_bound = ChangeExecutionBinding.objects.filter(execution=execution).exists()
+    is_change_bound = ChangeExecutionBinding.objects.filter(
+        execution=execution
+    ).exists()
     if is_change_bound:
         routed_pool_key = execution.runner_pool_key or ""
         return not routed_pool_key or routed_pool_key == pool.key

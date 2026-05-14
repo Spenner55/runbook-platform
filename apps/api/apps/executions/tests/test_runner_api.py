@@ -185,7 +185,6 @@ def _runner_client_with_status(org, pool, status):
 
 @pytest.fixture
 def runner_pool(org):
-    from django.utils import timezone
 
     return RunnerPool.objects.create(
         organization=org,

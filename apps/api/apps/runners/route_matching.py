@@ -37,7 +37,9 @@ def find_pool_for_change(change) -> tuple:
         routes = (
             TargetConnectivityRoute.objects.filter(
                 organization=change.organization,
-                environment=target.environment if hasattr(target, "environment") else "production",
+                environment=target.environment
+                if hasattr(target, "environment")
+                else "production",
                 is_active=True,
             )
             .filter(
@@ -47,7 +49,9 @@ def find_pool_for_change(change) -> tuple:
             .filter(
                 # Match by exact normalized_identifier_pattern or wildcard
                 normalized_identifier_pattern__in=[
-                    target.normalized_identifier if hasattr(target, "normalized_identifier") else "",
+                    target.normalized_identifier
+                    if hasattr(target, "normalized_identifier")
+                    else "",
                     "*",
                 ]
             )
@@ -95,7 +99,9 @@ def find_pool_for_change(change) -> tuple:
     # Operation-profile required capabilities must be covered by the pool.
     op_profile = getattr(change, "operation_profile", None)
     if op_profile is not None:
-        op_required = list(getattr(op_profile, "required_runner_capabilities", None) or [])
+        op_required = list(
+            getattr(op_profile, "required_runner_capabilities", None) or []
+        )
         if op_required:
             pool_caps = set(pool.capabilities or [])
             missing = [c for c in op_required if c not in pool_caps]

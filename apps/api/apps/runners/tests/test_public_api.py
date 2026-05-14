@@ -9,15 +9,19 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.organizations.models import Membership, MembershipRole, Organization
-from apps.runners.models import Runner, RunnerPool, RunnerRegistrationToken, TargetConnectivityRoute
-from apps.runners.services import generate_runner_token
+from apps.runners.models import (
+    Runner,
+    RunnerPool,
+    RunnerRegistrationToken,
+    TargetConnectivityRoute,
+)
 from apps.runners.tests.conftest import make_runner
 from apps.users.models import User
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_user(email_prefix, org, role=MembershipRole.OPERATOR):
     user = User.objects.create_user(
@@ -52,6 +56,7 @@ def _make_reg_token(pool, *, max_registrations=1, hours=1):
 # Pool tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestRunnerPoolList:
     def test_member_can_list_pools(self, org, pool):
@@ -70,7 +75,10 @@ class TestRunnerPoolList:
     def test_cross_org_pools_not_visible(self, org, pool):
         org2 = Organization.objects.create(name="Other", slug="other-x1")
         other_pool = RunnerPool.objects.create(
-            organization=org2, key="other-pool", name="Other", status=RunnerPool.Status.ACTIVE
+            organization=org2,
+            key="other-pool",
+            name="Other",
+            status=RunnerPool.Status.ACTIVE,
         )
         user = _make_user("viewer", org, MembershipRole.VIEWER)
         client = _client_for(user, org)
@@ -235,6 +243,7 @@ class TestRunnerPoolReactivate:
 # Runner tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestRunnerList:
     def test_member_can_list_runners(self, org, pool, runner):
@@ -353,6 +362,7 @@ class TestRunnerRevoke:
 # ---------------------------------------------------------------------------
 # Registration token tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestRegistrationTokenCreate:
@@ -484,6 +494,7 @@ class TestRegistrationTokenRevoke:
 # ---------------------------------------------------------------------------
 # Target connectivity route tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestRouteList:

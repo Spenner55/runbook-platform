@@ -11,9 +11,6 @@ from rest_framework.routers import SimpleRouter
 
 from apps.artifacts.urls import internal_urlpatterns as artifact_internal_urlpatterns
 from apps.artifacts.urls import public_urlpatterns as artifact_public_urlpatterns
-from apps.runners.urls import internal_urlpatterns as runner_internal_urlpatterns
-from apps.runners.urls import public_urlpatterns as runner_public_urlpatterns
-from apps.runners.views import ChangeRunnerEligibilityView
 from apps.audit.views import ExecutionAuditEventListView
 from apps.auditor.urls import urlpatterns as auditor_public_urlpatterns
 from apps.changes.urls import (
@@ -38,6 +35,9 @@ from apps.executions.stream_views import StreamExecutionView
 from apps.executions.views import ExecutionViewSet
 from apps.organizations.views import OrganizationViewSet
 from apps.runbooks.views import RunbookViewSet
+from apps.runners.urls import internal_urlpatterns as runner_internal_urlpatterns
+from apps.runners.urls import public_urlpatterns as runner_public_urlpatterns
+from apps.runners.views import ChangeRunnerEligibilityView
 from apps.workflows.views import WorkflowViewSet
 
 router = SimpleRouter()

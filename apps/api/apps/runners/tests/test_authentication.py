@@ -33,7 +33,10 @@ class TestPerRunnerTokenAuthentication:
 
         resp = client.post(
             "/api/v1/internal/executions/claim-next/",
-            {"runner_id": "00000000-0000-0000-0000-000000000000", "runner_version": "0.1.0"},
+            {
+                "runner_id": "00000000-0000-0000-0000-000000000000",
+                "runner_version": "0.1.0",
+            },
             format="json",
         )
         assert resp.status_code == 403

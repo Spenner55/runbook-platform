@@ -114,8 +114,7 @@ export function RunnerPoolsPage() {
           <tbody>
             {pools.map((pool) => {
               const capacity = pool.capacity_summary
-              const activeRunners =
-                pool.active_runner_count ?? getActiveRunnerCount(pool.id)
+              const activeRunners = pool.active_runner_count ?? getActiveRunnerCount(pool.id)
               return (
                 <tr key={pool.id}>
                   <td>
@@ -146,7 +145,9 @@ export function RunnerPoolsPage() {
                     {capacity ? (
                       <span
                         className={
-                          capacity.available_capacity === 0 ? 'pill pill--danger' : 'pill pill--success'
+                          capacity.available_capacity === 0
+                            ? 'pill pill--danger'
+                            : 'pill pill--success'
                         }
                       >
                         {capacity.active_executions}/{capacity.max_concurrent_executions}
@@ -173,11 +174,13 @@ export function RunnerPoolsPage() {
                       >
                         Disable
                       </button>
-                      {(pool.status === 'draining' || pool.status === 'disabled') ? (
+                      {pool.status === 'draining' || pool.status === 'disabled' ? (
                         <button
                           className="button button--sm button--ghost"
                           type="button"
-                          onClick={() => setConfirmAction({ poolId: pool.id, action: 'reactivate' })}
+                          onClick={() =>
+                            setConfirmAction({ poolId: pool.id, action: 'reactivate' })
+                          }
                         >
                           Reactivate
                         </button>

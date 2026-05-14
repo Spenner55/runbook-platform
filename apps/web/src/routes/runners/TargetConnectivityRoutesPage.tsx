@@ -3,7 +3,11 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { useAuth } from '../../features/auth/context/useAuth'
-import { fetchTargetConnectivityRoutes, deactivateRoute, reactivateRoute } from '../../features/runners/api'
+import {
+  fetchTargetConnectivityRoutes,
+  deactivateRoute,
+  reactivateRoute,
+} from '../../features/runners/api'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 export function TargetConnectivityRoutesPage() {
@@ -119,9 +123,7 @@ export function TargetConnectivityRoutesPage() {
                     <button
                       className="button button--sm button--ghost"
                       type="button"
-                      onClick={() =>
-                        setConfirmAction({ routeId: route.id, action: 'deactivate' })
-                      }
+                      onClick={() => setConfirmAction({ routeId: route.id, action: 'deactivate' })}
                     >
                       Deactivate
                     </button>
@@ -129,9 +131,7 @@ export function TargetConnectivityRoutesPage() {
                     <button
                       className="button button--sm"
                       type="button"
-                      onClick={() =>
-                        setConfirmAction({ routeId: route.id, action: 'reactivate' })
-                      }
+                      onClick={() => setConfirmAction({ routeId: route.id, action: 'reactivate' })}
                     >
                       Reactivate
                     </button>

@@ -933,6 +933,7 @@ def test_conflicts_include_freeze_rule_and_target_lock(
 # Runner pool route matching in preflight
 # ---------------------------------------------------------------------------
 
+
 def _make_pool_and_runner(org, *, key="test-pool", capabilities=None):
     """Create an active RunnerPool with one fresh online runner."""
     from apps.runners.models import Runner, RunnerPool
@@ -958,7 +959,14 @@ def _make_pool_and_runner(org, *, key="test-pool", capabilities=None):
     return pool
 
 
-def _make_route(org, pool, *, target_type="server", pattern="prod-server-01", required_capabilities=None):
+def _make_route(
+    org,
+    pool,
+    *,
+    target_type="server",
+    pattern="prod-server-01",
+    required_capabilities=None,
+):
     from apps.runners.models import TargetConnectivityRoute
 
     return TargetConnectivityRoute.objects.create(
@@ -979,7 +987,9 @@ def test_preflight_runner_pool_route_miss_fails(approved_change, org):
     # Route exists but for a different target pattern — won't match prod-server-01.
     _make_route(org, pool, pattern="other-host.prod")
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     assert check.runner_pool_ok is False
@@ -995,7 +1005,9 @@ def test_preflight_runner_pool_matching_route_passes(approved_change, org):
     pool = _make_pool_and_runner(org)
     _make_route(org, pool, pattern="prod-server-01")
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.runner_pool_ok is True
     assert check.runner_pool_key == pool.key
@@ -1028,7 +1040,9 @@ def test_preflight_runner_pool_no_online_runner_fails(approved_change, org):
     _ = stale_runner
     _make_route(org, pool, pattern="prod-server-01")
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     assert check.runner_pool_ok is False
@@ -1039,9 +1053,16 @@ def test_preflight_runner_pool_no_online_runner_fails(approved_change, org):
 def test_preflight_runner_pool_missing_capability_fails(approved_change, org):
     """Route requires a capability the pool doesn't have → preflight fails."""
     pool = _make_pool_and_runner(org, capabilities=[])  # empty capabilities
-    _make_route(org, pool, pattern="prod-server-01", required_capabilities=["action.database_query"])
+    _make_route(
+        org,
+        pool,
+        pattern="prod-server-01",
+        required_capabilities=["action.database_query"],
+    )
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     assert check.runner_pool_ok is False
@@ -1058,7 +1079,9 @@ def test_preflight_runner_pool_draining_pool_fails(approved_change, org):
     pool.status = RunnerPool.Status.DRAINING
     pool.save(update_fields=["status", "updated_at"])
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     assert check.runner_pool_ok is False
@@ -1084,7 +1107,9 @@ def test_preflight_all_existing_checks_still_run_with_route_miss(approved_change
     # Route for wrong pattern → route_miss
     _make_route(org, pool, pattern="other-host.prod")
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     assert check.result == DispatchEligibilityCheck.Result.FAILED
     # Both freeze_conflicts and runner_pool checks ran and failed.
@@ -1110,7 +1135,9 @@ def test_diagnostics_serializer_includes_runner_pool_fields(approved_change, org
     pool = _make_pool_and_runner(org)
     _make_route(org, pool, pattern="prod-server-01")
 
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
     data = DispatchEligibilityCheckSerializer(check).data
 
     assert "runner_pool_ok" in data
@@ -1124,11 +1151,13 @@ def test_diagnostics_serializer_includes_runner_pool_fields(approved_change, org
 @pytest.mark.django_db
 def test_diagnostics_serializer_excludes_sensitive_check_keys(approved_change, org):
     """Serializer strips secret-bearing keys from the checks list."""
-    from apps.changes.serializers import DispatchEligibilityCheckSerializer
     from apps.changes.models import DispatchEligibilityCheck
+    from apps.changes.serializers import DispatchEligibilityCheckSerializer
 
     # Manually inject a check entry that contains a secret-bearing key.
-    check = change_services.run_dispatch_preflight(change=approved_change, actor=_user_actor())
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_user_actor()
+    )
 
     # Bypass immutability to inject a poisoned check entry for serializer testing.
     poisoned_checks = list(check.checks) + [
@@ -1155,14 +1184,18 @@ def test_diagnostics_serializer_excludes_sensitive_check_keys(approved_change, o
 
 
 @pytest.mark.django_db
-def test_diagnostics_serializer_never_exposes_runner_pool_id(approved_change, org, api_client, org_user):
+def test_diagnostics_serializer_never_exposes_runner_pool_id(
+    approved_change, org, api_client, org_user
+):
     """API response for preflight does not expose the runner pool's internal UUID."""
     from apps.organizations.models import Membership, MembershipRole
 
     pool = _make_pool_and_runner(org)
     _make_route(org, pool, pattern="prod-server-01")
 
-    Membership.objects.create(organization=org, user=org_user, role=MembershipRole.OPERATOR)
+    Membership.objects.create(
+        organization=org, user=org_user, role=MembershipRole.OPERATOR
+    )
     api_client.force_authenticate(user=org_user)
 
     url = f"/api/v1/changes/{approved_change.id}/preflight/"

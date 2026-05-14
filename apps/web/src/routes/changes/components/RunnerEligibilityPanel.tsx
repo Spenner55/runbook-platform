@@ -9,12 +9,10 @@ const REASON_LABELS: Record<string, string> = {
   route_miss: 'Route miss — no connectivity route matches the change target',
   missing_required_capability:
     'Missing capabilities — the matched pool lacks required runner capabilities',
-  multi_pool_unsupported:
-    'Cross-pool target mismatch — change targets resolve to different pools',
+  multi_pool_unsupported: 'Cross-pool target mismatch — change targets resolve to different pools',
   pool_draining: 'Pool is draining — not accepting new executions',
   pool_disabled: 'Pool is disabled',
-  no_online_runner:
-    'No online runner — the pool has no active runner with a recent heartbeat',
+  no_online_runner: 'No online runner — the pool has no active runner with a recent heartbeat',
 }
 
 function reasonLabel(reason: string): string {
@@ -54,7 +52,9 @@ export function RunnerEligibilityPanel({ changeId, enabled }: Props) {
       className={isEligible ? 'banner banner--info' : 'banner banner--warn'}
       data-testid="runner-eligibility-panel"
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}
+      >
         <strong>Runner Availability</strong>
         <span className={isEligible ? 'pill pill--success' : 'pill pill--danger'}>
           {isEligible ? 'eligible' : 'ineligible'}

@@ -4,50 +4,49 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('runners', '0002_runnerpool_default_for_non_change_executions_and_more'),
+        ("runners", "0002_runnerpool_default_for_non_change_executions_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='runner',
-            name='metadata',
+            model_name="runner",
+            name="metadata",
             field=models.JSONField(blank=True, default=dict),
         ),
         migrations.AlterField(
-            model_name='runnerpool',
-            name='capabilities',
+            model_name="runnerpool",
+            name="capabilities",
             field=models.JSONField(blank=True, default=list),
         ),
         migrations.AlterField(
-            model_name='runnerpool',
-            name='labels',
+            model_name="runnerpool",
+            name="labels",
             field=models.JSONField(blank=True, default=dict),
         ),
         migrations.AlterField(
-            model_name='runnerpool',
-            name='metadata',
+            model_name="runnerpool",
+            name="metadata",
             field=models.JSONField(blank=True, default=dict),
         ),
         migrations.AlterField(
-            model_name='runnerregistrationtoken',
-            name='capability_policy',
+            model_name="runnerregistrationtoken",
+            name="capability_policy",
             field=models.JSONField(blank=True, default=list),
         ),
         migrations.AlterField(
-            model_name='runnerregistrationtoken',
-            name='label_policy',
+            model_name="runnerregistrationtoken",
+            name="label_policy",
             field=models.JSONField(blank=True, default=list),
         ),
         migrations.AlterField(
-            model_name='targetconnectivityroute',
-            name='required_capabilities',
+            model_name="targetconnectivityroute",
+            name="required_capabilities",
             field=models.JSONField(blank=True, default=list),
         ),
         migrations.AlterField(
-            model_name='targetconnectivityroute',
-            name='required_labels',
+            model_name="targetconnectivityroute",
+            name="required_labels",
             field=models.JSONField(blank=True, default=dict),
         ),
     ]

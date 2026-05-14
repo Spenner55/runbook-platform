@@ -8,12 +8,14 @@ from unittest.mock import MagicMock
 import pytest
 from django.utils import timezone
 
-from apps.runners.models import Runner, TargetConnectivityRoute
+from apps.runners.models import TargetConnectivityRoute
 from apps.runners.route_matching import find_pool_for_change
 from apps.runners.tests.conftest import make_runner
 
 
-def _mock_target(org, target_type="server", normalized_id="web-01.prod", environment="production"):
+def _mock_target(
+    org, target_type="server", normalized_id="web-01.prod", environment="production"
+):
     t = MagicMock()
     t.target_type = target_type
     t.normalized_identifier = normalized_id
@@ -65,7 +67,9 @@ class TestFindPoolForChange:
             is_active=True,
         )
         make_runner(pool, fingerprint="fp-wc")
-        change = _mock_change(org, [_mock_target(org, target_type="database", normalized_id="db-01")])
+        change = _mock_change(
+            org, [_mock_target(org, target_type="database", normalized_id="db-01")]
+        )
         pool_result, reason = find_pool_for_change(change)
         assert pool_result is not None
         assert reason == "ok"
@@ -192,7 +196,7 @@ class TestFindPoolForChange:
     def test_priority_tie_breaker_is_deterministic(self, org, pool, pool2):
         """When two routes share the same priority the one with the lower DB id wins."""
         # Both routes are wildcards so they both match the same target type/pattern.
-        route_a = TargetConnectivityRoute.objects.create(
+        TargetConnectivityRoute.objects.create(
             organization=org,
             environment="production",
             target_type="server",
@@ -218,7 +222,9 @@ class TestFindPoolForChange:
         # All runs must agree on the same pool (lower id → route_a → pool).
         pool_ids = {r[0].pk for r in results if r[0] is not None}
         assert len(pool_ids) == 1
-        assert pool_ids.pop() == pool.pk  # route_a was created first, so it has the smaller id
+        assert (
+            pool_ids.pop() == pool.pk
+        )  # route_a was created first, so it has the smaller id
 
     def test_route_required_capability_missing_from_pool_fails(self, org, pool):
         """Route with required_capabilities that the pool lacks → missing_required_capability."""

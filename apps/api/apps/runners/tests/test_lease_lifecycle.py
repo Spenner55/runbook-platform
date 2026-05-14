@@ -4,7 +4,10 @@ import pytest
 from django.utils import timezone
 
 from apps.executions.models import Execution
-from apps.executions.services import claim_next_execution, complete_execution, recover_stuck_executions
+from apps.executions.services import (
+    complete_execution,
+    recover_stuck_executions,
+)
 from apps.runners.models import ExecutionLease
 from apps.runners.scheduling import schedule_execution_claim
 from apps.runners.tests.conftest import make_runner
@@ -26,6 +29,7 @@ def _published_workflow(org):
 
 def _make_execution(org, workflow):
     from apps.executions.services import create_execution
+
     return create_execution(workflow=workflow, _from_change_service=True)
 
 

@@ -51,7 +51,12 @@ describe('RunnerPoolsPage', () => {
           results: [
             makePool({ id: 'pool-1', key: 'prod-us-east', status: 'active' }),
             makePool({ id: 'pool-2', key: 'staging-pool', name: 'Staging', status: 'draining' }),
-            makePool({ id: 'pool-3', key: 'offline-pool', name: 'Disabled Pool', status: 'disabled' }),
+            makePool({
+              id: 'pool-3',
+              key: 'offline-pool',
+              name: 'Disabled Pool',
+              status: 'disabled',
+            }),
           ],
         })
       }

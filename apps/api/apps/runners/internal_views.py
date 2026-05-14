@@ -82,7 +82,9 @@ class RunnerHeartbeatView(RunnerInternalAPIView):
         runner_id = getattr(auth_principal, "runner_id", None)
         if runner_id is None:
             return Response(
-                {"detail": "Runner ID not resolved; use per-runner bearer token for heartbeat."},
+                {
+                    "detail": "Runner ID not resolved; use per-runner bearer token for heartbeat."
+                },
                 status=400,
             )
         supplied_runner_id = d.get("runner_id")

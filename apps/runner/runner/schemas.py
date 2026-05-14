@@ -70,7 +70,10 @@ class RunnerSettings(BaseModel):
     def validate_registration_token(self) -> RunnerSettings:
         # Allow empty/placeholder only when runner_bearer_token is already set
         # (post-registration mode).
-        if not self.runner_bearer_token and self.registration_token.strip() in {"", "change-me"}:
+        if not self.runner_bearer_token and self.registration_token.strip() in {
+            "",
+            "change-me",
+        }:
             raise ValueError(
                 "RUNNER_REGISTRATION_TOKEN must be set to a non-placeholder value, "
                 "or RUNNER_BEARER_TOKEN must be set (post-registration mode)."
@@ -92,7 +95,10 @@ class RunnerSettings(BaseModel):
             errors.append("RUNNER_ID is empty — set it to a unique runner identifier")
         # In legacy mode: registration_token is used directly as bearer.
         # In registered mode: runner_bearer_token takes precedence.
-        if not self.runner_bearer_token and self.registration_token.strip() in {"", "change-me"}:
+        if not self.runner_bearer_token and self.registration_token.strip() in {
+            "",
+            "change-me",
+        }:
             errors.append(
                 "RUNNER_REGISTRATION_TOKEN must not be empty or the placeholder 'change-me'"
             )

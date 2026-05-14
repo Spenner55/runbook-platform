@@ -68,9 +68,11 @@ def validate_registration_token(
     token_hash = _hash_token(registration_token)
 
     try:
-        reg_token = RunnerRegistrationToken.objects.select_for_update().select_related(
-            "pool", "organization"
-        ).get(token_hash=token_hash)
+        reg_token = (
+            RunnerRegistrationToken.objects.select_for_update()
+            .select_related("pool", "organization")
+            .get(token_hash=token_hash)
+        )
     except RunnerRegistrationToken.DoesNotExist:
         raise DomainValidationError(
             code="invalid_registration_token",
@@ -148,13 +150,17 @@ def register_runner(
     pool = reg_token.pool
 
     # Filter labels and capabilities to only allowed values (silently drop extras).
-    allowed_labels_keys = set(reg_token.label_policy) if reg_token.label_policy else None
+    allowed_labels_keys = (
+        set(reg_token.label_policy) if reg_token.label_policy else None
+    )
     if allowed_labels_keys is not None:
         accepted_labels = {k: v for k, v in labels.items() if k in allowed_labels_keys}
     else:
         accepted_labels = labels
 
-    allowed_caps = set(reg_token.capability_policy) if reg_token.capability_policy else None
+    allowed_caps = (
+        set(reg_token.capability_policy) if reg_token.capability_policy else None
+    )
     if allowed_caps is not None:
         accepted_capabilities = [c for c in capabilities if c in allowed_caps]
     else:
@@ -213,7 +219,10 @@ def register_runner(
             registered_at=now,
             last_seen_at=now,
             last_heartbeat_at=now,
-            metadata={"accepted_labels": accepted_labels, "accepted_capabilities": accepted_capabilities},
+            metadata={
+                "accepted_labels": accepted_labels,
+                "accepted_capabilities": accepted_capabilities,
+            },
         )
 
     reg_token.used_count += 1
@@ -288,7 +297,9 @@ def reactivate_pool(*, pool):
     pool.status = RunnerPool.Status.ACTIVE
     pool.drain_requested_at = None
     pool.disabled_at = None
-    pool.save(update_fields=["status", "drain_requested_at", "disabled_at", "updated_at"])
+    pool.save(
+        update_fields=["status", "drain_requested_at", "disabled_at", "updated_at"]
+    )
     return pool
 
 

@@ -4,82 +4,130 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('runners', '0001_initial'),
+        ("runners", "0001_initial"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='runnerpool',
-            name='default_for_non_change_executions',
+            model_name="runnerpool",
+            name="default_for_non_change_executions",
             field=models.BooleanField(default=False),
         ),
         migrations.AddField(
-            model_name='runnerpool',
-            name='disabled_at',
+            model_name="runnerpool",
+            name="disabled_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='runnerpool',
-            name='display_name',
+            model_name="runnerpool",
+            name="display_name",
             field=models.CharField(blank=True, max_length=255),
         ),
         migrations.AddField(
-            model_name='runnerpool',
-            name='drain_requested_at',
+            model_name="runnerpool",
+            name="drain_requested_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddIndex(
-            model_name='runner',
-            index=models.Index(fields=['organization', 'status'], name='runner_org_status_idx'),
+            model_name="runner",
+            index=models.Index(
+                fields=["organization", "status"], name="runner_org_status_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='runner',
-            index=models.Index(fields=['pool', 'status', 'last_seen_at'], name='runner_pool_status_seen_idx'),
+            model_name="runner",
+            index=models.Index(
+                fields=["pool", "status", "last_seen_at"],
+                name="runner_pool_status_seen_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='runnerpool',
-            index=models.Index(fields=['organization', 'default_for_non_change_executions', 'status'], name='runner_pool_org_default_idx'),
+            model_name="runnerpool",
+            index=models.Index(
+                fields=["organization", "default_for_non_change_executions", "status"],
+                name="runner_pool_org_default_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='runnerregistrationtoken',
-            index=models.Index(fields=['pool', 'revoked_at', 'expires_at'], name='reg_token_pool_usable_idx'),
+            model_name="runnerregistrationtoken",
+            index=models.Index(
+                fields=["pool", "revoked_at", "expires_at"],
+                name="reg_token_pool_usable_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='targetconnectivityroute',
-            index=models.Index(fields=['organization', 'environment', 'target_type', 'priority', 'is_active'], name='tcr_sched_lookup_idx'),
+            model_name="targetconnectivityroute",
+            index=models.Index(
+                fields=[
+                    "organization",
+                    "environment",
+                    "target_type",
+                    "priority",
+                    "is_active",
+                ],
+                name="tcr_sched_lookup_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runner',
-            constraint=models.UniqueConstraint(fields=('token_hash',), name='runner_token_hash_unique'),
+            model_name="runner",
+            constraint=models.UniqueConstraint(
+                fields=("token_hash",), name="runner_token_hash_unique"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerpool',
-            constraint=models.CheckConstraint(condition=models.Q(('max_concurrent_executions__gte', 1)), name='runner_pool_max_concurrent_gte_1_chk'),
+            model_name="runnerpool",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("max_concurrent_executions__gte", 1)),
+                name="runner_pool_max_concurrent_gte_1_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerpool',
-            constraint=models.CheckConstraint(condition=models.Q(('max_concurrent_per_target__gte', 1)), name='runner_pool_target_concurrent_gte_1_chk'),
+            model_name="runnerpool",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("max_concurrent_per_target__gte", 1)),
+                name="runner_pool_target_concurrent_gte_1_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerpool',
-            constraint=models.UniqueConstraint(condition=models.Q(('default_for_non_change_executions', True)), fields=('organization',), name='runner_pool_one_default_non_change_per_org'),
+            model_name="runnerpool",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("default_for_non_change_executions", True)),
+                fields=("organization",),
+                name="runner_pool_one_default_non_change_per_org",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerregistrationtoken',
-            constraint=models.UniqueConstraint(fields=('token_hash',), name='runner_reg_token_hash_unique'),
+            model_name="runnerregistrationtoken",
+            constraint=models.UniqueConstraint(
+                fields=("token_hash",), name="runner_reg_token_hash_unique"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerregistrationtoken',
-            constraint=models.CheckConstraint(condition=models.Q(('max_registrations__gte', 1)), name='runner_reg_max_registrations_gte_1_chk'),
+            model_name="runnerregistrationtoken",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("max_registrations__gte", 1)),
+                name="runner_reg_max_registrations_gte_1_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='runnerregistrationtoken',
-            constraint=models.CheckConstraint(condition=models.Q(('used_count__lte', models.F('max_registrations'))), name='runner_reg_used_count_lte_max_chk'),
+            model_name="runnerregistrationtoken",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("used_count__lte", models.F("max_registrations"))),
+                name="runner_reg_used_count_lte_max_chk",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='targetconnectivityroute',
-            constraint=models.UniqueConstraint(fields=('organization', 'environment', 'target_type', 'normalized_identifier_pattern', 'pool'), name='tcr_org_env_type_pattern_pool_unique'),
+            model_name="targetconnectivityroute",
+            constraint=models.UniqueConstraint(
+                fields=(
+                    "organization",
+                    "environment",
+                    "target_type",
+                    "normalized_identifier_pattern",
+                    "pool",
+                ),
+                name="tcr_org_env_type_pattern_pool_unique",
+            ),
         ),
     ]

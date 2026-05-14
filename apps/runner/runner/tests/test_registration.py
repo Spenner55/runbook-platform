@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -40,7 +39,9 @@ def _make_settings(**overrides) -> RunnerSettings:
     return RunnerSettings(**defaults)
 
 
-def _make_client(transport: httpx.MockTransport | None = None, **overrides) -> ApiClient:
+def _make_client(
+    transport: httpx.MockTransport | None = None, **overrides
+) -> ApiClient:
     if transport is None:
         transport = httpx.MockTransport(
             lambda req: httpx.Response(200, json=_REG_RESPONSE)
@@ -90,7 +91,9 @@ def test_registration_skipped_when_state_file_exists(tmp_path):
 
     _ensure_registered(settings, client)
 
-    assert call_count == 0, "register() must not be called when state file has valid identity"
+    assert call_count == 0, (
+        "register() must not be called when state file has valid identity"
+    )
 
 
 def test_state_file_not_created_when_path_not_configured():
@@ -169,7 +172,9 @@ def test_idle_heartbeat_is_sent():
     with patch("runner.poller.time.sleep", side_effect=fake_sleep):
         poller._run_heartbeat_loop()
 
-    assert len(hb_calls) >= 1, "runner_heartbeat() must be called at least once while idle"
+    assert len(hb_calls) >= 1, (
+        "runner_heartbeat() must be called at least once while idle"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +207,9 @@ def test_check_runner_id_conflict_mismatch_raises():
 def test_mismatched_state_file_runner_id_is_fatal(tmp_path):
     """If state file has a runner_id but RUNNER_REGISTERED_ID differs, fatal."""
     state_file = tmp_path / "runner.state.json"
-    RunnerState(runner_id=_CANONICAL_ID, runner_bearer_token=_BEARER_TOKEN).save(state_file)
+    RunnerState(runner_id=_CANONICAL_ID, runner_bearer_token=_BEARER_TOKEN).save(
+        state_file
+    )
 
     settings = _make_settings(
         runner_state_file=str(state_file),

@@ -741,7 +741,9 @@ def claim_next_execution(*, runner_id: str, runner=None) -> dict | None:
                 "previous_status": previous_status,
                 "new_status": execution.status,
                 "runner_id": runner_id,
-                "claimed_at": execution.claimed_at.isoformat() if execution.claimed_at else None,
+                "claimed_at": execution.claimed_at.isoformat()
+                if execution.claimed_at
+                else None,
                 "reclaimed": False,
                 "pool_key": execution.runner_pool_key,
             },
@@ -753,7 +755,9 @@ def claim_next_execution(*, runner_id: str, runner=None) -> dict | None:
                 data={
                     "execution_id": str(execution.id),
                     "status": execution.status,
-                    "timestamp": execution.claimed_at.isoformat() if execution.claimed_at else None,
+                    "timestamp": execution.claimed_at.isoformat()
+                    if execution.claimed_at
+                    else None,
                     "started_at": None,
                     "finished_at": None,
                 },

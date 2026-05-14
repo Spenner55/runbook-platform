@@ -243,7 +243,9 @@ def test_target_lock_linked_to_execution(approved_change):
 
 
 @pytest.mark.django_db
-def test_make_dispatchable_persists_matched_runner_pool_on_execution(approved_change, org):
+def test_make_dispatchable_persists_matched_runner_pool_on_execution(
+    approved_change, org
+):
     pool = _make_pool(org, key="prod-routed")
     _make_route(org, pool)
     make_runner(pool, fingerprint="fp-dispatch-route")

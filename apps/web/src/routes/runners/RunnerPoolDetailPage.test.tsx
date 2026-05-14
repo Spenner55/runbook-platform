@@ -88,8 +88,7 @@ describe('RunnerPoolDetailPage', () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
       if (url.includes('/runner-pools/pool-1')) return createJsonResponse(makePool())
-      if (url.includes('/runners/'))
-        return createJsonResponse({ results: [makeRunner()] })
+      if (url.includes('/runners/')) return createJsonResponse({ results: [makeRunner()] })
       return createJsonResponse({})
     })
 

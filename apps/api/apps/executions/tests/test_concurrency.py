@@ -200,7 +200,9 @@ def _make_runner(pool, fingerprint="fp-default"):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_pool_aware_concurrent_claim_respects_pool_limit(org, runbook, published_workflow):
+def test_pool_aware_concurrent_claim_respects_pool_limit(
+    org, runbook, published_workflow
+):
     """Two runners racing on a pool with max_concurrent=1 — only one succeeds."""
     pool = _make_pool(org, key="limited-pool", max_concurrent=1)
     runner_a = _make_runner(pool, fingerprint="fp-pa")
@@ -293,7 +295,7 @@ def test_ownership_mismatch_rejected_on_heartbeat(org, runbook, published_workfl
     result = services.claim_next_execution(runner_id="runner-owner")
     assert result is not None
     execution = result["execution"]
-    real_token = result["claim_token"]
+    _real_token = result["claim_token"]
 
     with pytest.raises(InvalidStateTransitionError) as exc_info:
         services.heartbeat_execution(

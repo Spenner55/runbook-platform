@@ -3,8 +3,12 @@ from rest_framework import serializers
 
 class RunnerRegisterRequestSerializer(serializers.Serializer):
     registration_token = serializers.CharField()
-    organization_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    pool_key = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    organization_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
+    pool_key = serializers.CharField(
+        max_length=64, required=False, allow_blank=True, default=""
+    )
     display_name = serializers.CharField(max_length=255)
     runner_version = serializers.CharField(max_length=64, default="0.1.0")
     fingerprint_sha256 = serializers.CharField(max_length=64, default="")

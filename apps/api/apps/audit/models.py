@@ -82,8 +82,14 @@ class AuditEvent(BaseModel):
         AUDITOR_ACCESS_GRANT = "auditor_access_grant", "Auditor Access Grant"
         RUNNER_POOL = "runner_pool", "Runner Pool"
         RUNNER = "runner", "Runner"
-        RUNNER_REGISTRATION_TOKEN = "runner_registration_token", "Runner Registration Token"
-        TARGET_CONNECTIVITY_ROUTE = "target_connectivity_route", "Target Connectivity Route"
+        RUNNER_REGISTRATION_TOKEN = (
+            "runner_registration_token",
+            "Runner Registration Token",
+        )
+        TARGET_CONNECTIVITY_ROUTE = (
+            "target_connectivity_route",
+            "Target Connectivity Route",
+        )
         EXECUTION_LEASE = "execution_lease", "Execution Lease"
 
     actor_type = models.CharField(max_length=32, choices=ActorType.choices)

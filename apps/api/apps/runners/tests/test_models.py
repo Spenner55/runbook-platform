@@ -84,6 +84,7 @@ class TestRunnerModel:
 
     def test_runner_initial_status_registered(self, pool):
         from apps.runners.services import generate_runner_token
+
         _, h = generate_runner_token()
         r = Runner.objects.create(
             organization=pool.organization,
@@ -117,7 +118,9 @@ class TestRunnerModel:
 
 @pytest.mark.django_db
 class TestRunnerRegistrationToken:
-    def test_registration_token_pool_must_match_organization(self, org2, runner_token_clear):
+    def test_registration_token_pool_must_match_organization(
+        self, org2, runner_token_clear
+    ):
         _, token = runner_token_clear
         token.organization = org2
         with pytest.raises(ValidationError):

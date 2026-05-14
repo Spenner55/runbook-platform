@@ -45,7 +45,15 @@ class RunnerAdmin(admin.ModelAdmin):
 
 @admin.register(RunnerRegistrationToken)
 class RunnerRegistrationTokenAdmin(admin.ModelAdmin):
-    list_display = ("id", "organization", "pool", "expires_at", "used_count", "max_registrations", "revoked_at")
+    list_display = (
+        "id",
+        "organization",
+        "pool",
+        "expires_at",
+        "used_count",
+        "max_registrations",
+        "revoked_at",
+    )
     list_filter = ("pool",)
     readonly_fields = ("id", "token_hash", "created_at", "updated_at")
     exclude = ("token_hash",)
@@ -69,6 +77,13 @@ class TargetConnectivityRouteAdmin(admin.ModelAdmin):
 
 @admin.register(ExecutionLease)
 class ExecutionLeaseAdmin(admin.ModelAdmin):
-    list_display = ("execution", "runner", "pool", "status", "claimed_at", "released_at")
+    list_display = (
+        "execution",
+        "runner",
+        "pool",
+        "status",
+        "claimed_at",
+        "released_at",
+    )
     list_filter = ("status",)
     readonly_fields = ("id", "created_at", "updated_at")

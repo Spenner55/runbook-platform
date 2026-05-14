@@ -4284,7 +4284,10 @@ def run_dispatch_preflight(
             )
     except Exception:
         import logging as _logging
-        _logging.getLogger(__name__).exception("Runner pool check failed during preflight")
+
+        _logging.getLogger(__name__).exception(
+            "Runner pool check failed during preflight"
+        )
         runner_pool_ok = False
         runner_pool_reason = "check_error"
         _runner_pool_blocks = True

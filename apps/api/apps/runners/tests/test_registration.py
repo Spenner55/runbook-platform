@@ -14,7 +14,9 @@ from apps.runners.models import Runner, RunnerRegistrationToken
 from apps.runners.services import create_registration_token, register_runner
 
 
-def _make_reg_token(pool, *, max_reg=1, extra_seconds=3600, label_policy=None, cap_policy=None):
+def _make_reg_token(
+    pool, *, max_reg=1, extra_seconds=3600, label_policy=None, cap_policy=None
+):
     clear = secrets.token_hex(32)
     token_hash = hashlib.sha256(clear.encode()).hexdigest()
     reg = RunnerRegistrationToken.objects.create(

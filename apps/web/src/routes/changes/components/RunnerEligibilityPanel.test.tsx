@@ -192,9 +192,7 @@ describe('RunnerEligibilityPanel', () => {
     })
 
     expect(urls.every((u) => !u.includes('/internal/'))).toBe(true)
-    expect(
-      urls.every((u) => u.startsWith('http://localhost:8000/api/v1/'))
-    ).toBe(true)
+    expect(urls.every((u) => u.startsWith('http://localhost:8000/api/v1/'))).toBe(true)
   })
 
   it('does not display tokens, credentials, or raw secret names', async () => {

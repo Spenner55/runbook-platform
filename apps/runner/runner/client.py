@@ -272,7 +272,9 @@ class ApiClient:
         data = self._post(
             "/api/v1/internal/runners/register/",
             {
-                "registration_token": self._auth_headers["Authorization"].split(" ", 1)[1],
+                "registration_token": self._auth_headers["Authorization"].split(" ", 1)[
+                    1
+                ],
                 "display_name": display_name,
                 "runner_version": self._runner_version,
                 "fingerprint_sha256": fingerprint_sha256,

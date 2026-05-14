@@ -7,7 +7,8 @@ import { getApiErrorMessage } from '../../shared/api/client'
 function getStatusPillClass(status: string) {
   if (status === 'active') return 'pill pill--success'
   if (status === 'draining') return 'pill pill--warn'
-  if (status === 'offline' || status === 'disabled' || status === 'revoked') return 'pill pill--danger'
+  if (status === 'offline' || status === 'disabled' || status === 'revoked')
+    return 'pill pill--danger'
   return 'pill'
 }
 
@@ -109,7 +110,9 @@ export function RunnerDetailPage() {
             type="button"
             disabled={runner.status === 'revoked'}
             onClick={() => {
-              if (window.confirm('Revoke this runner? It will no longer be able to authenticate.')) {
+              if (
+                window.confirm('Revoke this runner? It will no longer be able to authenticate.')
+              ) {
                 revokeMutation.mutate(runner.id)
               }
             }}
@@ -177,9 +180,7 @@ export function RunnerDetailPage() {
           ) : null}
         </dd>
         <dt className="muted">Last Seen</dt>
-        <dd>
-          {runner.last_seen_at ? new Date(runner.last_seen_at).toLocaleString() : 'Never'}
-        </dd>
+        <dd>{runner.last_seen_at ? new Date(runner.last_seen_at).toLocaleString() : 'Never'}</dd>
         <dt className="muted">Active Executions</dt>
         <dd>{runner.active_execution_count ?? '—'}</dd>
         <dt className="muted">Registered</dt>

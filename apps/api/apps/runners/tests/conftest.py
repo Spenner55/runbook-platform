@@ -8,11 +8,9 @@ from rest_framework.test import APIClient
 
 from apps.organizations.models import Organization
 from apps.runners.models import (
-    ExecutionLease,
     Runner,
     RunnerPool,
     RunnerRegistrationToken,
-    TargetConnectivityRoute,
 )
 from apps.runners.services import generate_runner_token
 
@@ -58,7 +56,9 @@ def other_org_pool(db, org2):
     )
 
 
-def make_runner(pool, *, status=Runner.Status.ACTIVE, token_hash=None, fingerprint="fp-default"):
+def make_runner(
+    pool, *, status=Runner.Status.ACTIVE, token_hash=None, fingerprint="fp-default"
+):
     if token_hash is None:
         _, token_hash = generate_runner_token()
     now = timezone.now()

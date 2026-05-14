@@ -21,7 +21,8 @@ function getPoolStatusPillClass(status: string) {
 function getRunnerStatusPillClass(status: string) {
   if (status === 'active') return 'pill pill--success'
   if (status === 'draining') return 'pill pill--warn'
-  if (status === 'offline' || status === 'disabled' || status === 'revoked') return 'pill pill--danger'
+  if (status === 'offline' || status === 'disabled' || status === 'revoked')
+    return 'pill pill--danger'
   return 'pill'
 }
 
@@ -66,7 +67,8 @@ export function RunnerPoolDetailPage() {
   })
 
   if (poolQuery.isLoading) return <p className="muted">Loading…</p>
-  if (poolQuery.error) return <p className="banner banner--error">{getApiErrorMessage(poolQuery.error)}</p>
+  if (poolQuery.error)
+    return <p className="banner banner--error">{getApiErrorMessage(poolQuery.error)}</p>
 
   const pool = poolQuery.data
   if (!pool) return null
@@ -100,7 +102,7 @@ export function RunnerPoolDetailPage() {
           >
             Disable Pool
           </button>
-          {(pool.status === 'draining' || pool.status === 'disabled') ? (
+          {pool.status === 'draining' || pool.status === 'disabled' ? (
             <button
               className="button button--sm button--ghost"
               type="button"

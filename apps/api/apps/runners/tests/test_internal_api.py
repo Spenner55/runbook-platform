@@ -86,8 +86,15 @@ class TestRunnerRegisterView:
         client = APIClient()
         resp = client.post(
             "/api/v1/internal/runners/register/",
-            {"registration_token": clear, "display_name": "r", "runner_version": "0.1.0",
-             "fingerprint_sha256": "fp", "hostname": "h", "labels": {}, "capabilities": []},
+            {
+                "registration_token": clear,
+                "display_name": "r",
+                "runner_version": "0.1.0",
+                "fingerprint_sha256": "fp",
+                "hostname": "h",
+                "labels": {},
+                "capabilities": [],
+            },
             format="json",
         )
         assert resp.status_code == 201
@@ -144,8 +151,13 @@ class TestRunnerHeartbeatView:
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {clear}")
         resp = client.post(
             "/api/v1/internal/runners/heartbeat/",
-            {"runner_version": "0.2.0", "hostname": "new-host", "current_execution_count": 0,
-             "observed_pool_key": pool.key, "capabilities_checksum": "abc"},
+            {
+                "runner_version": "0.2.0",
+                "hostname": "new-host",
+                "current_execution_count": 0,
+                "observed_pool_key": pool.key,
+                "capabilities_checksum": "abc",
+            },
             format="json",
         )
         assert resp.status_code == 200

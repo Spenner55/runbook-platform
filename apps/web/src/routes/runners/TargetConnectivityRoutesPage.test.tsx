@@ -54,9 +54,7 @@ describe('TargetConnectivityRoutesPage', () => {
   })
 
   it('shows inactive route with reactivate button', async () => {
-    fetchMock.mockResolvedValue(
-      createJsonResponse({ results: [makeRoute({ is_active: false })] })
-    )
+    fetchMock.mockResolvedValue(createJsonResponse({ results: [makeRoute({ is_active: false })] }))
 
     renderRoute(<TargetConnectivityRoutesPage />, {
       path: '/runners/routes',
@@ -76,8 +74,7 @@ describe('TargetConnectivityRoutesPage', () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
       urls.push(url)
-      if (url.includes('/deactivate/'))
-        return createJsonResponse(makeRoute({ is_active: false }))
+      if (url.includes('/deactivate/')) return createJsonResponse(makeRoute({ is_active: false }))
       return createJsonResponse({ results: [makeRoute()] })
     })
 
@@ -107,8 +104,7 @@ describe('TargetConnectivityRoutesPage', () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
       urls.push(url)
-      if (url.includes('/reactivate/'))
-        return createJsonResponse(makeRoute({ is_active: true }))
+      if (url.includes('/reactivate/')) return createJsonResponse(makeRoute({ is_active: true }))
       return createJsonResponse({ results: [makeRoute({ is_active: false })] })
     })
 
