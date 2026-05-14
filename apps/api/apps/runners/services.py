@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditService
-from apps.common.exceptions import DomainValidationError
+from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError
 
 
 def _hash_token(token: str) -> str:
@@ -234,6 +234,168 @@ def register_runner(
     )
 
     return runner, clear_token
+
+
+@transaction.atomic
+def drain_pool(*, pool):
+    """Request a pool drain. Raises InvalidStateTransitionError on bad state."""
+    from apps.runners.models import RunnerPool
+
+    if pool.status == RunnerPool.Status.DISABLED:
+        raise InvalidStateTransitionError(
+            code="pool_disabled",
+            detail="Disabled pool cannot be drained. Reactivate it first.",
+        )
+    if pool.status == RunnerPool.Status.DRAINING:
+        raise InvalidStateTransitionError(
+            code="pool_already_draining",
+            detail="Pool is already draining.",
+        )
+    pool.status = RunnerPool.Status.DRAINING
+    pool.drain_requested_at = timezone.now()
+    pool.save(update_fields=["status", "drain_requested_at", "updated_at"])
+    return pool
+
+
+@transaction.atomic
+def disable_pool(*, pool):
+    """Disable a pool. Raises InvalidStateTransitionError on bad state."""
+    from apps.runners.models import RunnerPool
+
+    if pool.status == RunnerPool.Status.DISABLED:
+        raise InvalidStateTransitionError(
+            code="pool_already_disabled",
+            detail="Pool is already disabled.",
+        )
+    pool.status = RunnerPool.Status.DISABLED
+    pool.disabled_at = timezone.now()
+    pool.save(update_fields=["status", "disabled_at", "updated_at"])
+    return pool
+
+
+@transaction.atomic
+def reactivate_pool(*, pool):
+    """Reactivate a draining or disabled pool. Raises InvalidStateTransitionError on bad state."""
+    from apps.runners.models import RunnerPool
+
+    if pool.status == RunnerPool.Status.ACTIVE:
+        raise InvalidStateTransitionError(
+            code="pool_already_active",
+            detail="Pool is already active.",
+        )
+    pool.status = RunnerPool.Status.ACTIVE
+    pool.drain_requested_at = None
+    pool.disabled_at = None
+    pool.save(update_fields=["status", "drain_requested_at", "disabled_at", "updated_at"])
+    return pool
+
+
+@transaction.atomic
+def drain_runner(*, runner):
+    """Request a runner drain. Raises InvalidStateTransitionError on bad state."""
+    from apps.runners.models import Runner
+
+    if runner.status in (Runner.Status.DISABLED, Runner.Status.REVOKED):
+        raise InvalidStateTransitionError(
+            code="runner_not_drainable",
+            detail=f"Cannot drain a {runner.status} runner.",
+        )
+    if runner.status == Runner.Status.DRAINING:
+        raise InvalidStateTransitionError(
+            code="runner_already_draining",
+            detail="Runner is already draining.",
+        )
+    runner.status = Runner.Status.DRAINING
+    runner.drain_requested_at = timezone.now()
+    runner.save(update_fields=["status", "drain_requested_at", "updated_at"])
+    return runner
+
+
+@transaction.atomic
+def disable_runner(*, runner):
+    """Disable a runner. Raises InvalidStateTransitionError on bad state."""
+    from apps.runners.models import Runner
+
+    if runner.status == Runner.Status.REVOKED:
+        raise InvalidStateTransitionError(
+            code="runner_revoked",
+            detail="Cannot disable a revoked runner.",
+        )
+    if runner.status == Runner.Status.DISABLED:
+        raise InvalidStateTransitionError(
+            code="runner_already_disabled",
+            detail="Runner is already disabled.",
+        )
+    runner.status = Runner.Status.DISABLED
+    runner.disabled_at = timezone.now()
+    runner.save(update_fields=["status", "disabled_at", "updated_at"])
+    return runner
+
+
+@transaction.atomic
+def revoke_runner(*, runner):
+    """Revoke a runner's credentials. Raises InvalidStateTransitionError if already revoked."""
+    from apps.runners.models import Runner
+
+    if runner.status == Runner.Status.REVOKED:
+        raise InvalidStateTransitionError(
+            code="runner_already_revoked",
+            detail="Runner is already revoked.",
+        )
+    runner.status = Runner.Status.REVOKED
+    runner.revoked_at = timezone.now()
+    runner.save(update_fields=["status", "revoked_at", "updated_at"])
+    return runner
+
+
+@transaction.atomic
+def revoke_registration_token(*, token):
+    """Revoke a registration token. Raises InvalidStateTransitionError if already revoked."""
+    if token.revoked_at is not None:
+        raise InvalidStateTransitionError(
+            code="token_already_revoked",
+            detail="Registration token is already revoked.",
+        )
+    token.revoked_at = timezone.now()
+    token.save(update_fields=["revoked_at", "updated_at"])
+    return token
+
+
+@transaction.atomic
+def deactivate_route(*, route):
+    """Deactivate a connectivity route. Raises InvalidStateTransitionError if already inactive."""
+    if not route.is_active:
+        raise InvalidStateTransitionError(
+            code="route_already_inactive",
+            detail="Route is already inactive.",
+        )
+    route.is_active = False
+    route.save(update_fields=["is_active", "updated_at"])
+    return route
+
+
+@transaction.atomic
+def reactivate_route(*, route):
+    """Reactivate a connectivity route. Validates pool is still active."""
+    from apps.runners.models import RunnerPool
+
+    if route.is_active:
+        raise InvalidStateTransitionError(
+            code="route_already_active",
+            detail="Route is already active.",
+        )
+    route.pool.refresh_from_db(fields=["status"])
+    if route.pool.status != RunnerPool.Status.ACTIVE:
+        raise InvalidStateTransitionError(
+            code="pool_not_active",
+            detail=(
+                f"Cannot reactivate route: pool '{route.pool.key}' is not active "
+                f"(status: {route.pool.status})."
+            ),
+        )
+    route.is_active = True
+    route.save(update_fields=["is_active", "updated_at"])
+    return route
 
 
 def update_runner_heartbeat(

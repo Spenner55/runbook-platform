@@ -1,5 +1,6 @@
 import logging
 
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, viewsets
@@ -9,9 +10,8 @@ from rest_framework.views import APIView
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditService
+from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError
 from apps.common.permissions import (
-    ADMIN_ROLES,
-    MEMBER_ROLES,
     assert_organization_admin,
     assert_organization_member,
 )
@@ -24,10 +24,22 @@ from apps.runners.models import (
 from apps.runners.serializers import (
     RunnerPoolSerializer,
     RunnerRegistrationTokenCreateSerializer,
+    RunnerRegistrationTokenListSerializer,
     RunnerSerializer,
     TargetConnectivityRouteSerializer,
 )
-from apps.runners.services import generate_runner_token
+from apps.runners.services import (
+    create_registration_token,
+    deactivate_route,
+    disable_pool,
+    disable_runner,
+    drain_pool,
+    drain_runner,
+    reactivate_pool,
+    reactivate_route,
+    revoke_registration_token,
+    revoke_runner,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +49,36 @@ def _get_org_id(request, kwargs):
         kwargs.get("organization_pk")
         or request.query_params.get("organization_id")
         or request.headers.get("X-Organization-Id")
+    )
+
+
+def _state_error_response(exc):
+    status_code = getattr(exc, "http_status", 400)
+    return Response({"detail": exc.detail, "code": exc.code}, status=status_code)
+
+
+def _annotate_pool_qs(qs):
+    return qs.annotate(
+        active_runner_count=Count(
+            "runners",
+            filter=Q(runners__status__in=["active", "draining"]),
+            distinct=True,
+        ),
+        active_execution_count=Count(
+            "execution_leases",
+            filter=Q(execution_leases__status="active"),
+            distinct=True,
+        ),
+    )
+
+
+def _annotate_runner_qs(qs):
+    return qs.annotate(
+        active_execution_count=Count(
+            "execution_leases",
+            filter=Q(execution_leases__status="active"),
+            distinct=True,
+        ),
     )
 
 
@@ -54,7 +96,9 @@ class RunnerPoolViewSet(
         org_id = _get_org_id(self.request, self.kwargs)
         if not org_id:
             return RunnerPool.objects.none()
-        return RunnerPool.objects.filter(organization_id=org_id).select_related("organization")
+        return _annotate_pool_qs(
+            RunnerPool.objects.filter(organization_id=org_id).select_related("organization")
+        )
 
     def get_permissions(self):
         return []
@@ -88,6 +132,7 @@ class RunnerPoolViewSet(
             object_id=pool.id,
             metadata={"key": pool.key},
         )
+        pool = self.get_queryset().get(pk=pool.pk)
         return Response(RunnerPoolSerializer(pool).data, status=201)
 
     def partial_update(self, request, *args, **kwargs):
@@ -100,18 +145,21 @@ class RunnerPoolViewSet(
         pool = self.get_object()
         org_id = _get_org_id(request, self.kwargs) or str(pool.organization_id)
         assert_organization_admin(user=request.user, organization_id=org_id)
-        pool.status = RunnerPool.Status.DRAINING
-        pool.save(update_fields=["status", "updated_at"])
+        try:
+            pool = drain_pool(pool=pool)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
         AuditService.emit(
             organization_id=pool.organization_id,
             actor_type=AuditEvent.ActorType.USER,
             actor_id=str(request.user.id),
             actor_label=str(request.user),
-            event_type="runner_pool.drained",
+            event_type="runner_pool.drain_requested",
             object_type=AuditEvent.ObjectType.RUNNER_POOL,
             object_id=pool.id,
             metadata={"key": pool.key},
         )
+        pool = self.get_queryset().get(pk=pool.pk)
         return Response(RunnerPoolSerializer(pool).data)
 
     @action(detail=True, methods=["post"])
@@ -119,8 +167,10 @@ class RunnerPoolViewSet(
         pool = self.get_object()
         org_id = _get_org_id(request, self.kwargs) or str(pool.organization_id)
         assert_organization_admin(user=request.user, organization_id=org_id)
-        pool.status = RunnerPool.Status.DISABLED
-        pool.save(update_fields=["status", "updated_at"])
+        try:
+            pool = disable_pool(pool=pool)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
         AuditService.emit(
             organization_id=pool.organization_id,
             actor_type=AuditEvent.ActorType.USER,
@@ -131,6 +181,29 @@ class RunnerPoolViewSet(
             object_id=pool.id,
             metadata={"key": pool.key},
         )
+        pool = self.get_queryset().get(pk=pool.pk)
+        return Response(RunnerPoolSerializer(pool).data)
+
+    @action(detail=True, methods=["post"])
+    def reactivate(self, request, pk=None):
+        pool = self.get_object()
+        org_id = _get_org_id(request, self.kwargs) or str(pool.organization_id)
+        assert_organization_admin(user=request.user, organization_id=org_id)
+        try:
+            pool = reactivate_pool(pool=pool)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
+        AuditService.emit(
+            organization_id=pool.organization_id,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(request.user.id),
+            actor_label=str(request.user),
+            event_type="runner_pool.reactivated",
+            object_type=AuditEvent.ObjectType.RUNNER_POOL,
+            object_id=pool.id,
+            metadata={"key": pool.key},
+        )
+        pool = self.get_queryset().get(pk=pool.pk)
         return Response(RunnerPoolSerializer(pool).data)
 
     @action(detail=True, methods=["post"], url_path="registration-tokens")
@@ -143,17 +216,19 @@ class RunnerPoolViewSet(
         serializer.is_valid(raise_exception=True)
         d = serializer.validated_data
 
-        clear_token, token_hash = generate_runner_token()
-        reg_token = RunnerRegistrationToken.objects.create(
-            organization=pool.organization,
-            pool=pool,
-            token_hash=token_hash,
-            label_policy=d.get("label_policy", []),
-            capability_policy=d.get("capability_policy", []),
-            expires_at=d["expires_at"],
-            max_registrations=d.get("max_registrations", 1),
-            created_by=request.user,
-        )
+        try:
+            reg_token, clear_token = create_registration_token(
+                organization=pool.organization,
+                pool=pool,
+                expires_at=d["expires_at"],
+                max_registrations=d.get("max_registrations", 1),
+                label_policy=d.get("label_policy", []),
+                capability_policy=d.get("capability_policy", []),
+                created_by=request.user,
+            )
+        except DomainValidationError as exc:
+            return Response({"detail": exc.detail, "code": exc.code}, status=400)
+
         AuditService.emit(
             organization_id=pool.organization_id,
             actor_type=AuditEvent.ActorType.USER,
@@ -167,9 +242,12 @@ class RunnerPoolViewSet(
         return Response(
             {
                 "id": str(reg_token.id),
+                "organization_id": str(pool.organization_id),
                 "pool_id": str(pool.id),
                 "pool_key": pool.key,
                 "token": clear_token,
+                "label_policy": reg_token.label_policy,
+                "capability_policy": reg_token.capability_policy,
                 "expires_at": reg_token.expires_at,
                 "max_registrations": reg_token.max_registrations,
                 "created_at": reg_token.created_at,
@@ -189,8 +267,8 @@ class RunnerViewSet(
         org_id = _get_org_id(self.request, self.kwargs)
         if not org_id:
             return Runner.objects.none()
-        return Runner.objects.filter(organization_id=org_id).select_related(
-            "organization", "pool"
+        return _annotate_runner_qs(
+            Runner.objects.filter(organization_id=org_id).select_related("organization", "pool")
         )
 
     def get_permissions(self):
@@ -211,19 +289,21 @@ class RunnerViewSet(
         runner = self.get_object()
         org_id = _get_org_id(request, self.kwargs) or str(runner.organization_id)
         assert_organization_admin(user=request.user, organization_id=org_id)
-        runner.status = Runner.Status.DRAINING
-        runner.drain_requested_at = timezone.now()
-        runner.save(update_fields=["status", "drain_requested_at", "updated_at"])
+        try:
+            runner = drain_runner(runner=runner)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
         AuditService.emit(
             organization_id=runner.organization_id,
             actor_type=AuditEvent.ActorType.USER,
             actor_id=str(request.user.id),
             actor_label=str(request.user),
-            event_type="runner.drained",
+            event_type="runner.drain_requested",
             object_type=AuditEvent.ObjectType.RUNNER,
             object_id=runner.id,
             metadata={"display_name": runner.display_name},
         )
+        runner = self.get_queryset().get(pk=runner.pk)
         return Response(RunnerSerializer(runner).data)
 
     @action(detail=True, methods=["post"])
@@ -231,9 +311,10 @@ class RunnerViewSet(
         runner = self.get_object()
         org_id = _get_org_id(request, self.kwargs) or str(runner.organization_id)
         assert_organization_admin(user=request.user, organization_id=org_id)
-        runner.status = Runner.Status.DISABLED
-        runner.disabled_at = timezone.now()
-        runner.save(update_fields=["status", "disabled_at", "updated_at"])
+        try:
+            runner = disable_runner(runner=runner)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
         AuditService.emit(
             organization_id=runner.organization_id,
             actor_type=AuditEvent.ActorType.USER,
@@ -244,6 +325,7 @@ class RunnerViewSet(
             object_id=runner.id,
             metadata={"display_name": runner.display_name},
         )
+        runner = self.get_queryset().get(pk=runner.pk)
         return Response(RunnerSerializer(runner).data)
 
     @action(detail=True, methods=["post"])
@@ -251,9 +333,10 @@ class RunnerViewSet(
         runner = self.get_object()
         org_id = _get_org_id(request, self.kwargs) or str(runner.organization_id)
         assert_organization_admin(user=request.user, organization_id=org_id)
-        runner.status = Runner.Status.REVOKED
-        runner.revoked_at = timezone.now()
-        runner.save(update_fields=["status", "revoked_at", "updated_at"])
+        try:
+            runner = revoke_runner(runner=runner)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
         AuditService.emit(
             organization_id=runner.organization_id,
             actor_type=AuditEvent.ActorType.USER,
@@ -264,7 +347,58 @@ class RunnerViewSet(
             object_id=runner.id,
             metadata={"display_name": runner.display_name},
         )
+        runner = self.get_queryset().get(pk=runner.pk)
         return Response(RunnerSerializer(runner).data)
+
+
+class RunnerRegistrationTokenViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    serializer_class = RunnerRegistrationTokenListSerializer
+
+    def get_queryset(self):
+        org_id = _get_org_id(self.request, self.kwargs)
+        if not org_id:
+            return RunnerRegistrationToken.objects.none()
+        return RunnerRegistrationToken.objects.filter(
+            organization_id=org_id
+        ).select_related("organization", "pool")
+
+    def get_permissions(self):
+        return []
+
+    def list(self, request, *args, **kwargs):
+        org_id = _get_org_id(request, kwargs)
+        assert_organization_member(user=request.user, organization_id=org_id)
+        return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        org_id = _get_org_id(request, kwargs)
+        assert_organization_member(user=request.user, organization_id=org_id)
+        return super().retrieve(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"])
+    def revoke(self, request, pk=None):
+        token = self.get_object()
+        org_id = _get_org_id(request, self.kwargs) or str(token.organization_id)
+        assert_organization_admin(user=request.user, organization_id=org_id)
+        try:
+            token = revoke_registration_token(token=token)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
+        AuditService.emit(
+            organization_id=token.organization_id,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(request.user.id),
+            actor_label=str(request.user),
+            event_type="runner_registration_token.revoked",
+            object_type=AuditEvent.ObjectType.RUNNER_REGISTRATION_TOKEN,
+            object_id=token.id,
+            metadata={"pool_key": token.pool.key},
+        )
+        return Response(RunnerRegistrationTokenListSerializer(token).data)
 
 
 class TargetConnectivityRouteViewSet(
@@ -306,10 +440,13 @@ class TargetConnectivityRouteViewSet(
         organization = get_object_or_404(Organization, pk=org_id)
         pool_id = request.data.get("pool")
         pool = get_object_or_404(RunnerPool, pk=pool_id, organization=organization)
-        data = {k: v for k, v in request.data.items() if k != "pool"}
         serializer = TargetConnectivityRouteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        validated = {k: v for k, v in serializer.validated_data.items() if k not in ("organization", "pool")}
+        validated = {
+            k: v
+            for k, v in serializer.validated_data.items()
+            if k not in ("organization", "pool")
+        }
         route = TargetConnectivityRoute.objects.create(
             organization=organization,
             pool=pool,
@@ -325,12 +462,57 @@ class TargetConnectivityRouteViewSet(
             object_id=route.id,
             metadata={"target_type": route.target_type, "pool_key": pool.key},
         )
+        route = self.get_queryset().get(pk=route.pk)
         return Response(TargetConnectivityRouteSerializer(route).data, status=201)
 
     def partial_update(self, request, *args, **kwargs):
         org_id = _get_org_id(request, kwargs)
         assert_organization_admin(user=request.user, organization_id=org_id)
         return super().partial_update(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        route = self.get_object()
+        org_id = _get_org_id(request, self.kwargs) or str(route.organization_id)
+        assert_organization_admin(user=request.user, organization_id=org_id)
+        try:
+            route = deactivate_route(route=route)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
+        AuditService.emit(
+            organization_id=route.organization_id,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(request.user.id),
+            actor_label=str(request.user),
+            event_type="target_connectivity_route.deactivated",
+            object_type=AuditEvent.ObjectType.TARGET_CONNECTIVITY_ROUTE,
+            object_id=route.id,
+            metadata={"target_type": route.target_type},
+        )
+        route = self.get_queryset().get(pk=route.pk)
+        return Response(TargetConnectivityRouteSerializer(route).data)
+
+    @action(detail=True, methods=["post"])
+    def reactivate(self, request, pk=None):
+        route = self.get_object()
+        org_id = _get_org_id(request, self.kwargs) or str(route.organization_id)
+        assert_organization_admin(user=request.user, organization_id=org_id)
+        try:
+            route = reactivate_route(route=route)
+        except (DomainValidationError, InvalidStateTransitionError) as exc:
+            return _state_error_response(exc)
+        AuditService.emit(
+            organization_id=route.organization_id,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(request.user.id),
+            actor_label=str(request.user),
+            event_type="target_connectivity_route.reactivated",
+            object_type=AuditEvent.ObjectType.TARGET_CONNECTIVITY_ROUTE,
+            object_id=route.id,
+            metadata={"target_type": route.target_type},
+        )
+        route = self.get_queryset().get(pk=route.pk)
+        return Response(TargetConnectivityRouteSerializer(route).data)
 
 
 class ChangeRunnerEligibilityView(APIView):

@@ -4,6 +4,7 @@ from rest_framework.routers import SimpleRouter
 from apps.runners.internal_views import RunnerHeartbeatView, RunnerRegisterView
 from apps.runners.views import (
     RunnerPoolViewSet,
+    RunnerRegistrationTokenViewSet,
     RunnerViewSet,
     TargetConnectivityRouteViewSet,
 )
@@ -16,6 +17,11 @@ internal_urlpatterns = [
 _router = SimpleRouter()
 _router.register("runner-pools", RunnerPoolViewSet, basename="runner-pool")
 _router.register("runners", RunnerViewSet, basename="runner")
+_router.register(
+    "runner-registration-tokens",
+    RunnerRegistrationTokenViewSet,
+    basename="runner-registration-token",
+)
 _router.register(
     "target-connectivity-routes",
     TargetConnectivityRouteViewSet,
