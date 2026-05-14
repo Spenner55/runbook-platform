@@ -105,7 +105,11 @@ class RunnerHeartbeatView(RunnerInternalAPIView):
         except Runner.DoesNotExist:
             return Response({"detail": "Runner not found."}, status=404)
 
-        if runner.status in (Runner.Status.REVOKED, Runner.Status.DISABLED):
+        if runner.status in (
+            Runner.Status.REVOKED,
+            Runner.Status.DISABLED,
+            Runner.Status.OFFLINE,
+        ):
             return Response(
                 {"detail": f"Runner is {runner.status}."},
                 status=403,

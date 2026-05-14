@@ -1,11 +1,13 @@
 import hashlib
 import secrets
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditEvent
-from apps.audit.services import AuditService
+from apps.audit.services import AuditService, system_actor
 from apps.common.exceptions import DomainValidationError, InvalidStateTransitionError
 
 
@@ -407,8 +409,18 @@ def update_runner_heartbeat(
     observed_pool_key: str = "",
     capabilities_checksum: str = "",
 ):
-    """Update runner liveness fields. Does not extend execution leases."""
+    """Update runner liveness fields. Does not extend execution leases.
+
+    Raises InvalidStateTransitionError if the runner has been marked OFFLINE
+    (lease expired by watchdog). The runner must re-register to resume.
+    """
     from apps.runners.models import Runner
+
+    if runner.status == Runner.Status.OFFLINE:
+        raise InvalidStateTransitionError(
+            code="runner_lease_expired",
+            detail="Runner has been marked offline; re-register to resume.",
+        )
 
     now = timezone.now()
     update_fields = ["last_heartbeat_at", "last_seen_at", "updated_at"]
@@ -430,3 +442,71 @@ def update_runner_heartbeat(
 
     runner.save(update_fields=update_fields)
     return runner
+
+
+def mark_stale_runners_offline(
+    *, offline_threshold_seconds: int | None = None
+) -> list[str]:
+    """Mark ACTIVE/DRAINING runners whose heartbeat is stale as OFFLINE.
+
+    Uses select_for_update(skip_locked=True) per runner so concurrent calls
+    are idempotent and don't double-process.  Returns a list of runner IDs
+    that were transitioned to OFFLINE.
+    """
+    from apps.runners.models import Runner
+
+    threshold = offline_threshold_seconds or getattr(
+        settings, "RUNNER_OFFLINE_SECONDS", 120
+    )
+    stale_before = timezone.now() - timedelta(seconds=threshold)
+    live_statuses = (Runner.Status.ACTIVE, Runner.Status.DRAINING)
+
+    candidate_ids = list(
+        Runner.objects.filter(
+            status__in=live_statuses,
+            last_heartbeat_at__lt=stale_before,
+        ).values_list("id", flat=True)
+    )
+
+    marked_offline: list[str] = []
+    for runner_id in candidate_ids:
+        with transaction.atomic():
+            runner = (
+                Runner.objects.select_for_update(skip_locked=True)
+                .filter(
+                    id=runner_id,
+                    status__in=live_statuses,
+                    last_heartbeat_at__lt=stale_before,
+                )
+                .first()
+            )
+            if runner is None:
+                continue
+
+            previous_status = runner.status
+            runner.status = Runner.Status.OFFLINE
+            runner.save(update_fields=["status", "updated_at"])
+
+            AuditService.emit(
+                organization_id=runner.organization_id,
+                actor_type=system_actor().actor_type,
+                actor_id=system_actor().actor_id,
+                actor_label=system_actor().actor_label,
+                event_type="runner.went_offline",
+                object_type=AuditEvent.ObjectType.RUNNER,
+                object_id=runner.id,
+                metadata={
+                    "previous_status": previous_status,
+                    "new_status": Runner.Status.OFFLINE,
+                    "reason": "watchdog_heartbeat_timeout",
+                    "offline_threshold_seconds": threshold,
+                    "last_heartbeat_at": (
+                        runner.last_heartbeat_at.isoformat()
+                        if runner.last_heartbeat_at
+                        else None
+                    ),
+                },
+            )
+            marked_offline.append(str(runner.id))
+
+    return marked_offline
