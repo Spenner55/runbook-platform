@@ -472,8 +472,46 @@ class UpdateFreezeRuleSerializer(serializers.Serializer):
     requires_exception_reference = serializers.BooleanField(required=False)
 
 
+# Keys whose presence in a check-list entry is considered secret-bearing and must be stripped.
+_SECRET_KEY_FRAGMENTS = (
+    "api_key",
+    "auth",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+    "url",  # raw URLs may embed credentials
+)
+
+# Keys explicitly allowed to pass through even though they overlap with the fragment list.
+_SAFE_CHECK_KEYS = frozenset(
+    [
+        "name",
+        "ok",
+        "detail",
+        "reason",
+        "pool_key",
+        "pool_id",
+    ]
+)
+
+
+def _is_secret_key(key: str) -> bool:
+    if key in _SAFE_CHECK_KEYS:
+        return False
+    normalized = str(key).lower()
+    return any(fragment in normalized for fragment in _SECRET_KEY_FRAGMENTS)
+
+
+def _sanitize_check_entry(entry: dict) -> dict:
+    """Strip secret-bearing keys from a single check-list entry."""
+    return {k: v for k, v in entry.items() if not _is_secret_key(k)}
+
+
 class DispatchEligibilityCheckSerializer(serializers.ModelSerializer):
     is_stale = serializers.SerializerMethodField()
+    checks = serializers.SerializerMethodField()
 
     class Meta:
         model = DispatchEligibilityCheck
@@ -489,6 +527,9 @@ class DispatchEligibilityCheckSerializer(serializers.ModelSerializer):
             "freeze_conflicts_ok",
             "target_locks_ok",
             "actor_authorized_ok",
+            "runner_pool_ok",
+            "runner_pool_key",
+            "runner_pool_reason",
             "checks",
             "conflicts",
             "input_snapshot_sha256",
@@ -497,6 +538,9 @@ class DispatchEligibilityCheckSerializer(serializers.ModelSerializer):
 
     def get_is_stale(self, obj):
         return timezone.now() > obj.expires_at
+
+    def get_checks(self, obj):
+        return [_sanitize_check_entry(c) for c in (obj.checks or [])]
 
 
 # ---------------------------------------------------------------------------

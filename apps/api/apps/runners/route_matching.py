@@ -52,7 +52,7 @@ def find_pool_for_change(change) -> tuple:
                 ]
             )
             .select_related("pool")
-            .order_by("priority")
+            .order_by("priority", "id")  # deterministic tie-break on same priority
         )
 
         route = routes.first()
@@ -63,6 +63,18 @@ def find_pool_for_change(change) -> tuple:
                 getattr(target, "normalized_identifier", ""),
             )
             return None, "route_miss"
+
+        # Route's required_capabilities must be covered by the matched pool's capabilities.
+        if route.required_capabilities:
+            pool_caps = set(route.pool.capabilities or [])
+            missing = [c for c in route.required_capabilities if c not in pool_caps]
+            if missing:
+                logger.debug(
+                    "Pool '%s' missing required capabilities for route: %s",
+                    route.pool.key,
+                    missing,
+                )
+                return None, "missing_required_capability"
 
         matched_pools.append(route.pool)
 
@@ -79,6 +91,21 @@ def find_pool_for_change(change) -> tuple:
         return None, "pool_disabled"
     if pool.status != RunnerPool.Status.ACTIVE:
         return None, f"pool_{pool.status}"
+
+    # Operation-profile required capabilities must be covered by the pool.
+    op_profile = getattr(change, "operation_profile", None)
+    if op_profile is not None:
+        op_required = list(getattr(op_profile, "required_runner_capabilities", None) or [])
+        if op_required:
+            pool_caps = set(pool.capabilities or [])
+            missing = [c for c in op_required if c not in pool_caps]
+            if missing:
+                logger.debug(
+                    "Pool '%s' missing operation-profile required capabilities: %s",
+                    pool.key,
+                    missing,
+                )
+                return None, "missing_required_capability"
 
     # Require at least one online runner in the pool.
     has_online_runner = Runner.objects.filter(
