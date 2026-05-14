@@ -40,6 +40,9 @@ class RunnerSettings(BaseModel):
     registration_token: str = ""
     registered_runner_id: str = ""
     runner_bearer_token: str = ""
+    runner_display_name: str = ""
+    runner_install_fingerprint: str = ""
+    runner_state_file: str = ""
     api_retries_enabled: bool = True
     poll_interval_seconds: int = 5
     heartbeat_interval_seconds: int = 10
@@ -182,6 +185,9 @@ class RunnerSettings(BaseModel):
             registration_token=os.environ.get("RUNNER_REGISTRATION_TOKEN", ""),
             registered_runner_id=os.environ.get("RUNNER_REGISTERED_ID", ""),
             runner_bearer_token=os.environ.get("RUNNER_BEARER_TOKEN", ""),
+            runner_display_name=os.environ.get("RUNNER_DISPLAY_NAME", ""),
+            runner_install_fingerprint=os.environ.get("RUNNER_INSTALL_FINGERPRINT", ""),
+            runner_state_file=os.environ.get("RUNNER_STATE_FILE", ""),
             api_retries_enabled=_env_bool("RUNNER_API_RETRIES_ENABLED", True),
             poll_interval_seconds=int(
                 os.environ.get("RUNNER_POLL_INTERVAL_SECONDS", "5")

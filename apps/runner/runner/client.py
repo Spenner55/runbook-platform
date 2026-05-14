@@ -83,6 +83,11 @@ class ApiClient:
     def runner_id(self) -> str:
         return self._runner_id
 
+    def update_identity(self, runner_id: str, bearer_token: str) -> None:
+        """Switch to the canonical runner identity after registration."""
+        self._runner_id = runner_id
+        self._auth_headers = {"Authorization": f"Bearer {bearer_token}"}
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

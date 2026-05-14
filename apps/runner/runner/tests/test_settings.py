@@ -39,7 +39,18 @@ def _new_settings_raw(**attrs) -> RunnerSettings:
     """Bypass Pydantic construction to test validate_for_startup() in isolation."""
     settings = RunnerSettings.__new__(RunnerSettings)
     base = {
+        # Required fields — tests override as needed
+        "api_base_url": "http://api:8000",
+        "runner_id": "runner-test",
+        "registration_token": "secret-token",
+        # Optional fields with defaults
         "runner_version": "0.1.0",
+        "registered_runner_id": "",
+        "runner_bearer_token": "",
+        "runner_display_name": "",
+        "runner_install_fingerprint": "",
+        "runner_state_file": "",
+        "api_retries_enabled": True,
         "poll_interval_seconds": 5,
         "heartbeat_interval_seconds": 10,
         "fake_step_delay_seconds": 1.0,
