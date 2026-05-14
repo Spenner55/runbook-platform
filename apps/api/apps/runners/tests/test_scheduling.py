@@ -6,19 +6,52 @@ import threading
 import pytest
 from django.utils import timezone
 
+from apps.changes.models import ChangeExecutionBinding, ChangeRecord, OperationProfile
 from apps.common.exceptions import InvalidStateTransitionError
 from apps.executions.models import Execution
 from apps.executions.services import claim_next_execution
 from apps.runners.models import ExecutionLease, Runner, RunnerPool
 from apps.runners.scheduling import schedule_execution_claim
 from apps.runners.tests.conftest import make_runner
-from apps.workflows.models import Workflow
 
 
 def _make_execution(org, workflow):
     from apps.executions.services import create_execution
 
     return create_execution(workflow=workflow, _from_change_service=True)
+
+
+def _make_change_binding(org, workflow, execution):
+    profile = OperationProfile.objects.create(
+        organization=org,
+        key=f"profile-{execution.id.hex[:8]}",
+        name="Profile",
+        risk_level="high",
+        requires_approval=False,
+        verification_required=False,
+        allowed_target_types=["server"],
+    )
+    profile.allowed_workflows.add(workflow)
+    change = ChangeRecord.objects.create(
+        organization=org,
+        operation_profile=profile,
+        workflow=workflow,
+        title="Routed change",
+        status=ChangeRecord.Status.DISPATCHABLE,
+        requested_inputs={},
+        request_snapshot={},
+    )
+    return ChangeExecutionBinding.objects.create(
+        change_record=change,
+        execution=execution,
+        organization=org,
+        operation_profile_key=profile.key,
+        requested_inputs_sha256="0" * 64,
+        dispatch_token_nonce="nonce",
+        dispatch_token_hash="hash",
+        dispatch_token_expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        reserved_at=timezone.now(),
+    )
 
 
 def _published_workflow(org):
@@ -82,7 +115,7 @@ class TestScheduleExecutionClaim:
     def test_runner_concurrency_limit_returns_none(self, org, pool, runner):
         wf = _published_workflow(org)
         exec1 = _make_execution(org, wf)
-        exec2 = _make_execution(org, wf)
+        _make_execution(org, wf)
 
         # Manually create an active lease to simulate a running execution
         ExecutionLease.objects.create(
@@ -103,7 +136,7 @@ class TestScheduleExecutionClaim:
 
         wf = _published_workflow(org)
         exec1 = _make_execution(org, wf)
-        exec2 = _make_execution(org, wf)
+        _make_execution(org, wf)
 
         runner_a = make_runner(pool, fingerprint="fp-a")
         runner_b = make_runner(pool, fingerprint="fp-b")
@@ -286,6 +319,39 @@ class TestScheduleEligibilityGuards:
         result = schedule_execution_claim(runner)
         assert result is not None
         assert result["execution"].id == exec_plain.id
+
+    def test_change_bound_execution_with_routed_pool_skips_other_pool(
+        self, org, pool, pool2
+    ):
+        """A change execution pinned by dispatch preflight cannot be claimed by another pool."""
+        wf = _published_workflow(org)
+        execution = _make_execution(org, wf)
+        execution.runner_pool_key = pool.key
+        execution.save(update_fields=["runner_pool_key"])
+        _make_change_binding(org, wf, execution)
+
+        other_runner = make_runner(pool2, fingerprint="fp-wrong-pool")
+        result = schedule_execution_claim(other_runner)
+
+        assert result is None
+        execution.refresh_from_db()
+        assert execution.status == Execution.Status.QUEUED
+
+    def test_change_bound_execution_with_routed_pool_claims_matching_pool(
+        self, org, pool
+    ):
+        """The pool selected at dispatch remains eligible to claim the queued execution."""
+        wf = _published_workflow(org)
+        execution = _make_execution(org, wf)
+        execution.runner_pool_key = pool.key
+        execution.save(update_fields=["runner_pool_key"])
+        _make_change_binding(org, wf, execution)
+
+        runner = make_runner(pool, fingerprint="fp-right-pool")
+        result = schedule_execution_claim(runner)
+
+        assert result is not None
+        assert result["execution"].id == execution.id
 
 
 @pytest.mark.django_db

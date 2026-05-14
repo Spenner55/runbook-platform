@@ -24,7 +24,8 @@ def _execution_eligible_for_pool(execution, pool) -> bool:
 
     is_change_bound = ChangeExecutionBinding.objects.filter(execution=execution).exists()
     if is_change_bound:
-        return True
+        routed_pool_key = execution.runner_pool_key or ""
+        return not routed_pool_key or routed_pool_key == pool.key
 
     if pool.default_for_non_change_executions:
         return True
@@ -50,7 +51,7 @@ def schedule_execution_claim(runner) -> dict | None:
     Must be called within a transaction — uses select_for_update to prevent
     double-claims.
     """
-    from apps.executions.models import Execution, ExecutionStep
+    from apps.executions.models import Execution
     from apps.runners.models import ExecutionLease, Runner, RunnerPool
 
     pool = runner.pool

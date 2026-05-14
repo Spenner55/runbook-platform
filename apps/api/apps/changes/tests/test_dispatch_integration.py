@@ -32,6 +32,9 @@ from apps.changes.models import (
     TargetLock,
 )
 from apps.common.exceptions import DomainConflictError
+from apps.runners.models import RunnerPool, TargetConnectivityRoute
+from apps.runners.scheduling import schedule_execution_claim
+from apps.runners.tests.conftest import make_runner
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,6 +60,29 @@ def _approved_change(draft_change):
     )
     change.refresh_from_db()
     return change
+
+
+def _make_pool(org, key="prod-pool", *, max_concurrent_executions=2):
+    return RunnerPool.objects.create(
+        organization=org,
+        key=key,
+        name=key,
+        environment="production",
+        status=RunnerPool.Status.ACTIVE,
+        max_concurrent_executions=max_concurrent_executions,
+        capabilities=["action.shell_command", "action.http_request"],
+    )
+
+
+def _make_route(org, pool, *, target_type="server", pattern="*"):
+    return TargetConnectivityRoute.objects.create(
+        organization=org,
+        pool=pool,
+        environment="production",
+        target_type=target_type,
+        normalized_identifier_pattern=pattern,
+        is_active=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +240,88 @@ def test_target_lock_linked_to_execution(approved_change):
     binding = approved_change.execution_binding
     lock = TargetLock.objects.get(change_record=approved_change)
     assert lock.execution_id == binding.execution_id
+
+
+@pytest.mark.django_db
+def test_make_dispatchable_persists_matched_runner_pool_on_execution(approved_change, org):
+    pool = _make_pool(org, key="prod-routed")
+    _make_route(org, pool)
+    make_runner(pool, fingerprint="fp-dispatch-route")
+
+    change_services.make_dispatchable(change=approved_change, actor=_system_actor())
+
+    binding = ChangeExecutionBinding.objects.get(change_record=approved_change)
+    binding.execution.refresh_from_db()
+    assert binding.execution.runner_pool_key == pool.key
+
+
+@pytest.mark.django_db
+def test_pool_disabled_after_dispatch_prevents_unclaimed_execution_claim(
+    approved_change, org
+):
+    pool = _make_pool(org, key="prod-routed")
+    _make_route(org, pool)
+    runner = make_runner(pool, fingerprint="fp-disabled-after-dispatch")
+
+    change_services.make_dispatchable(change=approved_change, actor=_system_actor())
+    binding = ChangeExecutionBinding.objects.get(change_record=approved_change)
+
+    pool.status = RunnerPool.Status.DISABLED
+    pool.disabled_at = timezone.now()
+    pool.save(update_fields=["status", "disabled_at", "updated_at"])
+
+    with pytest.raises(Exception) as exc_info:
+        schedule_execution_claim(runner)
+
+    assert getattr(exc_info.value, "code", "") == "pool_not_active"
+    binding.execution.refresh_from_db()
+    assert binding.execution.status == "queued"
+
+
+@pytest.mark.django_db
+def test_cross_pool_target_change_fails_dispatch_preflight(
+    org, operation_profile, published_workflow
+):
+    draft = change_services.create_change_record(
+        organization=org,
+        operation_profile_key=operation_profile.key,
+        workflow_id=str(published_workflow.id),
+        title="Cross-pool Change",
+        summary="",
+        justification="Needed",
+        requested_inputs={"key": "value"},
+        targets=[
+            {
+                "target_type": "server",
+                "target_identifier": "prod-server-01",
+                "environment": "production",
+            },
+            {
+                "target_type": "server",
+                "target_identifier": "prod-server-02",
+                "environment": "production",
+            },
+        ],
+        actor=_system_actor(),
+    )
+    approved_change = _approved_change(draft)
+    pool_a = _make_pool(org, key="prod-a")
+    pool_b = _make_pool(org, key="prod-b")
+    _make_route(org, pool_a, pattern="prod-server-01")
+    _make_route(org, pool_b, pattern="prod-server-02")
+    make_runner(pool_a, fingerprint="fp-cross-a")
+    make_runner(pool_b, fingerprint="fp-cross-b")
+
+    check = change_services.run_dispatch_preflight(
+        change=approved_change, actor=_system_actor()
+    )
+    assert check.runner_pool_ok is False
+    assert check.runner_pool_reason == "multi_pool_unsupported"
+
+    with pytest.raises(DomainConflictError) as exc_info:
+        change_services.make_dispatchable(change=approved_change, actor=_system_actor())
+
+    assert exc_info.value.code == "dispatch_preflight_failed"
 
 
 @pytest.mark.django_db

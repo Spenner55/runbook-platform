@@ -226,6 +226,25 @@ def test_missing_claim_token_skips_execution(mock_sleep):
     poller._executor.run.assert_not_called()
 
 
+@patch("runner.poller.time.sleep")
+def test_drain_response_stops_polling_without_execution(mock_sleep):
+    shutdown = threading.Event()
+    poller = make_poller(shutdown_event=shutdown)
+    poller._client.claim_next.return_value = ClaimNextResponse(
+        execution=None,
+        claim_token=None,
+        poll_after_seconds=30,
+        runner_action="drain",
+        drain_reason="pool_draining",
+    )
+
+    poller._poll_once()
+
+    assert shutdown.is_set()
+    poller._executor.run.assert_not_called()
+    mock_sleep.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Shutdown event
 # ---------------------------------------------------------------------------

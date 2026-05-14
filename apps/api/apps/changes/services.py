@@ -2818,6 +2818,9 @@ def make_dispatchable(
             actor=effective_actor,
             _from_change_service=True,
         )
+        if fresh_check.runner_pool_key:
+            execution.runner_pool_key = fresh_check.runner_pool_key
+            execution.save(update_fields=["runner_pool_key", "updated_at"])
 
         _acquire_target_locks_for_dispatch(
             change=change,
