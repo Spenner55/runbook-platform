@@ -10,6 +10,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.executions import services as execution_services
 from apps.runbooks import services as runbook_services
+from apps.runners.models import Runner, RunnerPool
+from apps.runners.services import generate_runner_token
 from apps.workflows import services as workflow_services
 from apps.workflows.internal_clients import StubWorkflowTransformClient
 from apps.workflows.tests.fixtures.workflow_v2 import valid_v2_shell_command_workflow
@@ -158,6 +160,61 @@ def test_claim_next_with_user_jwt_is_rejected(user):
         content_type="application/json",
     )
     assert response.status_code == 403
+
+
+def _runner_client_with_status(org, pool, status):
+    """Create a runner in the given status and return (Client, runner)."""
+    from django.utils import timezone
+
+    clear, token_hash = generate_runner_token()
+    now = timezone.now()
+    runner = Runner.objects.create(
+        organization=org,
+        pool=pool,
+        display_name="test-runner",
+        status=status,
+        token_hash=token_hash,
+        fingerprint_sha256="fp-test",
+        registered_at=now,
+        last_seen_at=now,
+        last_heartbeat_at=now,
+    )
+    client = Client(HTTP_AUTHORIZATION=f"Bearer {clear}")
+    return client, runner
+
+
+@pytest.fixture
+def runner_pool(org):
+    from django.utils import timezone
+
+    return RunnerPool.objects.create(
+        organization=org,
+        key="test-pool",
+        name="Test Pool",
+        status=RunnerPool.Status.ACTIVE,
+    )
+
+
+@pytest.mark.django_db
+def test_claim_next_disabled_runner_returns_401(org, runner_pool):
+    client, _ = _runner_client_with_status(org, runner_pool, Runner.Status.DISABLED)
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "any"},
+        content_type="application/json",
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_claim_next_revoked_runner_returns_401(org, runner_pool):
+    client, _ = _runner_client_with_status(org, runner_pool, Runner.Status.REVOKED)
+    response = client.post(
+        CLAIM_NEXT_URL,
+        data={"runner_id": "any"},
+        content_type="application/json",
+    )
+    assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------

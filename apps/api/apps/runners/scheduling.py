@@ -10,6 +10,35 @@ from apps.common.exceptions import InvalidStateTransitionError
 logger = logging.getLogger(__name__)
 
 
+def _execution_eligible_for_pool(execution, pool) -> bool:
+    """Return True if this execution can be claimed by pool.
+
+    Non-change executions route to the org's default pool when one is
+    configured; if none is configured any pool may claim them.
+    Change-backed executions are always considered eligible here — the
+    dispatch-expiry check handles their lifecycle separately, and full
+    route-matching against a specific pool is deferred to a later phase.
+    """
+    from apps.changes.models import ChangeExecutionBinding
+    from apps.runners.models import RunnerPool
+
+    is_change_bound = ChangeExecutionBinding.objects.filter(execution=execution).exists()
+    if is_change_bound:
+        return True
+
+    if pool.default_for_non_change_executions:
+        return True
+
+    # No default configured on this pool — check whether any pool in the org
+    # is the configured default.  If none is, open mode: any pool may claim.
+    any_default = RunnerPool.objects.filter(
+        organization=pool.organization,
+        status=RunnerPool.Status.ACTIVE,
+        default_for_non_change_executions=True,
+    ).exists()
+    return not any_default
+
+
 @transaction.atomic
 def schedule_execution_claim(runner) -> dict | None:
     """Pool-aware execution claim for a registered runner.
@@ -34,6 +63,11 @@ def schedule_execution_claim(runner) -> dict | None:
             detail=f"Runner status '{runner.status}' cannot claim executions.",
         )
 
+    # Re-fetch the pool with a row lock so that concurrent claim attempts on the
+    # same pool are serialized.  This ensures the concurrency count checks below
+    # are accurate under concurrent load.
+    pool = RunnerPool.objects.select_for_update().get(pk=pool.pk)
+
     if pool.status == RunnerPool.Status.DRAINING:
         return {"drain": True}
     if pool.status != RunnerPool.Status.ACTIVE:
@@ -42,7 +76,7 @@ def schedule_execution_claim(runner) -> dict | None:
             detail=f"Runner pool '{pool.key}' is not active (status: {pool.status}).",
         )
 
-    # Concurrency checks.
+    # Concurrency checks (all evaluated after pool row is locked).
     runner_active_count = ExecutionLease.objects.filter(
         runner=runner, status=ExecutionLease.Status.ACTIVE
     ).count()
@@ -67,8 +101,12 @@ def schedule_execution_claim(runner) -> dict | None:
 
     from apps.executions.services import _expire_unbound_change_dispatch_if_needed
 
-    # Find the oldest queued execution in this runner's organization.
+    # Find the oldest queued execution eligible for this runner's pool.
+    # excluded_ids accumulates rows that were ineligible in this iteration so
+    # that subsequent fetches advance to the next candidate rather than
+    # re-selecting the same row.
     execution = None
+    excluded_ids: set = set()
     for _ in range(50):
         candidate = (
             Execution.objects.select_for_update(skip_locked=True)
@@ -76,6 +114,7 @@ def schedule_execution_claim(runner) -> dict | None:
                 status=Execution.Status.QUEUED,
                 organization=runner.organization,
             )
+            .exclude(pk__in=excluded_ids)
             .order_by("created_at")
             .first()
         )
@@ -83,6 +122,12 @@ def schedule_execution_claim(runner) -> dict | None:
             break
 
         if _expire_unbound_change_dispatch_if_needed(candidate, now=now):
+            # Row status changed to a terminal state; the next query will
+            # naturally skip it without needing it in excluded_ids.
+            continue
+
+        if not _execution_eligible_for_pool(candidate, pool):
+            excluded_ids.add(candidate.pk)
             continue
 
         # Capability check: if the workflow snapshot specifies requiredCapabilities,
@@ -97,7 +142,8 @@ def schedule_execution_claim(runner) -> dict | None:
                     candidate.id,
                     missing,
                 )
-                break
+                excluded_ids.add(candidate.pk)
+                continue
 
         execution = candidate
         break
