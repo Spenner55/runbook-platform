@@ -30,6 +30,7 @@ import { WorkflowsPage } from '../routes/workflows/WorkflowsPage'
 import { RunnerPoolsPage } from '../routes/runners/RunnerPoolsPage'
 import { RunnerPoolDetailPage } from '../routes/runners/RunnerPoolDetailPage'
 import { RunnerDetailPage } from '../routes/runners/RunnerDetailPage'
+import { TargetConnectivityRoutesPage } from '../routes/runners/TargetConnectivityRoutesPage'
 
 export const router = createBrowserRouter([
   {
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
           { path: 'runners', element: <RunnerPoolsPage /> },
           { path: 'runners/pools/:poolId', element: <RunnerPoolDetailPage /> },
           { path: 'runners/runners/:runnerId', element: <RunnerDetailPage /> },
+          { path: 'runners/routes', element: <TargetConnectivityRoutesPage /> },
         ],
       },
     ],

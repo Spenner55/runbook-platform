@@ -1,7 +1,7 @@
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { fetchRunner, drainRunner, revokeRunner } from '../../features/runners/api'
+import { fetchRunner, drainRunner, disableRunner, revokeRunner } from '../../features/runners/api'
 import { getApiErrorMessage } from '../../shared/api/client'
 
 function getStatusPillClass(status: string) {
@@ -28,6 +28,11 @@ function getHeartbeatLabel(ts: string | null): string {
   return formatHeartbeatAge(ts)
 }
 
+function getHeartbeatClass(label: string): string {
+  if (label === 'OFFLINE' || label === 'STALE') return 'pill pill--danger'
+  return 'pill pill--success'
+}
+
 export function RunnerDetailPage() {
   const { runnerId } = useParams<{ runnerId: string }>()
   const queryClient = useQueryClient()
@@ -44,13 +49,19 @@ export function RunnerDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runner', runnerId] }),
   })
 
+  const disableMutation = useMutation({
+    mutationFn: disableRunner,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runner', runnerId] }),
+  })
+
   const revokeMutation = useMutation({
     mutationFn: revokeRunner,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['runner', runnerId] }),
   })
 
   if (runnerQuery.isLoading) return <p className="muted">Loading…</p>
-  if (runnerQuery.error) return <p className="banner banner--error">{getApiErrorMessage(runnerQuery.error)}</p>
+  if (runnerQuery.error)
+    return <p className="banner banner--error">{getApiErrorMessage(runnerQuery.error)}</p>
 
   const runner = runnerQuery.data
   if (!runner) return null
@@ -60,15 +71,38 @@ export function RunnerDetailPage() {
   return (
     <section className="panel stack-lg">
       <div className="panel__header">
-        <h2>{runner.display_name}</h2>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div>
+          {runner.pool_id ? (
+            <Link
+              to={`/runners/pools/${runner.pool_id}`}
+              className="muted"
+              style={{ fontSize: '0.875em' }}
+            >
+              ← Pool
+            </Link>
+          ) : null}
+          <h2 style={{ marginTop: '0.25rem' }}>{runner.display_name}</h2>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             className="button button--sm"
             type="button"
-            disabled={runner.status === 'draining' || runner.status === 'revoked'}
+            disabled={
+              runner.status === 'draining' ||
+              runner.status === 'disabled' ||
+              runner.status === 'revoked'
+            }
             onClick={() => drainMutation.mutate(runner.id)}
           >
             Drain
+          </button>
+          <button
+            className="button button--sm button--ghost"
+            type="button"
+            disabled={runner.status === 'disabled' || runner.status === 'revoked'}
+            onClick={() => disableMutation.mutate(runner.id)}
+          >
+            Disable
           </button>
           <button
             className="button button--sm button--ghost"
@@ -85,23 +119,71 @@ export function RunnerDetailPage() {
         </div>
       </div>
 
+      {drainMutation.error ? (
+        <p className="banner banner--error">{getApiErrorMessage(drainMutation.error)}</p>
+      ) : null}
+      {disableMutation.error ? (
+        <p className="banner banner--error">{getApiErrorMessage(disableMutation.error)}</p>
+      ) : null}
+      {revokeMutation.error ? (
+        <p className="banner banner--error">{getApiErrorMessage(revokeMutation.error)}</p>
+      ) : null}
+
       <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.25rem 1rem' }}>
-        <dt className="muted">Status</dt>
-        <dd><span className={getStatusPillClass(runner.status)}>{runner.status}</span></dd>
-        <dt className="muted">Last Heartbeat</dt>
+        <dt className="muted">ID</dt>
         <dd>
-          <span className={heartbeatLabel === 'OFFLINE' || heartbeatLabel === 'STALE' ? 'pill pill--danger' : ''}>
-            {heartbeatLabel}
-          </span>
+          <code style={{ fontSize: '0.875em' }}>{runner.id}</code>
         </dd>
-        <dt className="muted">Version</dt>
+        <dt className="muted">Pool</dt>
+        <dd>
+          {runner.pool_id ? (
+            <Link to={`/runners/pools/${runner.pool_id}`}>
+              <code>{runner.pool_id}</code>
+            </Link>
+          ) : (
+            '—'
+          )}
+        </dd>
+        <dt className="muted">Status</dt>
+        <dd>
+          <span className={getStatusPillClass(runner.status)}>{runner.status}</span>
+          {runner.status === 'draining' && runner.drain_requested_at ? (
+            <span className="muted" style={{ fontSize: '0.875em', marginLeft: '0.5rem' }}>
+              since {new Date(runner.drain_requested_at).toLocaleString()}
+            </span>
+          ) : null}
+          {runner.status === 'disabled' && runner.disabled_at ? (
+            <span className="muted" style={{ fontSize: '0.875em', marginLeft: '0.5rem' }}>
+              since {new Date(runner.disabled_at).toLocaleString()}
+            </span>
+          ) : null}
+          {runner.status === 'revoked' && runner.revoked_at ? (
+            <span className="muted" style={{ fontSize: '0.875em', marginLeft: '0.5rem' }}>
+              since {new Date(runner.revoked_at).toLocaleString()}
+            </span>
+          ) : null}
+        </dd>
+        <dt className="muted">Runner Version</dt>
         <dd>{runner.runner_version || '—'}</dd>
         <dt className="muted">Hostname</dt>
         <dd>{runner.hostname || '—'}</dd>
-        <dt className="muted">Pool</dt>
-        <dd>{runner.pool_id}</dd>
-        <dt className="muted">ID</dt>
-        <dd><code style={{ fontSize: '0.875em' }}>{runner.id}</code></dd>
+        <dt className="muted">Last Heartbeat</dt>
+        <dd>
+          <span className={getHeartbeatClass(heartbeatLabel)}>{heartbeatLabel}</span>
+          {runner.last_heartbeat_at ? (
+            <span className="muted" style={{ fontSize: '0.875em', marginLeft: '0.5rem' }}>
+              {new Date(runner.last_heartbeat_at).toLocaleString()}
+            </span>
+          ) : null}
+        </dd>
+        <dt className="muted">Last Seen</dt>
+        <dd>
+          {runner.last_seen_at ? new Date(runner.last_seen_at).toLocaleString() : 'Never'}
+        </dd>
+        <dt className="muted">Active Executions</dt>
+        <dd>{runner.active_execution_count ?? '—'}</dd>
+        <dt className="muted">Registered</dt>
+        <dd>{runner.created_at ? new Date(runner.created_at).toLocaleString() : '—'}</dd>
       </dl>
     </section>
   )
