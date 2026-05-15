@@ -77,6 +77,11 @@ class Command(BaseCommand):
         self._seed_smoke_runbook()
         self._seed_smoke_workflows()
         self._seed_smoke_executions()
+        self._seed_operation_profiles()
+        self._seed_target_connectivity_routes()
+        self._seed_freeze_rules()
+        self._seed_change_records()
+        self._seed_auditor_workspace()
 
         self.stdout.write(self.style.SUCCESS("\nSeed complete."))
         self.stdout.write(
@@ -93,6 +98,15 @@ class Command(BaseCommand):
             "  RUNNING/cancel     — deploy run with cancellation pending (cancel banner)\n"
             "  CANCELLED/mid-run  — deploy run cancelled while running (cancelled step)\n"
             "  FAILED/timed-out   — deploy step exceeded timeout (timed_out banner)\n"
+            "\nSeeded change/evidence/auditor scenarios:\n"
+            "  Operation profiles: prod-deploy, db-migration, rollback, emergency-remediation\n"
+            "  Target connectivity routes: service/*, database/db-*, legacy-service/* (inactive)\n"
+            "  Freeze rules: past-expired, upcoming-maintenance, current-exception-required\n"
+            "  Change records: draft, pending_approval, approved, running, verification_pending,\n"
+            "                  verified, closed×2, rejected, canceled, emergency+breakglass\n"
+            "  Evidence bundles: compiling (verified change), sealed + export + legal hold (closed)\n"
+            "  Auditor workspace: service catalog, control mapping, external refs, access grants\n"
+            "  Retro reviews: pending, overdue, submitted\n"
             "\nSeeded smoke test executions (real — requires sandboxed runner):\n"
             "  QUEUED smoke-success    — happy path; all steps succeed\n"
             "  QUEUED smoke-failure    — step 2 exits non-zero; proves failure capture\n"
@@ -137,6 +151,80 @@ class Command(BaseCommand):
             User.objects.filter(email__in=seed_emails).delete()
             self.stdout.write("  No existing seed org found — starting fresh.\n")
             return
+
+        # 0a. Evidence domain — must precede ChangeRecord (PROTECT references)
+        from apps.evidence.models import EvidenceBundle, EvidenceExport
+        from apps.auditor.models import (
+            AuditorAccessGrant,
+            ChangeControlCoverage,
+            ControlMappingProfile,
+            ExternalChangeReference,
+            ServiceCatalogEntry,
+        )
+        from apps.changes.models import (
+            BreakglassSession,
+            ChangeClosure,
+            ChangeException,
+            ChangeExecutionBinding,
+            ChangeRecord,
+            DispatchEligibilityCheck,
+            FreezeRule,
+            OperationProfile,
+            RetroReview,
+            TargetLock,
+            VerificationPlan,
+            VerificationResult,
+        )
+        from apps.runners.models import TargetConnectivityRoute
+
+        from django.db.models import ProtectedError  # noqa
+
+        # Legal holds → EvidenceExport → ControlCoverage → EvidenceBundle (items cascade)
+        try:
+            from apps.evidence.models import LegalHold
+            LegalHold.objects.filter(organization=org).delete()
+        except Exception:
+            pass
+        EvidenceExport.objects.filter(organization=org).delete()
+        ChangeControlCoverage.objects.filter(organization=org).delete()
+        EvidenceBundle.objects.filter(organization=org).delete()
+
+        # Auditor workspace
+        ExternalChangeReference.objects.filter(organization=org).delete()
+        AuditorAccessGrant.objects.filter(organization=org).delete()
+        ServiceCatalogEntry.objects.filter(organization=org).delete()
+        ControlMappingProfile.objects.filter(organization=org).delete()
+
+        # Change exceptions / sessions / retro reviews
+        RetroReview.objects.filter(organization=org).delete()
+        BreakglassSession.objects.filter(organization=org).delete()
+        ChangeException.objects.filter(organization=org).delete()
+
+        # Preflight / locks — TargetLock PROTECT references Execution so must go here
+        DispatchEligibilityCheck.objects.filter(organization=org).delete()
+        TargetLock.objects.filter(organization=org).delete()
+
+        # Verification results before plan (PROTECT on plan/check/change)
+        VerificationResult.objects.filter(organization=org).delete()
+
+        # Closure and bindings — ChangeExecutionBinding PROTECT references Execution!
+        ChangeClosure.objects.filter(organization=org).delete()
+        ChangeExecutionBinding.objects.filter(organization=org).delete()
+
+        # Verification plan (cascade deletes VerificationCheck)
+        VerificationPlan.objects.filter(organization=org).delete()
+
+        # Change records (cascade: ChangeTarget, ChangeWindow)
+        ChangeRecord.objects.filter(organization=org).delete()
+
+        # Freeze rules and connectivity routes
+        FreezeRule.objects.filter(organization=org).delete()
+        TargetConnectivityRoute.objects.filter(organization=org).delete()
+
+        # Operation profiles — clear M2M allowed_workflows first
+        for p in OperationProfile.objects.filter(organization=org):
+            p.allowed_workflows.clear()
+        OperationProfile.objects.filter(organization=org).delete()
 
         # 1. ExecutionLease — blocks Execution, Runner, RunnerPool, Organization
         ExecutionLease.objects.filter(organization=org).delete()
@@ -1614,6 +1702,1750 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.WARNING(f"  [Skipped] Execution {key}: {exc}")
                 )
+
+    # ------------------------------------------------------------------
+    # Operation profiles
+    # ------------------------------------------------------------------
+
+    def _seed_operation_profiles(self):
+        from apps.audit.services import system_actor
+        from apps.changes.models import OperationProfile
+        from apps.changes.services import create_operation_profile
+
+        actor = system_actor("seed_dev")
+
+        # Each spec: fields for create_operation_profile + extras set via update()
+        specs = [
+            {
+                "key": "prod-deploy",
+                "name": "Production Deploy",
+                "description": (
+                    "Standard production deployment for API and frontend services. "
+                    "Requires approval and post-deployment verification."
+                ),
+                "risk_level": "high",
+                "requires_approval": True,
+                "verification_required": True,
+                "dispatch_ttl_seconds": 900,
+                "allowed_target_types": ["service"],
+                "target_schema": {"allow_empty_targets": False, "max_targets": 5},
+                "_allow_emergency": True,
+                "_max_breakglass": 3600,
+                "_retro_sla": 86400,
+                "_verif_template": {
+                    "checks": [
+                        {
+                            "key": "health-check",
+                            "name": "Post-deployment health check",
+                            "type": "manual_attestation",
+                            "required": True,
+                            "manual_attestation_config": {
+                                "instructions": "Verify the deployed service is responding correctly to health endpoint.",
+                                "min_chars": 20,
+                            },
+                        },
+                        {
+                            "key": "error-rate",
+                            "name": "Error rate within normal bounds",
+                            "type": "manual_attestation",
+                            "required": True,
+                            "manual_attestation_config": {
+                                "instructions": "Check error rate dashboard — confirm p99 latency and error rate are normal.",
+                                "min_chars": 10,
+                            },
+                        },
+                    ]
+                },
+                "_workflows": ["deploy"],
+            },
+            {
+                "key": "db-migration",
+                "name": "Database Migration",
+                "description": (
+                    "Schema and data migrations requiring DBA review and row-count verification."
+                ),
+                "risk_level": "critical",
+                "requires_approval": True,
+                "verification_required": True,
+                "dispatch_ttl_seconds": 1800,
+                "allowed_target_types": ["database"],
+                "target_schema": {"allow_empty_targets": False, "max_targets": 3},
+                "_allow_emergency": False,
+                "_max_breakglass": None,
+                "_retro_sla": None,
+                "_verif_template": {
+                    "checks": [
+                        {
+                            "key": "row-counts",
+                            "name": "Verify row counts post-migration",
+                            "type": "manual_attestation",
+                            "required": True,
+                            "manual_attestation_config": {
+                                "instructions": "Run SELECT COUNT(*) on affected tables and confirm expected counts.",
+                                "min_chars": 20,
+                            },
+                        }
+                    ]
+                },
+                "_workflows": ["deploy"],
+            },
+            {
+                "key": "rollback",
+                "name": "Service Rollback",
+                "description": "Emergency rollback to the previous stable release version.",
+                "risk_level": "high",
+                "requires_approval": True,
+                "verification_required": True,
+                "dispatch_ttl_seconds": 900,
+                "allowed_target_types": ["service"],
+                "target_schema": {"allow_empty_targets": False, "max_targets": 5},
+                "_allow_emergency": True,
+                "_max_breakglass": 1800,
+                "_retro_sla": 86400,
+                "_verif_template": {"checks": []},
+                "_workflows": ["incident"],
+            },
+            {
+                "key": "emergency-remediation",
+                "name": "Emergency Remediation",
+                "description": (
+                    "Unplanned emergency response for active production incidents. "
+                    "Supports breakglass and bypass procedures."
+                ),
+                "risk_level": "high",
+                "requires_approval": False,
+                "verification_required": True,
+                "dispatch_ttl_seconds": 1800,
+                "allowed_target_types": ["service", "database"],
+                "target_schema": {"allow_empty_targets": False, "max_targets": 10},
+                "_allow_emergency": True,
+                "_max_breakglass": 7200,
+                "_retro_sla": 43200,
+                "_verif_template": {
+                    "checks": [
+                        {
+                            "key": "incident-resolved",
+                            "name": "Incident resolved confirmation",
+                            "type": "manual_attestation",
+                            "required": True,
+                            "manual_attestation_config": {
+                                "instructions": "Confirm the incident is fully resolved and service is stable.",
+                                "min_chars": 20,
+                            },
+                        }
+                    ]
+                },
+                "_workflows": ["incident"],
+            },
+        ]
+
+        self._profiles = {}
+        for spec in specs:
+            existing = OperationProfile.objects.filter(
+                organization=self._org, key=spec["key"]
+            ).first()
+            if existing:
+                self._profiles[spec["key"]] = existing
+                self._report("OperationProfile", spec["name"], False)
+                continue
+
+            # Extract extra fields not accepted by the service
+            allow_emergency = spec.pop("_allow_emergency", False)
+            max_breakglass = spec.pop("_max_breakglass", None)
+            retro_sla = spec.pop("_retro_sla", None)
+            verif_template = spec.pop("_verif_template", {})
+            workflow_keys = spec.pop("_workflows", [])
+            workflow_ids = [
+                str(self._workflows[k].id)
+                for k in workflow_keys
+                if k in self._workflows
+            ]
+
+            profile = create_operation_profile(
+                organization=self._org,
+                actor=actor,
+                workflow_ids=workflow_ids,
+                **spec,
+            )
+            OperationProfile.objects.filter(pk=profile.pk).update(
+                allow_emergency_changes=allow_emergency,
+                max_breakglass_seconds=max_breakglass,
+                retro_review_sla_seconds=retro_sla,
+                verification_plan_template=verif_template,
+                allowed_runner_pool_keys=["default"],
+            )
+            profile.refresh_from_db()
+            self._profiles[profile.key] = profile
+            self._report("OperationProfile", profile.name, True)
+
+    # ------------------------------------------------------------------
+    # Target connectivity routes
+    # ------------------------------------------------------------------
+
+    def _seed_target_connectivity_routes(self):
+        from apps.runners.models import TargetConnectivityRoute
+
+        routes = [
+            {
+                "environment": "production",
+                "target_type": "service",
+                "normalized_identifier_pattern": "*",
+                "priority": 100,
+                "is_active": True,
+                "_label": "service/* → default pool",
+            },
+            {
+                "environment": "production",
+                "target_type": "database",
+                "normalized_identifier_pattern": "db-*",
+                "priority": 100,
+                "is_active": True,
+                "_label": "database/db-* → default pool",
+            },
+            {
+                "environment": "production",
+                "target_type": "legacy-service",
+                "normalized_identifier_pattern": "*",
+                "priority": 200,
+                "is_active": False,  # inactive — shows disabled state in UI
+                "_label": "legacy-service/* → default pool (inactive)",
+            },
+        ]
+
+        for r in routes:
+            label = r.pop("_label")
+            route, created = TargetConnectivityRoute.objects.get_or_create(
+                organization=self._org,
+                environment=r["environment"],
+                target_type=r["target_type"],
+                normalized_identifier_pattern=r["normalized_identifier_pattern"],
+                pool=self._pool,
+                defaults={
+                    "priority": r["priority"],
+                    "is_active": r["is_active"],
+                },
+            )
+            self._report("TargetConnectivityRoute", label, created)
+
+    # ------------------------------------------------------------------
+    # Freeze rules
+    # ------------------------------------------------------------------
+
+    def _seed_freeze_rules(self):
+        from apps.changes.models import FreezeRule
+
+        now = timezone.now()
+        admin = self._admin_user()
+
+        rules = [
+            # Past — shows in list as inactive/expired
+            {
+                "name": "Q4 2024 Code Freeze",
+                "description": "Year-end code freeze covering all production targets.",
+                "is_active": False,
+                "behavior": FreezeRule.Behavior.BLOCK,
+                "scope_type": FreezeRule.ScopeType.ALL_PRODUCTION,
+                "starts_at": now - timedelta(days=180),
+                "ends_at": now - timedelta(days=90),
+                "requires_exception_reference": False,
+            },
+            # Future active — upcoming maintenance window (blocks preflight when active)
+            {
+                "name": "Quarterly Maintenance Window",
+                "description": "Upcoming maintenance window blocking non-emergency changes.",
+                "is_active": True,
+                "behavior": FreezeRule.Behavior.BLOCK,
+                "scope_type": FreezeRule.ScopeType.ALL_PRODUCTION,
+                "starts_at": now + timedelta(days=14),
+                "ends_at": now + timedelta(days=14, hours=8),
+                "requires_exception_reference": False,
+            },
+            # Currently active allow-with-exception — will show conflict on preflight
+            {
+                "name": "Database Service Freeze (Exception Allowed)",
+                "description": "Database changes require a change-management ticket reference.",
+                "is_active": True,
+                "behavior": FreezeRule.Behavior.ALLOW_WITH_EXCEPTION,
+                "scope_type": FreezeRule.ScopeType.TARGET_TYPE,
+                "target_type": "database",
+                "starts_at": now - timedelta(days=3),
+                "ends_at": now + timedelta(days=4),
+                "requires_exception_reference": True,
+            },
+        ]
+
+        for r in rules:
+            freeze, created = FreezeRule.objects.get_or_create(
+                organization=self._org,
+                name=r["name"],
+                defaults={**r, "created_by": admin, "updated_by": admin},
+            )
+            self._report("FreezeRule", freeze.name, created)
+
+    # ------------------------------------------------------------------
+    # Change records (full lifecycle coverage)
+    # ------------------------------------------------------------------
+
+    def _seed_change_records(self):
+        """Seed change records across all meaningful lifecycle states."""
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        self._changes = {}
+
+        # Load users for actor references
+        admin = self._admin_user()
+        operator = User.objects.filter(email="operator@acme.test").first()
+
+        # Require profiles and workflows to exist
+        if not self._profiles or "prod-deploy" not in self._profiles:
+            self.stdout.write(
+                self.style.WARNING("  [Skipped] Change records: no operation profiles seeded.")
+            )
+            return
+
+        deploy_wf = self._workflows.get("deploy")
+        incident_wf = self._workflows.get("incident")
+        if not deploy_wf or not incident_wf:
+            self.stdout.write(
+                self.style.WARNING("  [Skipped] Change records: seed workflows missing.")
+            )
+            return
+
+        prod_profile = self._profiles["prod-deploy"]
+        db_profile = self._profiles.get("db-migration", prod_profile)
+        emerg_profile = self._profiles.get("emergency-remediation", prod_profile)
+
+        # ------- 1. DRAFT -------
+        self._changes["draft"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Draft",
+            summary="Frontend v2.4.1 release including performance improvements.",
+            justification="Scheduled quarterly release. All CI checks passing.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "frontend",
+                    "environment": "production",
+                    "display_name": "Frontend Service",
+                }
+            ],
+            requested_inputs={"version": "v2.4.1", "rollback_version": "v2.4.0"},
+            requested_by=admin,
+        )
+        self._report("ChangeRecord", "[Seed] Draft", self._changes["draft"][1])
+
+        # ------- 2. PENDING_APPROVAL -------
+        self._changes["pending_approval"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Pending Approval",
+            summary="API service v3.1.0 with new rate limiting and auth improvements.",
+            justification="Planned release after QA sign-off. Requires manager approval.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "api-service",
+                    "environment": "production",
+                    "display_name": "API Service",
+                }
+            ],
+            requested_inputs={"version": "v3.1.0", "rollback_version": "v3.0.9"},
+            requested_by=operator,
+            advance_to="pending_approval",
+            advance_by=operator,
+            advance_at=timedelta(hours=-6),
+        )
+        self._report("ChangeRecord", "[Seed] Pending Approval", self._changes["pending_approval"][1])
+
+        # ------- 3. APPROVED -------
+        self._changes["approved"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Approved",
+            summary="Worker service v1.8.2 with queue processing improvements.",
+            justification="Performance-critical fix approved by platform lead.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "worker-service",
+                    "environment": "production",
+                    "display_name": "Worker Service",
+                }
+            ],
+            requested_inputs={"version": "v1.8.2", "rollback_version": "v1.8.1"},
+            requested_by=admin,
+            advance_to="approved",
+            advance_by=admin,
+            advance_at=timedelta(hours=-3),
+        )
+        self._report("ChangeRecord", "[Seed] Approved", self._changes["approved"][1])
+
+        # ------- 4. RUNNING (with execution binding) -------
+        self._changes["running"] = self._seed_change_running()
+        self._report("ChangeRecord", "[Seed] Running", self._changes["running"][1])
+
+        # ------- 5. VERIFICATION_PENDING -------
+        self._changes["verification_pending"] = self._seed_change_verification_pending(
+            admin=admin, operator=operator
+        )
+        self._report("ChangeRecord", "[Seed] Verification Pending", self._changes["verification_pending"][1])
+
+        # ------- 6. VERIFIED -------
+        self._changes["verified"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Verified",
+            summary="Cache service v0.9.4 deployed and verified clean.",
+            justification="Routine cache warming update with automated smoke tests.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "cache-service",
+                    "environment": "production",
+                    "display_name": "Cache Service",
+                }
+            ],
+            requested_inputs={"version": "v0.9.4", "rollback_version": "v0.9.3"},
+            requested_by=admin,
+            advance_to="verified",
+            advance_by=admin,
+            advance_at=timedelta(hours=-1),
+        )
+        self._report("ChangeRecord", "[Seed] Verified", self._changes["verified"][1])
+
+        # ------- 7. CLOSED (success) — primary evidence target -------
+        self._changes["closed"] = self._seed_change_closed(admin=admin, operator=operator)
+        self._report("ChangeRecord", "[Seed] Closed (success)", self._changes["closed"][1])
+
+        # ------- 8. CLOSED (rolled_back) -------
+        self._changes["closed_rollback"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Closed (Rolled Back)",
+            summary="Auth service v2.0.0 deployment rolled back due to latency spike.",
+            justification="Urgent fix triggered by P1 incident during canary.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "auth-service",
+                    "environment": "production",
+                    "display_name": "Auth Service",
+                }
+            ],
+            requested_inputs={"version": "v2.0.0", "rollback_version": "v1.9.8"},
+            requested_by=operator,
+            advance_to="closed",
+            advance_by=admin,
+            advance_at=timedelta(days=-2),
+            extra_fields={"terminal_reason": "rolled_back"},
+        )
+        self._report("ChangeRecord", "[Seed] Closed (Rolled Back)", self._changes["closed_rollback"][1])
+
+        # ------- 9. REJECTED -------
+        self._changes["rejected"] = self._seed_change_in_status(
+            profile=db_profile,
+            workflow=deploy_wf,
+            title="[Seed] Database Migration — Rejected",
+            summary="Schema migration adding nullable columns to billing table.",
+            justification="Required for billing v4 feature flag support.",
+            targets=[
+                {
+                    "target_type": "database",
+                    "target_identifier": "db-billing",
+                    "environment": "production",
+                    "display_name": "Billing Database",
+                }
+            ],
+            requested_inputs={"migration_name": "0042_billing_v4_flags", "dry_run": False},
+            requested_by=operator,
+            advance_to="rejected",
+            advance_by=admin,
+            advance_at=timedelta(hours=-8),
+            extra_fields={"terminal_reason": "policy_violation"},
+        )
+        self._report("ChangeRecord", "[Seed] Rejected", self._changes["rejected"][1])
+
+        # ------- 10. CANCELED -------
+        self._changes["canceled"] = self._seed_change_in_status(
+            profile=prod_profile,
+            workflow=deploy_wf,
+            title="[Seed] Production Deploy — Canceled",
+            summary="Notification service v1.2.3 release — canceled by requester.",
+            justification="Superseded by emergency hotfix v1.2.4.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "notification-service",
+                    "environment": "production",
+                    "display_name": "Notification Service",
+                }
+            ],
+            requested_inputs={"version": "v1.2.3"},
+            requested_by=admin,
+            advance_to="canceled",
+            advance_by=admin,
+            advance_at=timedelta(days=-1),
+            extra_fields={"terminal_reason": "requester_canceled"},
+        )
+        self._report("ChangeRecord", "[Seed] Canceled", self._changes["canceled"][1])
+
+        # ------- 11. EMERGENCY + active breakglass session -------
+        self._changes["emergency"] = self._seed_change_emergency(
+            admin=admin, emerg_profile=emerg_profile
+        )
+        self._report("ChangeRecord", "[Seed] Emergency + Breakglass", self._changes["emergency"][1])
+
+    def _admin_user(self):
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        return User.objects.filter(email="admin@acme.test").first()
+
+    def _seed_change_in_status(
+        self,
+        *,
+        profile,
+        workflow,
+        title,
+        summary,
+        justification,
+        targets,
+        requested_inputs=None,
+        requested_by=None,
+        advance_to=None,
+        advance_by=None,
+        advance_at=None,
+        extra_fields=None,
+    ):
+        """Create a draft change via service then advance status directly."""
+        from apps.audit.services import system_actor
+        from apps.audit.models import AuditEvent
+        from apps.changes.models import ChangeRecord
+        from apps.changes.services import create_change_record, sha256_canonical_json
+
+        # Return existing if already seeded (title is our idempotency key)
+        existing = ChangeRecord.objects.filter(
+            organization=self._org, title=title
+        ).first()
+        if existing is not None:
+            return existing, False
+
+        # Build actor
+        if requested_by is not None:
+            from apps.audit.services import AuditActor
+
+            actor = AuditActor(
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(requested_by.id),
+                actor_label=requested_by.email,
+            )
+        else:
+            actor = system_actor("seed_dev")
+
+        change = create_change_record(
+            organization=self._org,
+            operation_profile_key=profile.key,
+            workflow_id=str(workflow.id),
+            title=title,
+            summary=summary,
+            justification=justification,
+            requested_inputs=requested_inputs or {},
+            targets=targets,
+            actor=actor,
+        )
+
+        if advance_to is None or advance_to == "draft":
+            return change, True
+
+        now = timezone.now()
+        base_time = now + (advance_at or timedelta())
+        target_objs = list(change.targets.order_by("position"))
+
+        # Compute snapshot hashes (same as submit_change_record does)
+        inputs_sha = sha256_canonical_json(change.requested_inputs)
+        from apps.changes.services import build_request_snapshot
+
+        snapshot = build_request_snapshot(
+            change, target_objs, submitted_at=base_time, profile=profile, workflow=workflow
+        )
+        snapshot_sha = sha256_canonical_json(snapshot)
+        wf_def_sha = sha256_canonical_json(workflow.definition or {})
+
+        # Map target status to timestamps
+        ts = {
+            "pending_approval": {"submitted_at": base_time, "status": "pending_approval"},
+            "approved": {
+                "submitted_at": base_time - timedelta(hours=1),
+                "approved_at": base_time,
+                "status": "approved",
+            },
+            "dispatchable": {
+                "submitted_at": base_time - timedelta(hours=2),
+                "approved_at": base_time - timedelta(hours=1),
+                "dispatchable_at": base_time,
+                "status": "dispatchable",
+            },
+            "running": {
+                "submitted_at": base_time - timedelta(hours=3),
+                "approved_at": base_time - timedelta(hours=2),
+                "dispatchable_at": base_time - timedelta(hours=1),
+                "running_at": base_time,
+                "status": "running",
+            },
+            "verification_pending": {
+                "submitted_at": base_time - timedelta(hours=4),
+                "approved_at": base_time - timedelta(hours=3),
+                "dispatchable_at": base_time - timedelta(hours=2),
+                "running_at": base_time - timedelta(hours=1, minutes=30),
+                "verification_pending_at": base_time,
+                "status": "verification_pending",
+            },
+            "verified": {
+                "submitted_at": base_time - timedelta(hours=5),
+                "approved_at": base_time - timedelta(hours=4),
+                "dispatchable_at": base_time - timedelta(hours=3),
+                "running_at": base_time - timedelta(hours=2),
+                "verified_at": base_time,
+                "status": "verified",
+            },
+            "closed": {
+                "submitted_at": base_time - timedelta(hours=6),
+                "approved_at": base_time - timedelta(hours=5),
+                "dispatchable_at": base_time - timedelta(hours=4),
+                "running_at": base_time - timedelta(hours=3),
+                "verified_at": base_time - timedelta(hours=1),
+                "closed_at": base_time,
+                "status": "closed",
+            },
+            "rejected": {
+                "submitted_at": base_time - timedelta(hours=2),
+                "rejected_at": base_time,
+                "status": "rejected",
+            },
+            "canceled": {
+                "submitted_at": base_time - timedelta(hours=3),
+                "canceled_at": base_time,
+                "status": "canceled",
+            },
+        }
+
+        fields = ts.get(advance_to, {"status": advance_to})
+        fields.update(
+            {
+                "requested_inputs_sha256": inputs_sha,
+                "request_snapshot": snapshot,
+                "request_snapshot_sha256": snapshot_sha,
+                "operation_profile_key_snapshot": profile.key,
+                "workflow_version_snapshot": workflow.version,
+                "workflow_definition_sha256": wf_def_sha,
+                "submitted_by_id": str(advance_by.id) if advance_by else None,
+            }
+        )
+        if extra_fields:
+            fields.update(extra_fields)
+
+        ChangeRecord.objects.filter(pk=change.pk).update(**fields)
+        change.refresh_from_db()
+        return change, True
+
+    def _seed_change_running(self):
+        """Running change with execution binding."""
+        import json
+
+        from apps.changes.models import ChangeExecutionBinding, ChangeRecord
+        from apps.changes.services import sha256_canonical_json, build_request_snapshot
+        from apps.executions.models import Execution
+
+        profile = self._profiles.get("prod-deploy")
+        workflow = self._workflows.get("deploy")
+        admin = self._admin_user()
+        title = "[Seed] Production Deploy — Running"
+
+        existing = ChangeRecord.objects.filter(
+            organization=self._org, title=title
+        ).first()
+        if existing is not None:
+            return existing, False
+
+        change, _ = self._seed_change_in_status(
+            profile=profile,
+            workflow=workflow,
+            title=title,
+            summary="Scheduler service v2.2.0 deployment in progress.",
+            justification="Approved for scheduled maintenance window.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "scheduler-service",
+                    "environment": "production",
+                    "display_name": "Scheduler Service",
+                }
+            ],
+            requested_inputs={"version": "v2.2.0", "rollback_version": "v2.1.9"},
+            requested_by=admin,
+            advance_to="running",
+            advance_by=admin,
+            advance_at=timedelta(hours=-1),
+        )
+
+        # Create a queued execution to bind to this change
+        try:
+            from apps.executions.services import create_execution
+
+            ex = create_execution(workflow=workflow)
+            now = timezone.now()
+            Execution.objects.filter(pk=ex.pk).update(
+                status=Execution.Status.RUNNING,
+                started_at=now - timedelta(minutes=30),
+                claimed_by_runner_id="seed-runner-01",
+                claim_token=uuid.uuid4(),
+                claimed_at=now - timedelta(minutes=30),
+            )
+            ex.refresh_from_db()
+
+            # Create a simple binding (mimics what dispatch would create)
+            nonce = secrets.token_hex(32)
+            token_hash = hashlib.sha256(nonce.encode()).hexdigest()
+
+            if not ChangeExecutionBinding.objects.filter(change_record=change).exists():
+                ChangeExecutionBinding.objects.create(
+                    change_record=change,
+                    execution=ex,
+                    organization=self._org,
+                    operation_profile_key=profile.key,
+                    requested_inputs_sha256=hashlib.sha256(
+                        json.dumps(change.requested_inputs, sort_keys=True).encode()
+                    ).hexdigest(),
+                    dispatch_token_nonce=nonce,
+                    dispatch_token_hash=token_hash,
+                    dispatch_token_expires_at=now + timedelta(minutes=15),
+                    reserved_at=now - timedelta(minutes=30),
+                    bound_at=now - timedelta(minutes=29),
+                    bound_by_runner_id="seed-runner-01",
+                    execution_accepted_at=now - timedelta(minutes=29),
+                    execution_started_at=now - timedelta(minutes=28),
+                )
+        except Exception as exc:
+            self.stdout.write(self.style.WARNING(f"  [Warning] Running change binding: {exc}"))
+
+        return change, True
+
+    def _seed_change_verification_pending(self, *, admin, operator):
+        """Change in verification_pending with a VerificationPlan and pending checks."""
+        from apps.changes.models import (
+            ChangeRecord,
+            VerificationCheck,
+            VerificationPlan,
+        )
+        from apps.changes.services import sha256_canonical_json
+
+        profile = self._profiles.get("prod-deploy")
+        workflow = self._workflows.get("deploy")
+        title = "[Seed] Production Deploy — Verification Pending"
+
+        change, created = self._seed_change_in_status(
+            profile=profile,
+            workflow=workflow,
+            title=title,
+            summary="Metrics service v1.5.0 deployed; awaiting manual post-deployment verification.",
+            justification="Scheduled release — requires health check attestation.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "metrics-service",
+                    "environment": "production",
+                    "display_name": "Metrics Service",
+                }
+            ],
+            requested_inputs={"version": "v1.5.0", "rollback_version": "v1.4.9"},
+            requested_by=operator,
+            advance_to="verification_pending",
+            advance_by=admin,
+            advance_at=timedelta(hours=-2),
+        )
+
+        # Create VerificationPlan if not exists
+        plan, plan_created = VerificationPlan.objects.get_or_create(
+            change_record=change,
+            defaults={
+                "organization": self._org,
+                "operation_profile": profile,
+                "mode": VerificationPlan.Mode.MANUAL,
+                "status": VerificationPlan.Status.ACTIVE,
+                "generated_from_profile_snapshot": {"key": profile.key, "name": profile.name},
+                "generated_from_profile_sha256": sha256_canonical_json(
+                    {"key": profile.key, "name": profile.name}
+                ),
+                "required_check_count": 2,
+                "optional_check_count": 0,
+                "satisfied_required_count": 0,
+                "failed_required_count": 0,
+                "generated_at": timezone.now() - timedelta(hours=2),
+                "activated_at": timezone.now() - timedelta(hours=2),
+            },
+        )
+        self._report("VerificationPlan", f"[Seed] Verification Pending plan", plan_created)
+
+        # Create checks
+        check_specs = [
+            {
+                "key": "health-check",
+                "name": "Post-deployment health check",
+                "check_type": VerificationCheck.CheckType.MANUAL_ATTESTATION,
+                "required": True,
+                "position": 0,
+                "description": "Verify the deployed service is responding correctly.",
+                "manual_attestation_config": {
+                    "instructions": "Check /health endpoint returns 200 OK.",
+                    "min_chars": 20,
+                },
+            },
+            {
+                "key": "error-rate",
+                "name": "Error rate within normal bounds",
+                "check_type": VerificationCheck.CheckType.MANUAL_ATTESTATION,
+                "required": True,
+                "position": 1,
+                "description": "Check monitoring dashboard for error rate.",
+                "manual_attestation_config": {
+                    "instructions": "Confirm error rate < 1% in Grafana dashboard.",
+                    "min_chars": 10,
+                },
+            },
+        ]
+        for cs in check_specs:
+            VerificationCheck.objects.get_or_create(
+                plan=plan,
+                key=cs["key"],
+                defaults={
+                    "organization": self._org,
+                    "change_record": change,
+                    "position": cs["position"],
+                    "name": cs["name"],
+                    "description": cs["description"],
+                    "check_type": cs["check_type"],
+                    "required": cs["required"],
+                    "status": VerificationCheck.Status.PENDING,
+                    "manual_attestation_config": cs.get("manual_attestation_config", {}),
+                },
+            )
+
+        return change, created
+
+    def _seed_change_closed(self, *, admin, operator):
+        """Closed (success) change — the primary target for evidence bundle seeding."""
+        import json
+
+        from apps.changes.models import (
+            ChangeRecord,
+            ChangeClosure,
+            VerificationCheck,
+            VerificationPlan,
+            VerificationResult,
+        )
+        from apps.changes.services import sha256_canonical_json
+
+        profile = self._profiles.get("prod-deploy")
+        workflow = self._workflows.get("deploy")
+        title = "[Seed] Production Deploy — Closed (Success)"
+
+        change, created = self._seed_change_in_status(
+            profile=profile,
+            workflow=workflow,
+            title=title,
+            summary="Payments service v4.1.0 successfully deployed and verified.",
+            justification="Scheduled Q1 release with PCI compliance improvements.",
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "payments-service",
+                    "environment": "production",
+                    "display_name": "Payments Service",
+                }
+            ],
+            requested_inputs={"version": "v4.1.0", "rollback_version": "v4.0.9"},
+            requested_by=operator,
+            advance_to="closed",
+            advance_by=admin,
+            advance_at=timedelta(days=-3),
+        )
+
+        # Create verification plan + completed checks
+        plan, _ = VerificationPlan.objects.get_or_create(
+            change_record=change,
+            defaults={
+                "organization": self._org,
+                "operation_profile": profile,
+                "mode": VerificationPlan.Mode.MANUAL,
+                "status": VerificationPlan.Status.SATISFIED,
+                "generated_from_profile_snapshot": {"key": profile.key},
+                "generated_from_profile_sha256": sha256_canonical_json({"key": profile.key}),
+                "required_check_count": 2,
+                "optional_check_count": 0,
+                "satisfied_required_count": 2,
+                "failed_required_count": 0,
+                "generated_at": timezone.now() - timedelta(days=3, hours=4),
+                "activated_at": timezone.now() - timedelta(days=3, hours=3),
+                "satisfied_at": timezone.now() - timedelta(days=3, hours=1),
+            },
+        )
+
+        check1, _ = VerificationCheck.objects.get_or_create(
+            plan=plan,
+            key="health-check",
+            defaults={
+                "organization": self._org,
+                "change_record": change,
+                "position": 0,
+                "name": "Post-deployment health check",
+                "check_type": VerificationCheck.CheckType.MANUAL_ATTESTATION,
+                "required": True,
+                "status": VerificationCheck.Status.PASSED,
+                "manual_attestation_config": {
+                    "instructions": "Check /health endpoint.",
+                    "min_chars": 20,
+                },
+                "satisfied_at": timezone.now() - timedelta(days=3, hours=2),
+            },
+        )
+        check2, _ = VerificationCheck.objects.get_or_create(
+            plan=plan,
+            key="error-rate",
+            defaults={
+                "organization": self._org,
+                "change_record": change,
+                "position": 1,
+                "name": "Error rate within normal bounds",
+                "check_type": VerificationCheck.CheckType.MANUAL_ATTESTATION,
+                "required": True,
+                "status": VerificationCheck.Status.PASSED,
+                "manual_attestation_config": {
+                    "instructions": "Confirm error rate < 1%.",
+                    "min_chars": 10,
+                },
+                "satisfied_at": timezone.now() - timedelta(days=3, hours=1, minutes=30),
+            },
+        )
+
+        # Create verification results (immutable — skip if already exist)
+        for check in [check1, check2]:
+            if not VerificationResult.objects.filter(
+                plan=plan, verification_check=check
+            ).exists():
+                VerificationResult.objects.create(
+                    organization=self._org,
+                    change_record=change,
+                    plan=plan,
+                    verification_check=check,
+                    source=VerificationResult.Source.USER,
+                    outcome=VerificationResult.Outcome.PASSED,
+                    validation_status=VerificationResult.ValidationStatus.ACCEPTED,
+                    submitted_by=operator,
+                    manual_attestation_text=(
+                        "Health check confirmed — /health returns 200 OK with all systems nominal."
+                        if check.key == "health-check"
+                        else "Error rate is 0.02% over 30m window — well within 1% threshold."
+                    ),
+                    submitted_at=timezone.now() - timedelta(days=3, hours=2),
+                    validated_at=timezone.now() - timedelta(days=3, hours=2),
+                )
+
+        # Create ChangeClosure (immutable — skip if exists)
+        if not ChangeClosure.objects.filter(change_record=change).exists():
+            ChangeClosure.objects.create(
+                organization=self._org,
+                change_record=change,
+                outcome=ChangeClosure.Outcome.SUCCESS,
+                closed_by=admin,
+                independent_reviewer=operator,
+                summary=(
+                    "Payments service v4.1.0 deployed successfully. "
+                    "All health checks passed. Error rate nominal. "
+                    "No rollback required."
+                ),
+                verification_plan=plan,
+                verification_summary={
+                    "required_checks": 2,
+                    "passed": 2,
+                    "failed": 0,
+                    "status": "satisfied",
+                },
+                execution_summary={"workflow": workflow.name, "status": "succeeded"},
+                closed_at=timezone.now() - timedelta(days=3),
+            )
+
+        self._changes_closed_plan = plan
+        return change, created
+
+    def _seed_change_emergency(self, *, admin, emerg_profile):
+        """Emergency change with active breakglass session and pending retro review."""
+        import json
+        from apps.changes.models import (
+            BreakglassSession,
+            ChangeRecord,
+            RetroReview,
+        )
+        from apps.changes.services import sha256_canonical_json
+
+        workflow = self._workflows.get("incident")
+        title = "[Seed] Emergency Remediation — Active Breakglass"
+
+        existing = ChangeRecord.objects.filter(
+            organization=self._org, title=title
+        ).first()
+        if existing is not None:
+            return existing, False
+
+        from apps.audit.services import AuditActor
+        from apps.audit.models import AuditEvent
+
+        actor = AuditActor(
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(admin.id),
+            actor_label=admin.email,
+        )
+        from apps.changes.services import create_change_record
+
+        change = create_change_record(
+            organization=self._org,
+            operation_profile_key=emerg_profile.key,
+            workflow_id=str(workflow.id),
+            title=title,
+            summary="P1 incident: authentication service returning 503s for 12% of requests.",
+            justification="Emergency remediation to restore auth service stability.",
+            requested_inputs={"rollback_target": "auth-service", "strategy": "pod-restart"},
+            targets=[
+                {
+                    "target_type": "service",
+                    "target_identifier": "auth-service",
+                    "environment": "production",
+                    "display_name": "Auth Service",
+                }
+            ],
+            actor=actor,
+            is_emergency=True,
+            emergency_reason=(
+                "Auth service degraded: 12% of login requests failing with 503. "
+                "Customer-impacting incident INC-2024-0847 declared P1."
+            ),
+        )
+
+        now = timezone.now()
+        from apps.changes.services import build_request_snapshot
+
+        target_objs = list(change.targets.order_by("position"))
+        snapshot = build_request_snapshot(
+            change,
+            target_objs,
+            submitted_at=now - timedelta(hours=1),
+            profile=emerg_profile,
+            workflow=workflow,
+        )
+        snapshot_sha = sha256_canonical_json(snapshot)
+
+        ChangeRecord.objects.filter(pk=change.pk).update(
+            status="running",
+            submitted_at=now - timedelta(hours=1),
+            approved_at=now - timedelta(hours=1),
+            dispatchable_at=now - timedelta(minutes=55),
+            running_at=now - timedelta(minutes=50),
+            requested_inputs_sha256=sha256_canonical_json(change.requested_inputs),
+            request_snapshot=snapshot,
+            request_snapshot_sha256=snapshot_sha,
+            operation_profile_key_snapshot=emerg_profile.key,
+            workflow_version_snapshot=workflow.version,
+            workflow_definition_sha256=sha256_canonical_json(workflow.definition or {}),
+            submitted_by_id=str(admin.id),
+            retro_review_required=True,
+            retro_review_due_at=now + timedelta(hours=23),
+        )
+        change.refresh_from_db()
+
+        # Create active breakglass session
+        scope_json = {"service_keys": ["auth-service"], "statuses": ["running"]}
+        scope_sha = hashlib.sha256(
+            json.dumps(scope_json, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+        bgl, bgl_created = BreakglassSession.objects.get_or_create(
+            change_record=change,
+            status=BreakglassSession.Status.ACTIVE,
+            defaults={
+                "organization": self._org,
+                "scope_json": scope_json,
+                "scope_sha256": scope_sha,
+                "reason": (
+                    "Auth service P1 incident — bypassing normal approval window "
+                    "to restore service immediately."
+                ),
+                "activated_by": admin,
+                "started_at": now - timedelta(minutes=50),
+                "expires_at": now + timedelta(minutes=70),
+                "review_due_at": now + timedelta(hours=23),
+                "review_status": BreakglassSession.ReviewStatus.PENDING,
+                "last_heartbeat_at": now - timedelta(minutes=2),
+            },
+        )
+        self._report("BreakglassSession", "[Seed] Active breakglass", bgl_created)
+
+        # RetroReview — pending (requires breakglass_session)
+        retro, retro_created = RetroReview.objects.get_or_create(
+            change_record=change,
+            breakglass_session=bgl,
+            defaults={
+                "organization": self._org,
+                "status": RetroReview.Status.PENDING,
+                "due_at": now + timedelta(hours=23),
+                "remediation_required": False,
+            },
+        )
+        self._report("RetroReview", "[Seed] Pending retro review", retro_created)
+        return change, True
+
+    # ------------------------------------------------------------------
+    # Evidence bundles and auditor workspace
+    # ------------------------------------------------------------------
+
+    def _seed_auditor_workspace(self):
+        """Seed evidence bundles, auditor grants, service catalog, external refs."""
+        admin = self._admin_user()
+        self._seed_evidence_bundle(admin=admin)
+        self._seed_service_catalog(admin=admin)
+        self._seed_control_mapping(admin=admin)
+        self._seed_external_references(admin=admin)
+        self._seed_auditor_grants(admin=admin)
+        self._seed_completed_retro_review(admin=admin)
+
+    def _seed_evidence_bundle(self, *, admin):
+        """Create sealed + exported evidence bundle on the closed change."""
+        import json
+
+        from apps.evidence.models import EvidenceBundle, EvidenceBundleItem, EvidenceExport
+
+        closed_change = self._changes.get("closed")
+        if closed_change is None or closed_change[0] is None:
+            return
+        change = closed_change[0] if isinstance(closed_change, tuple) else closed_change
+
+        # Get change from db to confirm it's closed
+        from apps.changes.models import ChangeRecord
+
+        change = ChangeRecord.objects.filter(pk=change.pk).first()
+        if change is None or change.status != ChangeRecord.Status.CLOSED:
+            return
+
+        # Compiling bundle on the verified (but not closed) change — shows completeness UI
+        verified_change_tuple = self._changes.get("verified")
+        if verified_change_tuple is not None:
+            verified_change = (
+                verified_change_tuple[0]
+                if isinstance(verified_change_tuple, tuple)
+                else verified_change_tuple
+            )
+            verified_change = ChangeRecord.objects.filter(pk=verified_change.pk).first()
+            if verified_change is not None and verified_change.status == ChangeRecord.Status.VERIFIED:
+                EvidenceBundle.objects.get_or_create(
+                    change_record=verified_change,
+                    version=1,
+                    defaults={
+                        "organization": self._org,
+                        "status": EvidenceBundle.Status.COMPILING,
+                        "completeness_status": EvidenceBundle.CompletenessStatus.INCOMPLETE,
+                        "completeness_report": {
+                            "required": ["change_snapshot", "approval", "verification_result"],
+                            "present": ["change_snapshot"],
+                            "missing": ["approval", "verification_result"],
+                        },
+                        "source_cutoff_at": timezone.now(),
+                        "source_high_watermark": {"audit_events": 0, "artifacts": 0},
+                        "compiled_at": timezone.now() - timedelta(hours=1),
+                        "created_by": admin,
+                    },
+                )
+                self._report("EvidenceBundle", "[Seed] Compiling (verified change)", True)
+
+        # Sealed bundle on the closed change
+        existing_bundle = EvidenceBundle.objects.filter(change_record=change).first()
+        if existing_bundle is not None:
+            self._sealed_bundle = existing_bundle
+            self._report("EvidenceBundle", "[Seed] Sealed (closed change)", False)
+        else:
+            # Build deterministic hashes from fixed content
+            manifest = {
+                "schema_version": "1.0",
+                "change_id": str(change.id),
+                "org_id": str(self._org.id),
+                "items": [
+                    {"type": "change_snapshot", "key": str(change.id), "path": "change/snapshot.json"},
+                    {"type": "closure", "key": str(change.id), "path": "change/closure.json"},
+                    {"type": "verification_result", "key": "check-health-check", "path": "verification/health-check.json"},
+                    {"type": "verification_result", "key": "check-error-rate", "path": "verification/error-rate.json"},
+                ],
+            }
+            manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+            manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+
+            payload_data = manifest_bytes + b"\x00" + str(change.id).encode()
+            payload_checksums_sha = hashlib.sha256(payload_data).hexdigest()
+            content_sha = hashlib.sha256(payload_data + manifest_bytes).hexdigest()
+            content_size = len(payload_data) + len(manifest_bytes)
+
+            bundle_id = uuid.uuid4()
+            storage_key = (
+                f"evidence/org/{self._org.id}/change/{change.id}/bundle/{bundle_id}.zip"
+            )
+            source_snapshot = {"change_id": str(change.id), "status": "closed", "org_id": str(self._org.id)}
+            source_sha = hashlib.sha256(
+                json.dumps(source_snapshot, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+
+            now = timezone.now()
+            # Create as COMPILING first so items can be inserted (sealed bundles are immutable)
+            bundle = EvidenceBundle.objects.create(
+                id=bundle_id,
+                organization=self._org,
+                change_record=change,
+                version=1,
+                status=EvidenceBundle.Status.COMPILING,
+                completeness_status=EvidenceBundle.CompletenessStatus.COMPLETE,
+                completeness_report={
+                    "required": ["change_snapshot", "approval", "closure", "verification_result"],
+                    "present": ["change_snapshot", "approval", "closure", "verification_result"],
+                    "missing": [],
+                },
+                source_snapshot_sha256=source_sha,
+                source_cutoff_at=now - timedelta(days=3),
+                source_high_watermark={"audit_events": 12, "artifacts": 1},
+                manifest=manifest,
+                compiled_at=now - timedelta(days=3, hours=1),
+                created_by=admin,
+            )
+
+            # Add bundle items while bundle is still COMPILING
+            item_specs = [
+                ("change_snapshot", str(change.id), "change/snapshot.json", "/", 0),
+                ("closure", str(change.id), "change/closure.json", "/outcome", 1),
+                ("verification_result", "health-check", "verification/health-check.json", "/outcome", 2),
+                ("verification_result", "error-rate", "verification/error-rate.json", "/outcome", 3),
+            ]
+            for item_type, item_key, path, pointer, pos in item_specs:
+                item_content = json.dumps({"type": item_type, "key": item_key}).encode()
+                EvidenceBundleItem.objects.get_or_create(
+                    bundle=bundle,
+                    item_type=item_type,
+                    item_key=item_key,
+                    defaults={
+                        "organization": self._org,
+                        "canonical_path": path,
+                        "json_pointer": pointer,
+                        "position": pos,
+                        "required": True,
+                        "present": True,
+                        "valid": True,
+                        "source_type": item_type,
+                        "source_id": item_key,
+                        "source_updated_at": now - timedelta(days=3),
+                        "content_sha256": hashlib.sha256(item_content).hexdigest(),
+                        "content_size_bytes": len(item_content),
+                        "mime_type": "application/json",
+                    },
+                )
+
+            # Now seal via filter().update() to bypass the sealed immutability guard
+            EvidenceBundle.objects.filter(pk=bundle.pk).update(
+                status=EvidenceBundle.Status.SEALED,
+                manifest_sha256=manifest_sha,
+                payload_checksums_sha256=payload_checksums_sha,
+                content_sha256=content_sha,
+                content_size_bytes=content_size,
+                storage_key=storage_key,
+                mime_type="application/zip",
+                sealed_at=now - timedelta(days=3),
+                sealed_by=admin,
+            )
+            bundle.refresh_from_db()
+            self._sealed_bundle = bundle
+            self._report("EvidenceBundle", "[Seed] Sealed (closed change)", True)
+
+        # Create export
+        self._seed_evidence_export(change=change, bundle=self._sealed_bundle, admin=admin)
+
+        # Legal hold
+        try:
+            from apps.evidence.models import LegalHold
+
+            LegalHold.objects.get_or_create(
+                change_record=change,
+                evidence_bundle=self._sealed_bundle,
+                defaults={
+                    "organization": self._org,
+                    "status": LegalHold.Status.ACTIVE,
+                    "reason": (
+                        "Regulatory audit request from compliance team — SOC 2 Type II review "
+                        "covering Q1 2024 production deployments."
+                    ),
+                    "external_reference": "LEGAL-2024-0042",
+                    "placed_by": admin,
+                    "placed_at": timezone.now() - timedelta(days=2),
+                },
+            )
+            self._report("LegalHold", "[Seed] Active legal hold on closed change", True)
+        except Exception as exc:
+            self.stdout.write(self.style.WARNING(f"  [Warning] LegalHold: {exc}"))
+
+    def _seed_evidence_export(self, *, change, bundle, admin):
+        import json
+
+        from apps.evidence.models import EvidenceExport
+
+        if EvidenceExport.objects.filter(bundle=bundle).exists():
+            self._report("EvidenceExport", "[Seed] Evidence export (ready)", False)
+            return
+
+        now = timezone.now()
+        export_id = uuid.uuid4()
+        storage_key = (
+            f"evidence/org/{self._org.id}/change/{change.id}/export/{export_id}.zip"
+        )
+        receipt = {
+            "export_id": str(export_id),
+            "bundle_id": str(bundle.id),
+            "change_id": str(change.id),
+            "exported_at": now.isoformat(),
+            "redaction_policy": "none",
+        }
+        receipt_bytes = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+        receipt_sha = hashlib.sha256(receipt_bytes).hexdigest()
+
+        export_content = bundle.manifest_sha256.encode() + b"\x00" + receipt_bytes
+        content_sha = hashlib.sha256(export_content).hexdigest()
+
+        manifest = {"items": list(bundle.manifest.get("items", [])), "receipt": receipt}
+        manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+
+        EvidenceExport.objects.create(
+            id=export_id,
+            organization=self._org,
+            bundle=bundle,
+            status=EvidenceExport.Status.READY,
+            requested_by=admin,
+            requested_at=now - timedelta(days=2, hours=12),
+            ready_at=now - timedelta(days=2, hours=11),
+            expires_at=now + timedelta(days=28),
+            storage_key=storage_key,
+            content_sha256=content_sha,
+            content_size_bytes=len(export_content),
+            manifest=manifest,
+            manifest_sha256=manifest_sha,
+            source_manifest_sha256=bundle.manifest_sha256,
+            source_bundle_content_sha256=bundle.content_sha256,
+            redaction_summary={"redacted_fields": 0, "total_fields": 12},
+            receipt=receipt,
+            receipt_sha256=receipt_sha,
+        )
+        self._report("EvidenceExport", "[Seed] Evidence export (ready)", True)
+
+    def _seed_service_catalog(self, *, admin):
+        from apps.auditor.models import ServiceCatalogEntry
+
+        entries = [
+            {
+                "service_key": "api-service",
+                "name": "API Service",
+                "description": "Core REST API handling authentication, billing, and data access.",
+                "owner_team": "Platform Engineering",
+                "business_owner": "Ada Admin",
+                "criticality": "critical",
+                "environment": "production",
+                "target_patterns": ["api-service", "api-service-*"],
+                "metadata": {"tier": "1", "region": "us-east-1"},
+            },
+            {
+                "service_key": "payments-service",
+                "name": "Payments Service",
+                "description": "PCI-compliant payment processing service.",
+                "owner_team": "Payments Team",
+                "business_owner": "Ada Admin",
+                "criticality": "critical",
+                "environment": "production",
+                "target_patterns": ["payments-service"],
+                "metadata": {"tier": "1", "compliance": "pci-dss"},
+            },
+            {
+                "service_key": "auth-service",
+                "name": "Auth Service",
+                "description": "Authentication and authorization service (OAuth2/OIDC).",
+                "owner_team": "Security Team",
+                "business_owner": "Ada Admin",
+                "criticality": "critical",
+                "environment": "production",
+                "target_patterns": ["auth-service"],
+                "metadata": {"tier": "1"},
+            },
+        ]
+        for e in entries:
+            _, created = ServiceCatalogEntry.objects.get_or_create(
+                organization=self._org,
+                service_key=e["service_key"],
+                defaults={**e, "created_by": admin, "updated_by": admin},
+            )
+            self._report("ServiceCatalogEntry", e["service_key"], created)
+
+    def _seed_control_mapping(self, *, admin):
+        from apps.auditor.models import ControlMappingProfile
+
+        profile, created = ControlMappingProfile.objects.get_or_create(
+            organization=self._org,
+            key="soc2-change-management",
+            version=1,
+            defaults={
+                "name": "SOC 2 Change Management Controls",
+                "standard": "soc2",
+                "description": "SOC 2 Type II controls covering change management and deployment.",
+                "is_active": True,
+                "mapping_rules": [
+                    {
+                        "control_id": "CC8.1",
+                        "title": "Change management process",
+                        "evidence_sections": ["change_snapshot", "approval", "closure"],
+                    },
+                    {
+                        "control_id": "CC6.8",
+                        "title": "Unauthorized or malicious code protection",
+                        "evidence_sections": ["change_snapshot", "verification_result"],
+                    },
+                    {
+                        "control_id": "CC7.2",
+                        "title": "System monitoring",
+                        "evidence_sections": ["audit_event", "verification_result"],
+                    },
+                ],
+                "created_by": admin,
+                "updated_by": admin,
+            },
+        )
+        self._control_profile = profile
+        self._report("ControlMappingProfile", "soc2-change-management", created)
+
+        # Create control coverage on the sealed bundle
+        if not created or not hasattr(self, "_sealed_bundle"):
+            return
+        self._seed_control_coverage(admin=admin)
+
+    def _seed_control_coverage(self, *, admin):
+        from apps.auditor.models import ChangeControlCoverage
+
+        closed_change_tuple = self._changes.get("closed")
+        if closed_change_tuple is None:
+            return
+        change = closed_change_tuple[0] if isinstance(closed_change_tuple, tuple) else closed_change_tuple
+        bundle = getattr(self, "_sealed_bundle", None)
+        profile = getattr(self, "_control_profile", None)
+        if bundle is None or profile is None:
+            return
+
+        controls = [
+            {
+                "control_id": "CC8.1",
+                "control_title": "Change management process",
+                "coverage_status": "covered",
+                "matched_sections": ["change_snapshot", "approval", "closure"],
+                "missing_sections": [],
+                "evidence_paths": ["change/snapshot.json", "change/closure.json"],
+            },
+            {
+                "control_id": "CC6.8",
+                "control_title": "Unauthorized or malicious code protection",
+                "coverage_status": "partially_covered",
+                "matched_sections": ["change_snapshot"],
+                "missing_sections": ["artifact"],
+                "evidence_paths": ["change/snapshot.json"],
+            },
+            {
+                "control_id": "CC7.2",
+                "control_title": "System monitoring",
+                "coverage_status": "covered",
+                "matched_sections": ["audit_event", "verification_result"],
+                "missing_sections": [],
+                "evidence_paths": ["verification/health-check.json"],
+            },
+        ]
+
+        for ctrl in controls:
+            fingerprint_data = f"{bundle.id}:{profile.id}:{ctrl['control_id']}:{ctrl['coverage_status']}"
+            fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()
+            ChangeControlCoverage.objects.get_or_create(
+                evidence_bundle=bundle,
+                mapping_profile=profile,
+                control_id=ctrl["control_id"],
+                defaults={
+                    "organization": self._org,
+                    "change_record": change,
+                    "standard": "soc2",
+                    "control_title": ctrl["control_title"],
+                    "coverage_status": ctrl["coverage_status"],
+                    "matched_sections": ctrl["matched_sections"],
+                    "missing_sections": ctrl["missing_sections"],
+                    "evidence_paths": ctrl["evidence_paths"],
+                    "coverage_fingerprint_sha256": fingerprint,
+                    "computed_by": admin,
+                },
+            )
+        self._report("ChangeControlCoverage", "soc2 controls (3)", True)
+
+    def _seed_external_references(self, *, admin):
+        from apps.auditor.models import ExternalChangeReference
+
+        closed_change_tuple = self._changes.get("closed")
+        if closed_change_tuple is None:
+            return
+        change = closed_change_tuple[0] if isinstance(closed_change_tuple, tuple) else closed_change_tuple
+
+        refs = [
+            {
+                "system": "servicenow",
+                "reference_type": "ticket",
+                "external_id": "CHG0012345",
+                "external_key": "CHG0012345",
+                "display_label": "ServiceNow CHG0012345 — Q1 Payments Service Upgrade",
+                "external_url": "https://acme.service-now.com/nav_to.do?uri=change_request.do?sys_id=CHG0012345",
+                "snapshot": {
+                    "number": "CHG0012345",
+                    "state": "closed",
+                    "approval": "approved",
+                    "category": "software",
+                    "priority": "3-Moderate",
+                    "assigned_to": "Oscar Operator",
+                    "close_code": "successful",
+                },
+                "notes": "ServiceNow change ticket cross-referencing this deployment.",
+            },
+            {
+                "system": "jira",
+                "reference_type": "ticket",
+                "external_id": "PLAT-4821",
+                "external_key": "PLAT-4821",
+                "display_label": "Jira PLAT-4821 — Payments v4.1.0 Release",
+                "external_url": "https://acme.atlassian.net/browse/PLAT-4821",
+                "snapshot": {
+                    "key": "PLAT-4821",
+                    "status": "Done",
+                    "issue_type": "Task",
+                    "priority": "Medium",
+                    "reporter": "Oscar Operator",
+                    "assignee": "Ada Admin",
+                },
+                "notes": "Jira tracking ticket for this release.",
+            },
+        ]
+
+        for r in refs:
+            ExternalChangeReference.objects.get_or_create(
+                organization=self._org,
+                change_record=change,
+                system=r["system"],
+                reference_type=r["reference_type"],
+                external_id=r["external_id"],
+                defaults={
+                    "external_key": r["external_key"],
+                    "display_label": r["display_label"],
+                    "external_url": r["external_url"],
+                    "snapshot": r["snapshot"],
+                    "notes": r["notes"],
+                    "linked_by": admin,
+                },
+            )
+            self._report("ExternalChangeReference", r["display_label"], True)
+
+    def _seed_auditor_grants(self, *, admin):
+        from django.contrib.auth import get_user_model
+        from apps.auditor.models import AuditorAccessGrant
+
+        User = get_user_model()
+        viewer = User.objects.filter(email="viewer@acme.test").first()
+        operator = User.objects.filter(email="operator@acme.test").first()
+
+        now = timezone.now()
+        grants = [
+            {
+                "user": viewer,
+                "status": "active",
+                "scope": {"all": True},
+                "reason": "Quarterly compliance audit — full read access for Q1 review.",
+                "starts_at": now - timedelta(days=7),
+                "expires_at": now + timedelta(days=23),
+                "_label": "viewer@acme.test — active full-scope grant",
+            },
+            {
+                "user": operator,
+                "status": "active",
+                "scope": {"statuses": ["closed", "verified"], "risk_levels": ["high", "critical"]},
+                "reason": "Scoped access for post-release review of high-risk changes.",
+                "starts_at": now - timedelta(days=1),
+                "expires_at": now + timedelta(days=6),
+                "_label": "operator@acme.test — scoped active grant",
+            },
+        ]
+
+        for g in grants:
+            if g["user"] is None:
+                continue
+            label = g.pop("_label")
+            existing = AuditorAccessGrant.objects.filter(
+                organization=self._org,
+                user=g["user"],
+                status=g["status"],
+            ).first()
+            if existing:
+                self._report("AuditorAccessGrant", label, False)
+                continue
+            AuditorAccessGrant.objects.create(
+                organization=self._org,
+                created_by=admin,
+                **g,
+            )
+            self._report("AuditorAccessGrant", label, True)
+
+    def _seed_completed_retro_review(self, *, admin):
+        """Seed a submitted retro review (on the emergency change's exception)."""
+        import json
+        from apps.changes.models import (
+            BreakglassSession,
+            ChangeException,
+            ChangeRecord,
+            RetroReview,
+        )
+
+        emergency_tuple = self._changes.get("emergency")
+        if emergency_tuple is None:
+            return
+        emerg_change = (
+            emergency_tuple[0]
+            if isinstance(emergency_tuple, tuple)
+            else emergency_tuple
+        )
+
+        now = timezone.now()
+
+        # Seed an additional emergency change (already closed) with a submitted retro review
+        emerg_profile = self._profiles.get("emergency-remediation")
+        workflow = self._workflows.get("incident")
+        if emerg_profile is None or workflow is None:
+            return
+
+        title = "[Seed] Emergency Remediation — Closed with Retro Review"
+        from apps.changes.models import ChangeRecord as CR
+
+        existing = CR.objects.filter(organization=self._org, title=title).first()
+        if existing is None:
+            from apps.audit.services import AuditActor
+            from apps.audit.models import AuditEvent
+            from apps.changes.services import create_change_record, sha256_canonical_json, build_request_snapshot
+
+            actor = AuditActor(
+                actor_type=AuditEvent.ActorType.USER,
+                actor_id=str(admin.id),
+                actor_label=admin.email,
+            )
+            past_change = create_change_record(
+                organization=self._org,
+                operation_profile_key=emerg_profile.key,
+                workflow_id=str(workflow.id),
+                title=title,
+                summary="Disk space emergency on database host — log rotation and cleanup.",
+                justification="Automated alert: disk > 95%. Cleared 40GB of old logs.",
+                requested_inputs={"target": "db-primary", "action": "log-rotation"},
+                targets=[
+                    {
+                        "target_type": "service",
+                        "target_identifier": "db-primary",
+                        "environment": "production",
+                        "display_name": "DB Primary Host",
+                    }
+                ],
+                actor=actor,
+                is_emergency=True,
+                emergency_reason="Disk usage at 97% on db-primary; service degradation imminent.",
+            )
+            past_at = now - timedelta(days=5)
+            target_objs = list(past_change.targets.order_by("position"))
+            snapshot = build_request_snapshot(
+                past_change, target_objs, submitted_at=past_at,
+                profile=emerg_profile, workflow=workflow,
+            )
+            CR.objects.filter(pk=past_change.pk).update(
+                status="closed",
+                submitted_at=past_at,
+                approved_at=past_at,
+                dispatchable_at=past_at + timedelta(minutes=2),
+                running_at=past_at + timedelta(minutes=5),
+                verified_at=past_at + timedelta(minutes=20),
+                closed_at=past_at + timedelta(minutes=25),
+                requested_inputs_sha256=sha256_canonical_json(past_change.requested_inputs),
+                request_snapshot=snapshot,
+                request_snapshot_sha256=sha256_canonical_json(snapshot),
+                operation_profile_key_snapshot=emerg_profile.key,
+                workflow_version_snapshot=workflow.version,
+                workflow_definition_sha256=sha256_canonical_json(workflow.definition or {}),
+                submitted_by_id=str(admin.id),
+                retro_review_required=True,
+                retro_review_due_at=past_at + timedelta(hours=12),
+            )
+            past_change.refresh_from_db()
+            existing = past_change
+
+        # Closed breakglass on this past change
+        scope_json = {"service_keys": ["db-primary"]}
+        scope_sha = hashlib.sha256(
+            json.dumps(scope_json, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        past_at = now - timedelta(days=5)
+
+        bgl, bgl_created = BreakglassSession.objects.get_or_create(
+            change_record=existing,
+            defaults={
+                "organization": self._org,
+                "status": BreakglassSession.Status.ENDED,
+                "scope_json": scope_json,
+                "scope_sha256": scope_sha,
+                "reason": "Disk emergency on db-primary — immediate log cleanup.",
+                "activated_by": admin,
+                "started_at": past_at,
+                "expires_at": past_at + timedelta(hours=1),
+                "ended_at": past_at + timedelta(minutes=18),
+                "ended_by": admin,
+                "end_reason": "resolved",
+                "review_due_at": past_at + timedelta(hours=12),
+                "review_status": BreakglassSession.ReviewStatus.ACCEPTED,
+            },
+        )
+        self._report("BreakglassSession", "[Seed] Ended breakglass (past emergency)", bgl_created)
+
+        # Submitted retro review
+        retro, retro_created = RetroReview.objects.get_or_create(
+            change_record=existing,
+            breakglass_session=bgl,
+            defaults={
+                "organization": self._org,
+                "status": RetroReview.Status.SUBMITTED,
+                "disposition": RetroReview.Disposition.ACCEPTED,
+                "reviewed_by": admin,
+                "reviewed_at": past_at + timedelta(hours=8),
+                "due_at": past_at + timedelta(hours=12),
+                "summary": (
+                    "Emergency log rotation was necessary and appropriate. "
+                    "Disk utilization returned to normal. "
+                    "Root cause: log rotation cron disabled after last migration. "
+                    "Remediation: re-enabled cron and added alerting at 80% threshold."
+                ),
+                "remediation_required": True,
+                "remediation_reference": "PLAT-5001",
+            },
+        )
+        self._report("RetroReview", "[Seed] Submitted retro review", retro_created)
 
     # ------------------------------------------------------------------
 
