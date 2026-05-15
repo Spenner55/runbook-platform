@@ -28,11 +28,11 @@ class RunnerRegisterResponseSerializer(serializers.Serializer):
 
 class RunnerHeartbeatRequestSerializer(serializers.Serializer):
     runner_id = serializers.UUIDField(required=False, allow_null=True, default=None)
-    runner_version = serializers.CharField(max_length=64, default="")
-    hostname = serializers.CharField(max_length=255, default="")
+    runner_version = serializers.CharField(max_length=64, default="", allow_blank=True)
+    hostname = serializers.CharField(max_length=255, default="", allow_blank=True)
     current_execution_count = serializers.IntegerField(default=0, min_value=0)
-    observed_pool_key = serializers.CharField(max_length=64, default="")
-    capabilities_checksum = serializers.CharField(max_length=64, default="")
+    observed_pool_key = serializers.CharField(max_length=64, default="", allow_blank=True)
+    capabilities_checksum = serializers.CharField(max_length=64, default="", allow_blank=True)
     sent_at = serializers.DateTimeField(required=False, allow_null=True)
 
 

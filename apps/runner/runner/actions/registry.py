@@ -12,8 +12,13 @@ class ActionRegistry:
     def register(self, action_type: str, version: str, handler: ActionHandler) -> None:
         self._registry[(action_type, version)] = handler
 
+    _DEFAULT_VERSION = "pilot.v1"
+
     def lookup(self, action_type: str, version: str) -> ActionHandler | None:
-        return self._registry.get((action_type, version))
+        handler = self._registry.get((action_type, version))
+        if handler is None and version != self._DEFAULT_VERSION:
+            handler = self._registry.get((action_type, self._DEFAULT_VERSION))
+        return handler
 
 
 def _build_registry() -> ActionRegistry:

@@ -287,7 +287,7 @@ class ApiClient:
 
     def runner_heartbeat(
         self,
-        runner_version: str = "",
+        runner_version: str | None = None,
         hostname: str = "",
         current_execution_count: int = 0,
         observed_pool_key: str = "",
@@ -297,7 +297,7 @@ class ApiClient:
         data = self._post(
             "/api/v1/internal/runners/heartbeat/",
             {
-                "runner_version": runner_version,
+                "runner_version": runner_version if runner_version is not None else self._runner_version,
                 "hostname": hostname,
                 "current_execution_count": current_execution_count,
                 "observed_pool_key": observed_pool_key,

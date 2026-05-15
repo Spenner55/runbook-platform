@@ -4,10 +4,10 @@ Management command: seed_dev
 Populates the local development database with a canonical dataset for
 thorough manual testing. Covers: users, orgs, memberships, runbooks,
 workflows, executions (all status variants), steps, approvals, policies,
-integrations, and artifacts.
+integrations, runner pool, runner registration token, and artifacts.
 
-Safe to run multiple times. Aborts if DEBUG is False. Never calls any
-AI/LLM endpoints.
+Always wipes the previous seed data before re-seeding. Aborts if
+DEBUG is False. Never calls any AI/LLM endpoints.
 
 Usage:
     python manage.py seed_dev
@@ -25,7 +25,7 @@ from django.utils import timezone
 
 
 class Command(BaseCommand):
-    help = "Seed local dev database with comprehensive test data (no AI calls)."
+    help = "Wipe and re-seed local dev database with comprehensive test data (no AI calls)."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -46,24 +46,29 @@ class Command(BaseCommand):
 
         smoke_only = options.get("execution_smoke", False)
 
+        self.stdout.write(self.style.WARNING("\nWiping existing seed data..."))
+        self._wipe()
+
         if smoke_only:
             self._seed_users()
             self._seed_org()
+            self._seed_runner_pool()
             self._runbooks = {}
             self._workflows = {}
             self._seed_smoke_runbook()
             self._seed_smoke_workflows()
             self._seed_smoke_executions()
             self.stdout.write(self.style.SUCCESS("\nSmoke seed complete."))
+            self._print_runner_instructions()
             self.stdout.write(
                 "\nSmoke test workflows queued and ready.\n"
                 "Set RUNNER_EXECUTION_MODE=sandboxed in .env to run real commands.\n"
-                "Then: make up-d && make logs-runner\n"
             )
             return
 
         self._seed_users()
         self._seed_org()
+        self._seed_runner_pool()
         self._seed_runbooks()
         self._seed_workflows()
         self._seed_executions()
@@ -101,6 +106,92 @@ class Command(BaseCommand):
             "  3. Watch the runner pick up and execute each queued smoke execution\n"
             "  See docs/runbooks/manual-execution-plane-testing.md for the full guide.\n"
         )
+        self._print_runner_instructions()
+
+    # ------------------------------------------------------------------
+    # Wipe
+    # ------------------------------------------------------------------
+
+    def _wipe(self):
+        """Delete all seed data in PROTECT-safe order so re-seed starts clean."""
+        from django.contrib.auth import get_user_model
+
+        from apps.executions.models import Execution
+        from apps.organizations.models import Membership, Organization
+        from apps.runners.models import ExecutionLease, Runner, RunnerPool, RunnerRegistrationToken
+
+        User = get_user_model()
+        seed_emails = {"admin@acme.test", "operator@acme.test", "viewer@acme.test"}
+
+        # Delete any existing registration token record for the configured token
+        # (it may live under a different org from a previous setup) so we can
+        # re-create it pointing at the fresh seed pool without a hash conflict.
+        reg_token = getattr(settings, "RUNNER_REGISTRATION_TOKEN", "")
+        if reg_token:
+            token_hash = hashlib.sha256(reg_token.encode()).hexdigest()
+            RunnerRegistrationToken.objects.filter(token_hash=token_hash).delete()
+
+        try:
+            org = Organization.objects.get(slug="acme-platform-eng")
+        except Organization.DoesNotExist:
+            User.objects.filter(email__in=seed_emails).delete()
+            self.stdout.write("  No existing seed org found — starting fresh.\n")
+            return
+
+        # 1. ExecutionLease — blocks Execution, Runner, RunnerPool, Organization
+        ExecutionLease.objects.filter(organization=org).delete()
+
+        # 2. Artifact — PROTECT on organization and execution
+        from apps.artifacts.models import Artifact
+        Artifact.objects.filter(organization=org).delete()
+
+        # 3. Execution — cascade-deletes ExecutionStep and ApprovalRequest
+        Execution.objects.filter(organization=org).delete()
+
+        # 4. Workflow — PROTECT on organization and runbook
+        from apps.workflows.models import Workflow
+        Workflow.objects.filter(organization=org).delete()
+
+        # 5. Runbook — PROTECT on organization
+        from apps.runbooks.models import Runbook
+        Runbook.objects.filter(organization=org).delete()
+
+        # 6. Runner — PROTECT on organization and pool
+        Runner.objects.filter(organization=org).delete()
+
+        # 7. RunnerRegistrationToken — PROTECT on pool (and deleted above by hash if needed)
+        RunnerRegistrationToken.objects.filter(organization=org).delete()
+
+        # 8. RunnerPool — PROTECT on organization
+        RunnerPool.objects.filter(organization=org).delete()
+
+        # 9. Policy / PolicyRule — PolicyRule cascades from Policy
+        from apps.policies.models import Policy
+        Policy.objects.filter(organization=org).delete()
+
+        # 10. IntegrationConnection
+        from apps.integrations.models import IntegrationConnection
+        IntegrationConnection.objects.filter(organization=org).delete()
+
+        # 11. AuditEvent — append-only queryset blocks ORM delete; use raw SQL
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM audit_auditevent WHERE organization_id = %s",
+                [str(org.id)],
+            )
+
+        # 12. Membership — cascade from org deletion, but explicit for safety
+        Membership.objects.filter(organization=org).delete()
+
+        # 13. Organization
+        org.delete()
+
+        # 14. Seed users (remove after org so membership cascade doesn't conflict)
+        User.objects.filter(email__in=seed_emails).delete()
+
+        self.stdout.write("  Seed data wiped.\n")
 
     # ------------------------------------------------------------------
     # Users & org
@@ -158,6 +249,61 @@ class Command(BaseCommand):
                 defaults={"role": role},
             )
             self._report("Membership", f"{email} → {role}", created)
+
+    # ------------------------------------------------------------------
+    # Runner pool + registration token
+    # ------------------------------------------------------------------
+
+    def _seed_runner_pool(self):
+        from apps.runners.models import RunnerPool, RunnerRegistrationToken
+
+        pool, created = RunnerPool.objects.get_or_create(
+            organization=self._org,
+            key="default",
+            defaults={
+                "name": "Default Runner Pool",
+                "display_name": "Default",
+                "description": "Default runner pool for local development and manual testing.",
+                "status": RunnerPool.Status.ACTIVE,
+                "max_concurrent_executions": 5,
+                "default_for_non_change_executions": False,
+            },
+        )
+        self._pool = pool
+        self._report("RunnerPool", pool.key, created)
+
+        reg_token = getattr(settings, "RUNNER_REGISTRATION_TOKEN", "")
+        if not reg_token:
+            self.stdout.write(
+                self.style.WARNING(
+                    "  [Skipped] RunnerRegistrationToken: RUNNER_REGISTRATION_TOKEN not set in .env.\n"
+                    "  The runner cannot claim executions until a token is configured."
+                )
+            )
+            self._token_created = False
+            return
+
+        token_hash = hashlib.sha256(reg_token.encode()).hexdigest()
+        tok, created = RunnerRegistrationToken.objects.get_or_create(
+            token_hash=token_hash,
+            defaults={
+                "organization": self._org,
+                "pool": pool,
+                "expires_at": timezone.now() + timedelta(days=365),
+                "max_registrations": 100,
+            },
+        )
+        self._token_created = created
+        self._report("RunnerRegistrationToken", "seed token (100 uses, 365 day TTL)", created)
+
+    def _print_runner_instructions(self):
+        self.stdout.write(
+            "\nRunner setup:\n"
+            "  The seed org 'acme-platform-eng' now has a runner pool tied to\n"
+            "  your RUNNER_REGISTRATION_TOKEN. Restart the runner to pick it up:\n\n"
+            "    docker compose restart runner\n\n"
+            "  The runner will re-register to the seed org and start claiming executions.\n"
+        )
 
     # ------------------------------------------------------------------
     # Runbooks
@@ -513,12 +659,10 @@ class Command(BaseCommand):
         )
 
         # Pending approval request — this is what you'd approve/reject in the UI
-        # Delete any stale decision before resetting to PENDING so the unique constraint
-        # on ApprovalDecision.approval_request_id is not violated on re-seed.
+        from apps.approvals.models import ApprovalDecision as _AD
+
         existing_ar = ApprovalRequest.objects.filter(step=step2).first()
         if existing_ar is not None:
-            from apps.approvals.models import ApprovalDecision as _AD
-
             _AD.objects.filter(approval_request=existing_ar).delete()
         approval, approval_created = ApprovalRequest.objects.update_or_create(
             step=step2,
@@ -971,7 +1115,6 @@ class Command(BaseCommand):
             f"/{safe_name}"
         )
 
-        # Write the file to local storage
         full_path = os.path.join(media_root, storage_key)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "wb") as f:
@@ -1244,9 +1387,6 @@ class Command(BaseCommand):
         self._report("Workflow", wf2.name, created)
 
         # ── Workflow 3: timeout check ─────────────────────────────────
-        # timeoutSeconds: 5 is in the step definition; executor clamps it to
-        # min(5, RUNNER_SANDBOX_DEFAULT_TIMEOUT_SECONDS). The step will time
-        # out while sleeping, proving the real sandbox timeout path.
         timeout_def = {
             "name": "Sandbox Timeout Check",
             "steps": [
@@ -1341,8 +1481,6 @@ class Command(BaseCommand):
         self._report("Workflow", wf4.name, created)
 
         # ── Workflow 5: cancellation long-running ─────────────────────
-        # Start this execution, then cancel it from the UI to verify cancel
-        # path. The loop prints a tick every second for up to 60 ticks.
         cancel_def = {
             "name": "Sandbox Cancellation Long Running",
             "steps": [
@@ -1381,9 +1519,6 @@ class Command(BaseCommand):
         self._report("Workflow", wf5.name, created)
 
         # ── Workflow 6: policy / approval gate ───────────────────────
-        # The seeded policy requires approval for high-risk steps. This
-        # workflow will pause at the high-risk step waiting for a human
-        # to approve via the UI or API before the runner proceeds.
         approval_def = {
             "name": "Sandbox Policy Approval Gate",
             "steps": [
@@ -1456,7 +1591,6 @@ class Command(BaseCommand):
             if wf is None:
                 continue
 
-            # Reuse existing non-terminal execution (avoids pile-up if runner is stopped).
             existing = (
                 Execution.objects.filter(
                     workflow=wf,

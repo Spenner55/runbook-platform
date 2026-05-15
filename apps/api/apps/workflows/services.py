@@ -624,7 +624,7 @@ def _lift_v1_steps(steps: list[dict]) -> tuple[list[dict], bool]:
             if "approvalTimeoutSeconds" in step:
                 action["params"] = {"timeout_seconds": step["approvalTimeoutSeconds"]}
             v2_step["action"] = action
-        elif step_type == "shell_command":
+        elif step_type in ("shell_command", "command"):
             v2_step["type"] = "shell_command"
             v2_step["action"] = {
                 "type": "shell_command",
