@@ -1,146 +1,227 @@
 # Runbook Platform
 
-Runbook Platform is an early-stage governed execution platform for turning human-authored operational runbooks into versioned workflows and executable step histories.
+Runbook Platform is a governance-focused workflow execution control plane for controlled operational workflows. It models runbooks, workflow versions, approvals, policy checks, runner execution, audit events, artifacts, evidence bundles, and change-control workflows through a Docker-first local stack.
 
-The current repo is a local, Docker-first vertical slice. It is useful for validating the control-plane architecture, API contracts, runner flow, deterministic AI parsing boundary, and React product slice. It is not production-ready.
+The project is intended for architecture, implementation, and evaluation review. It is a source-available portfolio project under active development, not a production-ready operations platform.
 
-## Who This Is For
+## Status
 
-- Maintainers extending the platform in small, architecture-safe phases.
-- Developers onboarding to the Django, runner, FastAPI, and React service boundaries.
-- AI coding agents such as Codex or Claude Code implementing future approved phases.
-- Project owners keeping blueprints, architecture docs, and repo state aligned.
+- **Maturity:** active development / portfolio review.
+- **Runtime:** local Docker Compose stack for evaluation and development.
+- **Production readiness:** not production-ready. The repository has production-oriented checks and design work, but no implemented production deployment path.
+- **Best use today:** reviewing architecture, service boundaries, implementation style, API design, tests, and the governed execution model.
 
-## Core Architecture
+## License
 
-The system is intentionally split by ownership:
+This repository is **source-available, not open source**. Personal, educational, evaluation, portfolio-review, and non-commercial use are permitted.
 
-- Django is the control plane.
-- React calls only Django APIs.
-- Runner calls only Django internal APIs.
-- Runner never talks directly to PostgreSQL.
-- Runner never calls the AI service directly.
-- FastAPI AI service is stateless and advisory only.
-- Django owns persistence, orchestration, validation, state transitions, and API contracts.
-- Public APIs are versioned under `/api/v1/`.
-- Runner-only endpoints live under `/api/v1/internal/`.
-- Business logic belongs in service-layer modules, not views or serializers.
-- Domain entities use UUID primary keys.
-- Docker Compose is the local development source of truth.
+Commercial use, production use, hosted or managed offerings, resale, paid support based primarily on this work, sublicensing, or competing products substantially derived from this repository require explicit written permission from the licensor. See [LICENSE.md](LICENSE.md) for the full license terms.
 
-See [architecture overview](docs/architecture/architecture-overview.md) and [service boundaries](docs/architecture/service-boundaries.md) for the full boundary rules.
+## What This Demonstrates
 
-## Services
+- Django + Django REST Framework control plane with PostgreSQL persistence.
+- Versioned public REST API under `/api/v1/` and runner-only internal APIs under `/api/v1/internal/`.
+- React + TypeScript + Vite frontend using React Router and TanStack Query.
+- Python runner boundary that polls Django, registers/heartbeats, claims work, executes steps, reports status, uploads artifacts, and handles approval gates.
+- FastAPI AI-service boundary for advisory runbook parsing, with deterministic parsing by default and optional OpenAI-backed parsing behind explicit environment opt-in.
+- Service-layer Django architecture for domain transitions instead of putting business logic directly in views.
+- Implemented governance workflows for authentication, organizations, runbooks, workflows, executions, approvals, policies, audit events, artifacts, integrations, change records, freeze rules, emergency exceptions, evidence bundles, auditor workspace flows, runner pools, and target connectivity metadata.
+- Docker-first local development with PostgreSQL, PgBouncer, Django API, React web, runner, and AI service.
+- CI coverage for frontend build/lint/format/tests, Python lint/format/compile, Django tests, runner tests, AI tests, migration checks, dependency audits, secret scanning, and container filesystem scanning.
 
-| Service | Path | Responsibility |
-| --- | --- | --- |
-| Web | `apps/web` | React + TypeScript + Vite UI. Uses React Router and TanStack Query. Calls Django `/api/v1/` only. |
-| API | `apps/api` | Django + DRF control plane. Owns PostgreSQL models, service-layer orchestration, public APIs, internal runner APIs, and the Django-to-AI HTTP client. |
-| Runner | `apps/runner` | Python worker. Polls Django internal APIs, claims queued executions, sends heartbeats, updates step state, and completes executions. Step execution is simulated today. |
-| AI | `apps/ai` | FastAPI advisory service. Implements deterministic `POST /parse/runbook`; `enrich` and `summarize` routes are placeholders. Does not persist state. |
-| PostgreSQL | Compose service | Single source of truth for Django-owned domain data. |
+The strongest engineering signal is the boundary discipline: React uses only Django public APIs, runners use only Django internal APIs, Django owns persistence and validation, and AI output is advisory rather than authoritative.
 
-## Local Quick Start
+## Architecture
 
-Prerequisites: Docker, Docker Compose, and `make`.
+```text
+Browser / React UI
+        |
+        | public REST API only
+        v
+Django / DRF control plane  ----->  FastAPI AI service
+        |                            advisory parsing only
+        |
+        | owns persistence
+        v
+PostgreSQL via PgBouncer
+        ^
+        |
+        | internal runner API only
+        |
+Python runner
+```
+
+Boundary rules:
+
+- The frontend calls Django public APIs only.
+- The runner calls Django internal APIs only.
+- The runner does not connect to PostgreSQL directly.
+- The runner does not call the AI service directly.
+- The AI service is stateless and advisory; Django validates and persists the final workflow state.
+- PostgreSQL is owned through the Django control plane.
+- Docker Compose is the local runtime source of truth.
+
+## Repository Structure
+
+```text
+apps/
+  api/       Django + DRF control plane and domain services
+  web/       React + TypeScript + Vite frontend
+  runner/    Python worker and local execution boundary
+  ai/        FastAPI advisory parsing service
+packages/
+  contracts/        Shared contract/schema material
+  workflow-schema/  Workflow schema and pilot action schemas
+  sdk/              Scaffolded TypeScript SDK package
+docs/
+  architecture/     Current architecture and boundary docs
+  api/              Public and internal API references
+  runbooks/         Local development and operating guides
+  blueprints/       Planning documents, not proof of implementation
+  reports/          Audits, readiness reports, and implementation summaries
+infra/
+  aws/              Placeholder only; AWS infrastructure is not implemented
+.github/
+  workflows/        CI pipeline
+  ISSUE_TEMPLATE/   Bug and feature issue templates
+```
+
+## Local Development
+
+### Prerequisites
+
+- Docker and Docker Compose.
+- `make`.
+- Git.
+
+Normal local development does not require host-level Python, Node, npm, or PostgreSQL installs.
+
+### Environment Setup
 
 ```sh
 cp .env.example .env
+```
+
+Before starting Compose, edit `.env` and set `RUNNER_REGISTRATION_TOKEN` to a non-empty local development value. `docker-compose.yml` requires this variable for the API and runner services.
+
+Optional AI parsing with OpenAI is disabled by default. To enable it, set `OPENAI_API_KEY`, choose `AI_PARSE_MODEL`, and set `AI_USE_LLM_PARSER=true`. This can send runbook text to OpenAI and can incur cost.
+
+### Start The Stack
+
+```sh
 make bootstrap
 ```
 
-Then open:
+`make bootstrap` builds images, starts services in the background, waits for the database, applies migrations, and seeds local development data.
+
+Local URLs:
 
 - Web: `http://localhost:5173`
 - Django API: `http://localhost:8000`
 - AI service: `http://localhost:8001`
+- PostgreSQL: `localhost:5432`
 
-Use `make up-d` after the first setup when you want to start the stack in the background. Use `make restart` to restart containers without rebuilding images.
+The seed command prints local test login credentials when it completes.
 
-## Common Commands
+### Common Commands
 
 | Command | Purpose |
 | --- | --- |
 | `make help` | List available Makefile targets. |
-| `make bootstrap` | Build, start, wait for DB, migrate, and seed local data. |
-| `make up` / `make up-d` | Build and start all services in foreground or detached mode. |
+| `make up` | Build and start all services in the foreground. |
+| `make up-d` | Build and start all services in the background. |
 | `make down` | Stop containers while preserving volumes. |
 | `make restart` | Restart existing containers without rebuilding. |
-| `make migrate` | Apply Django migrations inside the API container. |
-| `make seed-dev` | Seed deterministic local development data. |
-| `make test-api` | Run Django tests. |
-| `make test-runner` | Run runner tests. |
-| `make test-web` | Run frontend tests once. |
-| `make lint` | Run Python and TypeScript lint checks. |
-| `make format` | Format Python and TypeScript code. |
-| `make hardening-check` | Run local production settings, migration, dependency, secret, and filesystem security gates. |
+| `make ps` | Show container status. |
+| `make logs` | Tail logs for all services. |
+| `make migrate` | Apply Django migrations. |
+| `make seed-dev` | Seed local development data. |
+| `make seed-execution-smoke` | Re-queue execution smoke scenarios. |
+| `make reset` | Destructive local reset: removes volumes, rebuilds, migrates, and seeds. |
 
-More detail is in [local development](docs/runbooks/local-development.md).
+### Tests, Lint, And Build
 
-## Documentation
+Prefer Makefile targets where they exist:
 
-Start at [docs/README.md](docs/README.md).
+| Command | Purpose |
+| --- | --- |
+| `make test-api` | Run the Django pytest suite. |
+| `make test-runner` | Run the runner pytest suite. |
+| `make test-web` | Run the frontend Vitest suite once. |
+| `make test` | Run API, runner, and web tests. |
+| `make lint` | Run Python Ruff checks and frontend ESLint. |
+| `make format-check` | Check Python and frontend formatting. |
+| `make check-migrations` | Check Django migration state. |
+| `make check-prod` | Run Django production deployment checks with local-only env values. |
+| `make ci` | Run local CI-style lint, format, tests, migration checks, and prod checks. |
+| `make ci-full` | Run `make ci` plus dependency, secret, and container filesystem scans. |
 
-Key references:
+Additional direct commands used by CI:
 
+```sh
+docker compose exec ai pytest tests/
+docker compose exec web npm run build
+```
+
+The security scan target installs audit tooling and runs Docker-based scanners, so it can be slower than the normal development checks.
+
+## Implementation Status
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Docker Compose local stack | Implemented | API, web, runner, AI, PostgreSQL, and PgBouncer. |
+| Django domain model | Implemented | Organizations, users, runbooks, workflows, executions, approvals, policies, audit, artifacts, integrations, changes, evidence, auditor access, and runners. |
+| Authentication | Implemented | JWT access tokens, HTTP-only refresh cookie flow, `/api/v1/auth/*` endpoints, and organization memberships. |
+| Public REST API | Implemented | Versioned under `/api/v1/`; used by the React frontend. |
+| Internal runner API | Implemented | Claim, heartbeat, step start/update, completion, approval status, artifact upload, runner registration/heartbeat, and change callbacks. |
+| React product UI | Implemented | Routes for login, runbooks, workflows, executions, approvals, changes, audit, retro reviews, freeze rules, policies, integrations, runners, and settings. |
+| Runner execution loop | Implemented | Polling, claiming, heartbeats, cancellation observation, approval waits, action dispatch, artifacts, and change-binding callbacks. |
+| Runner sandbox | Partial | Simulated execution is the default. A local-process sandbox and pilot action handlers exist for development and smoke testing, but this is not a production execution substrate. |
+| Workflow schema v2 / pilot actions | Partial | Pilot schemas and handlers exist for manual tasks, approval gates, shell commands, HTTP requests, and artifact assertions. The schema is still evolving. |
+| AI parsing | Partial | Deterministic parser is default. Optional OpenAI-backed structured parsing exists behind explicit opt-in. Enrich and failure-summary routes are placeholders. |
+| Artifacts and evidence | Partial | Local artifact storage, uploads, evidence bundles, sealing/export flows, retention/legal-hold concepts, and UI/API flows exist. Durable object storage is not implemented. |
+| Integrations | Partial | Integration connection and delivery-attempt modeling exists. External delivery depth is limited and not a full enterprise integration platform. |
+| Live execution stream | Partial | Server-sent execution stream exists using a process-local event bus. Multi-worker or horizontally scaled streaming needs an external event bus. |
+| AWS / production deployment | Planned | `infra/aws` is documentation-only. No Terraform, CDK, Pulumi, live resources, or deploy workflow exists. |
+| Enterprise hardening | Planned | SSO, fine-grained RBAC, production credential brokerage, HA, backups, observability, and operational support workflows remain future work. |
+| Shared SDK package | Scaffold | `packages/sdk` exists but is not a published or complete client SDK. |
+
+## Documentation Map
+
+Current implementation references:
+
+- [Docs index](docs/README.md)
 - [Architecture overview](docs/architecture/architecture-overview.md)
+- [Service boundaries](docs/architecture/service-boundaries.md)
 - [Repository map](docs/architecture/repository-map.md)
 - [API contracts](docs/architecture/api-contracts.md)
 - [Data model](docs/architecture/data-model.md)
-- [Runner](docs/architecture/runner.md)
+- [Frontend architecture](docs/architecture/frontend.md)
+- [Runner architecture](docs/architecture/runner.md)
 - [AI service boundary](docs/architecture/ai-service-boundary.md)
-- [Frontend](docs/architecture/frontend.md)
-- [AI-agent working guide](docs/runbooks/ai-agent-working-guide.md)
-- [Phase 10.9 hardening checks](docs/runbooks/phase-10-09-hardening-checks.md)
-- [Documentation maintenance](docs/runbooks/documentation-maintenance.md)
+- [Local development runbook](docs/runbooks/local-development.md)
+- [Manual execution-plane testing](docs/runbooks/manual-execution-plane-testing.md)
 
-## Blueprints
+Planning and roadmap material:
 
-Blueprints live in [docs/blueprints](docs/blueprints). They are planning documents, not proof of implementation.
+- [Blueprints](docs/blueprints/) are planning documents unless an implementation report says otherwise.
+- [AWS infrastructure](infra/aws/README.md) is explicitly not implemented.
+- Readiness and strategy reports under `docs/reports/` are analysis documents, not product claims.
 
-- Earlier phase blueprints document the path that produced the current vertical slice.
-- [implemented/phase-01-implemented-architecture-blueprint.md](docs/blueprints/implemented/phase-01-implemented-architecture-blueprint.md) is a historical implemented snapshot.
-- Phase 10 documents are forward-looking unless a later implementation explicitly lands.
+When code, docs, and blueprints disagree, treat the current code and tests as the source of truth.
 
-When code and blueprints disagree, inspect the code and update the relevant docs. Do not silently implement planned blueprint features during unrelated work.
+## Security
 
-## Working With AI Coding Agents
+See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
-Before asking Codex or Claude Code to implement changes:
+Please do not open public GitHub issues for suspected security vulnerabilities. This project has no support SLA and is not intended for production deployment.
 
-1. Point it to [AI-agent working guide](docs/runbooks/ai-agent-working-guide.md).
-2. Require a read-only audit before non-trivial implementation.
-3. Require it to preserve the service boundaries above.
-4. Require it to mark implemented, planned, partial, and deferred behavior explicitly.
-5. Keep changes small and verify with the relevant Makefile targets.
+## Issues And Contributions
 
-AI agents must not add product features from future blueprints unless the task explicitly approves that phase.
+Issues and feedback are welcome. Contributions may be reviewed at the maintainer's discretion, but this is not currently run as a broad community open-source project.
 
-## Current Status
+Commercial use or production use requires explicit permission under the license terms.
 
-Implemented today:
+## Screenshots And Demo
 
-- Core Django domain models for organizations, runbooks, workflows, executions, and execution steps.
-- Service-layer create and lifecycle flows.
-- Public `/api/v1/` endpoints for organizations, runbooks, workflows, and executions.
-- Internal `/api/v1/internal/` runner endpoints for claim, heartbeat, step update, and completion.
-- Runner polling and simulated sequential step execution.
-- FastAPI deterministic runbook parsing endpoint.
-- React product slice for organizations, runbooks, workflow creation/detail, and execution detail.
-- Docker Compose local workflow, seed command, lint/format/test commands, and CI gates.
-
-Not production-ready:
-
-- Authentication and authorization are deferred.
-- Approvals, policies, audit trail, artifacts, integrations, live event streaming, production hardening, and AWS deployment remain blueprint-level work.
-- Runner execution is simulated and does not run real sandboxed commands.
-- AI parsing is deterministic and not provider-backed.
-
-## Intentionally Out Of Scope Right Now
-
-- Direct frontend calls to FastAPI or runner services.
-- Direct runner database access.
-- Direct runner AI calls.
-- Kafka, RabbitMQ, Celery, websockets, or event streaming infrastructure.
-- Production deployment automation or live AWS resources.
-- Broad refactors that move business logic out of Django services.
+Screenshots will be added as the public-facing UI matures. The current UI can be reviewed locally after running `make bootstrap`.
